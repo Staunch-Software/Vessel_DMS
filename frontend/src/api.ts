@@ -48,8 +48,28 @@ export async function createVessel(
   return (await api.post("/vessels", { name, imo })).data;
 }
 
-export async function getTree(): Promise<FolderNode[]> {
-  return (await api.get("/tree")).data;
+export interface Stats {
+  vessels: number;
+  main_folders: number;
+  month_driven: number;
+  months: number;
+  documents: number | null;
+}
+
+export async function getMains(): Promise<FolderNode[]> {
+  return (await api.get("/mains")).data;
+}
+
+export async function getFolder(id: string): Promise<FolderNode> {
+  return (await api.get(`/folders/${id}`)).data;
+}
+
+export async function getChildren(id: string): Promise<FolderNode[]> {
+  return (await api.get(`/folders/${id}/children`)).data;
+}
+
+export async function getStats(): Promise<Stats> {
+  return (await api.get("/stats")).data;
 }
 
 export async function uploadFile(

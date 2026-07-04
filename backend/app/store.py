@@ -10,9 +10,7 @@ from datetime import date
 
 from . import template
 
-class DuplicateFile(Exception):
-    """Raised when a file with the same name already exists in the target folder."""
-
+from .services.errors import DuplicateFile  # noqa: E402  (re-exported for callers)
 
 _ids = itertools.count(1)
 
@@ -135,6 +133,26 @@ class Store:
 
     def tree(self):
         return [self.serialize(self.nodes[r], depth=-1) for r in self.roots]
+
+    def mains(self):
+        return [self.serialize(self.nodes[r], depth=0) for r in self.roots]
+
+    def stats(self):
+        files = months = month_driven = 0
+        for node in self.nodes.values():
+            if node["kind"] == "file":
+                files += 1
+            elif node["kind"] == "month":
+                months += 1
+            if node["month_driven"]:
+                month_driven += 1
+        return {
+            "vessels": len(self.vessels),
+            "main_folders": len(self.roots),
+            "month_driven": month_driven,
+            "months": months,
+            "documents": files,
+        }
 
     def children(self, node_id):
         node = self.nodes[node_id]

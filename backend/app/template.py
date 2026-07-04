@@ -102,7 +102,7 @@ SHIP_TEMPLATE = {
         leaf("P&I"),
         leaf("H&M"),
         leaf("War Risk"),
-        leaf("Flag / MPA"),
+        leaf("Flag - MPA"),
         leaf("USA Related"),
     ],
 }

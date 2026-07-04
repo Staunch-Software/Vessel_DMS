@@ -6,46 +6,35 @@ import {
   Ship,
   type LucideIcon,
 } from "lucide-react";
-import type { FolderNode, Vessel } from "../api";
+import type { FolderNode, Stats, Vessel } from "../api";
 import { MAIN_ACCENTS } from "./nodeStyle";
 
 interface Props {
   vessels: Vessel[];
-  tree: FolderNode[];
+  mains: FolderNode[];
+  stats: Stats | null;
   onOpenMain: (node: FolderNode) => void;
   onNewVessel: () => void;
 }
 
-function countKinds(tree: FolderNode[]) {
-  let files = 0;
-  let monthDriven = 0;
-  let months = 0;
-  const walk = (n: FolderNode) => {
-    if (n.kind === "file") files++;
-    if (n.month_driven) monthDriven++;
-    if (n.kind === "month") months++;
-    n.children?.forEach(walk);
-  };
-  tree.forEach(walk);
-  return { files, monthDriven, months };
-}
+export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Props) {
+  const months = stats?.months ?? 0;
+  const fmt = (v: number | null | undefined) =>
+    v === null || v === undefined ? "—" : v;
 
-export function Dashboard({ vessels, tree, onOpenMain, onNewVessel }: Props) {
-  const { files, monthDriven, months } = countKinds(tree);
-
-  const stats: { label: string; value: number; Icon: LucideIcon; cls: string }[] =
+  const cards: { label: string; value: number | string; Icon: LucideIcon; cls: string }[] =
     [
-      { label: "Vessels", value: vessels.length, Icon: Ship, cls: "text-brand-600 bg-brand-50" },
-      { label: "Main folders", value: tree.length, Icon: Layers, cls: "text-emerald-600 bg-emerald-50" },
-      { label: "Auto-month folders", value: monthDriven, Icon: CalendarClock, cls: "text-violet-600 bg-violet-50" },
-      { label: "Documents", value: files, Icon: FileText, cls: "text-amber-600 bg-amber-50" },
+      { label: "Vessels", value: stats?.vessels ?? vessels.length, Icon: Ship, cls: "text-brand-600 bg-brand-50" },
+      { label: "Main folders", value: stats?.main_folders ?? mains.length, Icon: Layers, cls: "text-emerald-600 bg-emerald-50" },
+      { label: "Auto-month folders", value: fmt(stats?.month_driven), Icon: CalendarClock, cls: "text-violet-600 bg-violet-50" },
+      { label: "Documents", value: fmt(stats?.documents), Icon: FileText, cls: "text-amber-600 bg-amber-50" },
     ];
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {stats.map((s) => (
+        {cards.map((s) => (
           <div
             key={s.label}
             className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
@@ -125,7 +114,7 @@ export function Dashboard({ vessels, tree, onOpenMain, onNewVessel }: Props) {
             </h3>
           </div>
           <div className="space-y-2 p-4">
-            {tree.map((m) => {
+            {mains.map((m) => {
               const accent = MAIN_ACCENTS[m.name];
               return (
                 <button
@@ -149,9 +138,7 @@ export function Dashboard({ vessels, tree, onOpenMain, onNewVessel }: Props) {
                     <p className="text-sm font-medium text-slate-800">
                       {m.name}
                     </p>
-                    <p className="text-xs text-slate-500">
-                      {m.children?.length ?? 0} items
-                    </p>
+                    <p className="text-xs text-slate-500">Open folder</p>
                   </div>
                 </button>
               );

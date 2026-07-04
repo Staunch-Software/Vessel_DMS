@@ -3,6 +3,9 @@
 Acquires a token for the backend Entra app via MSAL and exposes thin async
 request helpers. Tokens are cached by MSAL and refreshed automatically.
 """
+import asyncio
+import random
+
 import httpx
 import msal
 
@@ -22,6 +25,24 @@ class GraphClient:
             authority=settings.authority_url,
             client_credential=settings.graph_client_secret,
         )
+        self._http: httpx.AsyncClient | None = None
+
+    def _client(self) -> httpx.AsyncClient:
+        # One pooled, keep-alive client reused across calls (avoids a new TLS
+        # handshake per folder creation — the main provisioning bottleneck).
+        if self._http is None or self._http.is_closed:
+            from .http import verify
+
+            self._http = httpx.AsyncClient(
+                timeout=60,
+                verify=verify(),
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=10),
+            )
+        return self._http
+
+    async def aclose(self):
+        if self._http is not None and not self._http.is_closed:
+            await self._http.aclose()
 
     def _token(self) -> str:
         result = self._app.acquire_token_silent([settings.graph_scope], account=None)
@@ -51,7 +72,8 @@ class GraphClient:
         params: dict | None = None,
     ) -> httpx.Response:
         url = path if path.startswith("http") else f"{settings.graph_base_url}{path}"
-        async with httpx.AsyncClient(timeout=60) as client:
+        client = self._client()
+        for attempt in range(6):
             resp = await client.request(
                 method,
                 url,
@@ -60,6 +82,13 @@ class GraphClient:
                 headers=self._headers(headers),
                 params=params,
             )
+            # SharePoint Embedded throttles bursts (429) / transient 503.
+            if resp.status_code in (429, 503) and attempt < 5:
+                retry_after = resp.headers.get("Retry-After")
+                delay = float(retry_after) if retry_after else min(2**attempt, 30)
+                await asyncio.sleep(delay + random.random())
+                continue
+            break
         if resp.status_code >= 400:
             raise GraphError(resp.status_code, resp.text)
         return resp

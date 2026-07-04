@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # --- Behaviour ---
     month_folder_format: str = "%B %Y"  # e.g. "June 2026"
     ocr_min_confidence: float = 0.5
+    graph_verify_ssl: bool = True  # set false only to bypass TLS verification
 
     @property
     def graph_configured(self) -> bool:

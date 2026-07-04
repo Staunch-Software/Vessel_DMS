@@ -1,17 +1,20 @@
-"""Stub FastAPI for the SharePoint Embedded DMS — Phase A (UI-first).
+"""FastAPI entry point for the Vessel DMS.
 
-Serves realistic, correctly-shaped data from an in-memory store so the React UI
-can be built against the final endpoint contracts. No Graph/OCR/DB yet.
+One code path over a backend interface: real SharePoint Embedded + PostgreSQL
+when configured (see backend/.env), otherwise the in-memory stub. See
+`app/services/__init__.py`.
 """
-import re
+import asyncio
 
 from fastapi import FastAPI, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from .store import DuplicateFile, store
+from .config import settings
+from .services import backend_mode, get_backend
+from .services.errors import BadRequest, Conflict, NotFound
 
-app = FastAPI(title="Vessel DMS (stub)", version="0.1.0")
+app = FastAPI(title="Vessel DMS", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,81 +24,96 @@ app.add_middleware(
 )
 
 
+def _raise(e: Exception):
+    """Map domain exceptions to HTTP errors."""
+    status = getattr(e, "status", None)
+    if status:
+        raise HTTPException(status, str(e))
+    raise
+
+
 class VesselIn(BaseModel):
     name: str
     imo: str | None = None
 
 
+@app.on_event("startup")
+async def _startup():
+    from .scheduler import precreate_next_month, start_scheduler
+
+    app.state.scheduler = start_scheduler()
+    if settings.graph_configured and settings.db_configured:
+        # Catch-up in case the server started after the 20th.
+        asyncio.create_task(precreate_next_month())
+
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "mode": backend_mode()}
+
+
 @app.get("/api/vessels")
-def list_vessels():
-    return [
-        {"id": v["id"], "name": v["name"], "imo": v.get("imo")}
-        for v in store.vessels
-    ]
+async def list_vessels():
+    return await get_backend().list_vessels()
 
 
 @app.post("/api/vessels", status_code=201)
-def create_vessel(payload: VesselIn):
-    name = payload.name.strip()
-    imo = (payload.imo or "").strip()
-    if not name:
-        raise HTTPException(400, "Vessel name is required")
-    if imo and not re.fullmatch(r"\d{7}", imo):
-        raise HTTPException(400, "IMO number must be exactly 7 digits")
-    if any(v["name"].lower() == name.lower() for v in store.vessels):
-        raise HTTPException(409, "A vessel with that name already exists")
-    if imo and any(v.get("imo") == imo for v in store.vessels):
-        raise HTTPException(409, "A vessel with that IMO number already exists")
-    return store.add_vessel(name, imo or None)
+async def create_vessel(payload: VesselIn):
+    try:
+        return await get_backend().create_vessel(payload.name, payload.imo)
+    except (BadRequest, Conflict) as e:
+        _raise(e)
 
 
-@app.get("/api/tree")
-def get_tree():
-    return store.tree()
+@app.get("/api/mains")
+async def mains():
+    return await get_backend().mains()
+
+
+@app.get("/api/stats")
+async def stats():
+    return await get_backend().stats()
 
 
 @app.get("/api/folders/{folder_id}/children")
-def get_children(folder_id: str):
-    if store.get_node(folder_id) is None:
-        raise HTTPException(404, "Folder not found")
-    return store.children(folder_id)
+async def children(folder_id: str):
+    try:
+        return await get_backend().children(folder_id)
+    except (NotFound, BadRequest) as e:
+        _raise(e)
+
+
+@app.get("/api/folders/{folder_id}")
+async def folder(folder_id: str):
+    try:
+        return await get_backend().get_folder(folder_id)
+    except (NotFound, BadRequest) as e:
+        _raise(e)
 
 
 @app.post("/api/folders/{folder_id}/upload")
 async def upload(folder_id: str, file: UploadFile):
-    node = store.get_node(folder_id)
-    if node is None:
-        raise HTTPException(404, "Folder not found")
-    if not node["upload"] or node["month_driven"]:
-        raise HTTPException(400, "This folder does not accept direct uploads")
     data = await file.read()
     try:
-        return store.upload(folder_id, file.filename, data, file.content_type)
-    except DuplicateFile:
-        raise HTTPException(409, f"'{file.filename}' already exists in this folder")
+        return await get_backend().upload(folder_id, file.filename, data, file.content_type)
+    except (NotFound, BadRequest, Conflict) as e:
+        _raise(e)
 
 
 @app.post("/api/folders/{folder_id}/month-upload")
 async def month_upload(folder_id: str, file: UploadFile, category: str = Form(None)):
-    node = store.get_node(folder_id)
-    if node is None:
-        raise HTTPException(404, "Folder not found")
-    if not node["month_driven"]:
-        raise HTTPException(400, "This folder is not a month-driven folder")
     data = await file.read()
     try:
-        return store.month_upload(
+        return await get_backend().month_upload(
             folder_id, file.filename, category, data, file.content_type
         )
-    except DuplicateFile:
-        raise HTTPException(
-            409, f"'{file.filename}' already exists in the target month folder"
-        )
+    except (NotFound, BadRequest, Conflict) as e:
+        _raise(e)
 
 
 @app.get("/api/files/{file_id}/content")
-def file_content(file_id: str):
-    result = store.get_file(file_id)
+async def file_content(file_id: str):
+    result = await get_backend().get_file(file_id)
     if result is None:
         raise HTTPException(404, "File not found")
     content, content_type, name = result
@@ -107,25 +125,20 @@ def file_content(file_id: str):
 
 
 @app.delete("/api/files/{file_id}", status_code=204)
-def delete_file(file_id: str):
-    if not store.delete_file(file_id):
+async def delete_file(file_id: str):
+    if not await get_backend().delete_file(file_id):
         raise HTTPException(404, "File not found")
     return Response(status_code=204)
 
 
 @app.get("/api/search")
-def search(q: str = ""):
-    return store.search(q)
+async def search(q: str = ""):
+    return await get_backend().search(q)
 
 
 @app.get("/api/jobs/{job_id}")
-def get_job(job_id: str):
-    job = store.get_job(job_id)
+async def get_job(job_id: str):
+    job = await get_backend().get_job(job_id)
     if job is None:
         raise HTTPException(404, "Job not found")
     return job
-
-
-@app.get("/api/health")
-def health():
-    return {"status": "ok"}

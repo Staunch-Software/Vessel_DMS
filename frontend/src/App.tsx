@@ -4,13 +4,17 @@ import {
   createVessel,
   deleteFile,
   fileContentUrl,
+  getChildren,
+  getFolder,
   getJob,
-  getTree,
+  getMains,
+  getStats,
   listVessels,
   monthUpload,
   uploadFile,
   type FolderNode,
   type SearchResult,
+  type Stats,
   type Vessel,
 } from "./api";
 import { Sidebar } from "./components/Sidebar";
@@ -22,6 +26,8 @@ import { Dashboard } from "./components/Dashboard";
 import { SearchBar } from "./components/SearchBar";
 import { MAIN_ACCENTS, iconFor } from "./components/nodeStyle";
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 function errDetail(e: unknown, fallback: string): string {
   return (
     (e as { response?: { data?: { detail?: string } } })?.response?.data
@@ -29,73 +35,85 @@ function errDetail(e: unknown, fallback: string): string {
   );
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-function indexTree(tree: FolderNode[]): Map<string, FolderNode> {
-  const map = new Map<string, FolderNode>();
-  const walk = (n: FolderNode) => {
-    map.set(n.id, n);
-    n.children?.forEach(walk);
-  };
-  tree.forEach(walk);
-  return map;
+interface PathEntry {
+  id: string;
+  name: string;
 }
 
 export default function App() {
-  const [tree, setTree] = useState<FolderNode[]>([]);
+  const [mains, setMains] = useState<FolderNode[]>([]);
   const [vessels, setVessels] = useState<Vessel[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [view, setView] = useState<"dashboard" | "explorer">("dashboard");
-  const [path, setPath] = useState<string[]>([]); // ids from a main folder down
+  const [path, setPath] = useState<PathEntry[]>([]);
+  const [current, setCurrent] = useState<FolderNode | null>(null);
+  const [children, setChildren] = useState<FolderNode[]>([]);
+  const [loadingChildren, setLoadingChildren] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  const index = useMemo(() => indexTree(tree), [tree]);
-
-  const refresh = useCallback(async () => {
-    const [t, v] = await Promise.all([getTree(), listVessels()]);
-    setTree(t);
+  const loadTop = useCallback(async () => {
+    const [m, v, s] = await Promise.all([getMains(), listVessels(), getStats()]);
+    setMains(m);
     setVessels(v);
-    setLoading(false);
+    setStats(s);
   }, []);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    loadTop();
+  }, [loadTop]);
+
+  const currentId = path.length ? path[path.length - 1].id : null;
+
+  // Load the current folder's node + children whenever navigation changes.
+  const loadCurrent = useCallback(async () => {
+    if (!currentId) {
+      setCurrent(null);
+      setChildren(mains);
+      return;
+    }
+    setLoadingChildren(true);
+    try {
+      const [node, kids] = await Promise.all([
+        getFolder(currentId),
+        getChildren(currentId),
+      ]);
+      setCurrent(node);
+      setChildren(kids);
+    } finally {
+      setLoadingChildren(false);
+    }
+  }, [currentId, mains]);
+
+  useEffect(() => {
+    if (view === "explorer") loadCurrent();
+  }, [view, currentId, loadCurrent]);
 
   // ----- navigation -----
-  const currentId = path.length ? path[path.length - 1] : null;
-  const current = currentId ? index.get(currentId) ?? null : null;
-  const children = current ? (current.children ?? []) : tree;
-
   const goDashboard = () => setView("dashboard");
   const openMain = (node: FolderNode) => {
     setView("explorer");
-    setPath([node.id]);
-  };
-  const goExplorerHome = () => {
-    setView("explorer");
-    setPath([]);
+    setPath([{ id: node.id, name: node.name }]);
   };
   const openChild = (node: FolderNode) => {
     if (node.kind === "file") return;
-    setPath((p) => [...p, node.id]);
+    setPath((p) => [...p, { id: node.id, name: node.name }]);
   };
-  const crumbTo = (i: number) => {
-    if (i === 0) goExplorerHome();
-    else setPath((p) => p.slice(0, i));
+  const crumbTo = (i: number) => setPath((p) => (i === 0 ? [] : p.slice(0, i)));
+
+  const crumbs: Crumb[] = useMemo(
+    () => [{ id: null, name: "Home" }, ...path.map((p) => ({ id: p.id, name: p.name }))],
+    [path]
+  );
+
+  const navigateToResult = (r: SearchResult) => {
+    const trail = r.trail.slice();
+    if (r.kind === "file") trail.pop(); // open the file's parent folder
+    setView("explorer");
+    setPath(trail.map((t) => ({ id: t.id, name: t.name })));
   };
 
-  const crumbs: Crumb[] = useMemo(() => {
-    const list: Crumb[] = [{ id: null, name: "Home" }];
-    for (const id of path) {
-      const n = index.get(id);
-      if (n) list.push({ id, name: n.name });
-    }
-    return list;
-  }, [path, index]);
-
-  // ----- toasts / upload -----
+  // ----- toasts -----
   const upsertToast = (t: ToastItem) =>
     setToasts((prev) => {
       const i = prev.findIndex((x) => x.id === t.id);
@@ -106,6 +124,10 @@ export default function App() {
     });
   const dismissToast = (id: number) =>
     setToasts((prev) => prev.filter((t) => t.id !== id));
+
+  const refreshAfterMutation = useCallback(async () => {
+    await Promise.all([loadCurrent(), getStats().then(setStats)]);
+  }, [loadCurrent]);
 
   const handleUpload = useCallback(
     async (node: FolderNode, file: File, category?: string) => {
@@ -123,8 +145,8 @@ export default function App() {
           ? await monthUpload(node.id, file, category)
           : await uploadFile(node.id, file);
         let final = job;
-        for (let i = 0; i < 8 && final.status === "processing"; i++) {
-          await sleep(400);
+        for (let i = 0; i < 10 && final.status === "processing"; i++) {
+          await sleep(500);
           final = await getJob(job.id);
         }
         upsertToast({
@@ -134,7 +156,7 @@ export default function App() {
           detail: final.destination,
           detectedMonth: final.detected_month,
         });
-        await refresh();
+        await refreshAfterMutation();
         setTimeout(() => dismissToast(id), 6000);
       } catch (e) {
         upsertToast({
@@ -146,7 +168,7 @@ export default function App() {
         setTimeout(() => dismissToast(id), 6000);
       }
     },
-    [refresh]
+    [refreshAfterMutation]
   );
 
   const handleDelete = useCallback(
@@ -155,7 +177,7 @@ export default function App() {
       const id = Date.now() + Math.floor(Math.random() * 1000);
       try {
         await deleteFile(node.id);
-        await refresh();
+        await refreshAfterMutation();
         upsertToast({ id, status: "done", title: "Deleted", detail: node.name });
       } catch (e) {
         upsertToast({
@@ -167,32 +189,26 @@ export default function App() {
       }
       setTimeout(() => dismissToast(id), 5000);
     },
-    [refresh]
+    [refreshAfterMutation]
   );
-
-  const navigateToResult = (r: SearchResult) => {
-    setView("explorer");
-    const ids = r.trail.map((t) => t.id);
-    if (r.kind === "file") ids.pop(); // open the file's parent folder
-    setPath(ids);
-  };
 
   const handleCreate = async (name: string, imo: string) => {
     await createVessel(name, imo || undefined);
-    await refresh();
-    if (tree[0]?.id) openMain(tree[0]);
+    await loadTop();
+    setView("explorer");
+    // Land in the first main folder so the new ship is visible.
   };
 
-  const mainName = path.length ? index.get(path[0])?.name : undefined;
+  const mainName = path.length ? path[0].name : undefined;
   const accent = (mainName && MAIN_ACCENTS[mainName]) || MAIN_ACCENTS["Insurance"];
   const canUpload = !!current && (current.upload || current.month_driven);
 
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar
-        mains={tree}
+        mains={mains}
         view={view}
-        selectedMainId={path[0] ?? null}
+        selectedMainId={path[0]?.id ?? null}
         onSelectMain={openMain}
         onDashboard={goDashboard}
         onNewVessel={() => setShowModal(true)}
@@ -206,92 +222,83 @@ export default function App() {
 
         {view === "dashboard" ? (
           <>
-            <header className="border-b border-slate-200 bg-white px-8 py-5">
+            <header className="border-b border-slate-100 bg-white px-8 py-5">
               <h2 className="text-xl font-semibold text-slate-800">Dashboard</h2>
               <p className="mt-0.5 text-sm text-slate-500">
                 Fleet overview · shared SharePoint Embedded container
               </p>
             </header>
             <div className="flex-1 overflow-y-auto bg-slate-50 px-8 py-6">
-              {loading ? (
-                <p className="text-sm text-slate-500">Loading…</p>
-              ) : (
-                <Dashboard
-                  vessels={vessels}
-                  tree={tree}
-                  onOpenMain={openMain}
-                  onNewVessel={() => setShowModal(true)}
-                />
-              )}
+              <Dashboard
+                vessels={vessels}
+                mains={mains}
+                stats={stats}
+                onOpenMain={openMain}
+                onNewVessel={() => setShowModal(true)}
+              />
             </div>
           </>
         ) : (
           <>
-        {/* Breadcrumb bar */}
-        <div className="border-b border-slate-200 bg-white px-8 py-3">
-          <Breadcrumb crumbs={crumbs} onNavigate={crumbTo} />
-        </div>
+            {/* Breadcrumb bar */}
+            <div className="border-b border-slate-200 bg-white px-8 py-3">
+              <Breadcrumb crumbs={crumbs} onNavigate={crumbTo} />
+            </div>
 
-        {/* Page header */}
-        <header className="flex items-center justify-between gap-4 border-b border-slate-100 bg-white px-8 py-5">
-          <div className="min-w-0">
-            <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-slate-800">
-              {current ? (
-                <>
-                  {(() => {
-                    const { Icon, cls } = iconFor(current);
-                    return <Icon className={"h-5 w-5 " + cls} />;
-                  })()}
-                  {current.name}
-                </>
-              ) : (
-                <>
-                  <FolderOpen className="h-5 w-5 text-brand-600" />
-                  All Main Folders
-                </>
+            {/* Page header */}
+            <header className="flex items-center justify-between gap-4 border-b border-slate-100 bg-white px-8 py-5">
+              <div className="min-w-0">
+                <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-slate-800">
+                  {current ? (
+                    <>
+                      {(() => {
+                        const { Icon, cls } = iconFor(current);
+                        return <Icon className={"h-5 w-5 " + cls} />;
+                      })()}
+                      {current.name}
+                    </>
+                  ) : (
+                    <>
+                      <FolderOpen className="h-5 w-5 text-brand-600" />
+                      All Main Folders
+                    </>
+                  )}
+                </h2>
+                <p className="mt-0.5 text-sm text-slate-500">
+                  {current
+                    ? current.month_driven
+                      ? "Upload here — documents are auto-filed into monthly folders"
+                      : `${children.filter((c) => c.kind !== "file").length} folders · ${children.filter((c) => c.kind === "file").length} files`
+                    : "Shared container · pick a main folder to browse"}
+                </p>
+              </div>
+
+              {canUpload && (
+                <UploadControl node={current!} onUpload={handleUpload} variant="primary" />
               )}
-            </h2>
-            <p className="mt-0.5 text-sm text-slate-500">
-              {current
-                ? current.month_driven
-                  ? "Upload here — documents are auto-filed into monthly folders"
-                  : `${children.filter((c) => c.kind !== "file").length} folders · ${children.filter((c) => c.kind === "file").length} files`
-                : "Shared container · pick a main folder to browse"}
-            </p>
-          </div>
+            </header>
 
-          {canUpload && (
-            <UploadControl node={current!} onUpload={handleUpload} variant="primary" />
-          )}
-        </header>
-
-        {/* Body: nested page of child folders/files */}
-        <div className="flex-1 overflow-y-auto bg-slate-50 px-8 py-6">
-          {loading ? (
-            <p className="text-sm text-slate-500">Loading…</p>
-          ) : !current && tree.length === 0 ? (
-            <p className="text-sm text-slate-500">No folders yet.</p>
-          ) : children.length === 0 ? (
-            current?.month_driven ? (
-              <FolderGrid
-                items={children}
-                accent={accent}
-                onOpen={openChild}
-                onDelete={handleDelete}
-                emptyHint="No month folders yet — upload a document to create one."
-              />
-            ) : (
-              <EmptyFolder canUpload={canUpload} />
-            )
-          ) : (
-            <FolderGrid
-              items={children}
-              accent={accent}
-              onOpen={openChild}
-              onDelete={handleDelete}
-            />
-          )}
-        </div>
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto bg-slate-50 px-8 py-6">
+              {loadingChildren ? (
+                <p className="text-sm text-slate-500">Loading…</p>
+              ) : children.length === 0 ? (
+                current?.month_driven ? (
+                  <p className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
+                    No month folders yet — upload a document to create one.
+                  </p>
+                ) : (
+                  <EmptyFolder canUpload={canUpload} />
+                )
+              ) : (
+                <FolderGrid
+                  items={children}
+                  accent={accent}
+                  onOpen={openChild}
+                  onDelete={handleDelete}
+                />
+              )}
+            </div>
           </>
         )}
       </main>
@@ -313,21 +320,12 @@ function FolderGrid({
   accent,
   onOpen,
   onDelete,
-  emptyHint,
 }: {
   items: FolderNode[];
   accent: (typeof MAIN_ACCENTS)[string];
   onOpen: (n: FolderNode) => void;
   onDelete: (n: FolderNode) => void;
-  emptyHint?: string;
 }) {
-  if (items.length === 0) {
-    return (
-      <p className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
-        {emptyHint ?? "This folder is empty."}
-      </p>
-    );
-  }
   const folders = items.filter((i) => i.kind !== "file");
   const files = items.filter((i) => i.kind === "file");
   return (
@@ -401,7 +399,6 @@ function FolderCard({
   onOpen: (n: FolderNode) => void;
 }) {
   const { Icon, cls } = iconFor(node);
-  const count = node.children?.length ?? 0;
   return (
     <button
       onClick={() => onOpen(node)}
@@ -429,8 +426,6 @@ function FolderCard({
                 : node.name.toLowerCase().includes("common")
                   ? "Common"
                   : "Folder"}
-          {count > 0 && <span className="text-slate-300">·</span>}
-          {count > 0 && <span>{count} items</span>}
         </span>
       </span>
       {node.month_driven && (

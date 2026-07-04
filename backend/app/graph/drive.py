@@ -8,7 +8,9 @@ from urllib.parse import quote
 
 import httpx
 
+from ..config import settings
 from .client import GraphError, graph
+from .http import verify
 
 # Graph: files <= 4 MiB can use a simple PUT; larger needs an upload session.
 SIMPLE_UPLOAD_LIMIT = 4 * 1024 * 1024
@@ -42,10 +44,10 @@ async def find_child(drive_id: str, parent_id: str, name: str) -> dict | None:
 
 
 async def ensure_folder(drive_id: str, parent_id: str, name: str) -> dict:
-    """Return the child folder named `name` under `parent_id`, creating it if absent."""
-    existing = await find_child(drive_id, parent_id, name)
-    if existing and "folder" in existing:
-        return existing
+    """Return the child folder named `name` under `parent_id`, creating it if absent.
+
+    Create-first: one API call when the folder is new (the common case during
+    provisioning); only falls back to a lookup if it already exists (409)."""
     try:
         return await graph().post(
             f"/drives/{drive_id}/items/{parent_id}/children",
@@ -56,11 +58,10 @@ async def ensure_folder(drive_id: str, parent_id: str, name: str) -> dict:
             },
         )
     except GraphError as e:
-        # Lost a race — fetch the now-existing folder.
         if e.status == 409:
-            again = await find_child(drive_id, parent_id, name)
-            if again:
-                return again
+            existing = await find_child(drive_id, parent_id, name)
+            if existing and "folder" in existing:
+                return existing
         raise
 
 
@@ -87,7 +88,7 @@ async def _upload_large(drive_id, parent_id, name, content) -> dict:
     size = len(content)
     result: dict = {}
     # uploadUrl is pre-authenticated — must NOT carry the bearer header.
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=120, verify=verify()) as client:
         for start in range(0, size, CHUNK):
             end = min(start + CHUNK, size)
             chunk = content[start:end]
@@ -104,6 +105,48 @@ async def _upload_large(drive_id, parent_id, name, content) -> dict:
             if resp.content:
                 result = resp.json()
     return result
+
+
+async def get_item(drive_id: str, item_id: str) -> dict:
+    return await graph().get(f"/drives/{drive_id}/items/{item_id}")
+
+
+async def download_file(drive_id: str, item_id: str) -> tuple[bytes, str, str]:
+    """Return (content, content_type, name) for a file driveItem.
+
+    Fetch full item metadata (no $select — otherwise the pre-authed
+    @microsoft.graph.downloadUrl is omitted) and download the bytes from it.
+    Falls back to the /content endpoint *following redirects*."""
+    meta = await graph().get(f"/drives/{drive_id}/items/{item_id}")
+    name = meta.get("name", "download")
+    ctype = (meta.get("file") or {}).get("mimeType", "application/octet-stream")
+    url = meta.get("@microsoft.graph.downloadUrl")
+    if url:
+        async with httpx.AsyncClient(timeout=120, follow_redirects=True, verify=verify()) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.content, ctype, name
+    # Fallback: authenticated content endpoint (302 -> storage host; httpx
+    # strips the auth header on the cross-host redirect, which is correct).
+    from .client import graph as _graph
+
+    token = _graph()._token()
+    async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+        resp = await client.get(
+            f"{settings.graph_base_url}/drives/{drive_id}/items/{item_id}/content",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        resp.raise_for_status()
+        return resp.content, ctype, name
+
+
+async def search_items(drive_id: str, query: str) -> list[dict]:
+    q = query.replace("'", "''")
+    data = await graph().get(
+        f"/drives/{drive_id}/root/search(q='{q}')"
+        "?$select=id,name,file,folder,parentReference&$top=50"
+    )
+    return data.get("value", [])
 
 
 async def delete_item(drive_id: str, item_id: str) -> None:
