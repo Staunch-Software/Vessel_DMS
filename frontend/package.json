@@ -9,6 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@azure/msal-browser": "^5.16.0",
+    "@azure/msal-react": "^5.5.1",
     "@rollup/rollup-win32-x64-msvc": "^4.62.2",
     "axios": "^1.7.9",
     "lucide-react": "^0.469.0",

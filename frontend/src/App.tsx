@@ -18,7 +18,7 @@ import {
   type Vessel,
 } from "./api";
 import { useMsal } from "@azure/msal-react";
-import { LoginPage } from "./components/LoginPage";
+import { LoginPage } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
 import { CreateVesselModal } from "./components/CreateVesselModal";
 import { Breadcrumb, type Crumb } from "./components/Breadcrumb";

@@ -1,4 +1,4 @@
-import { Anchor, LayoutDashboard, Layers, Plus } from "lucide-react";
+import { LayoutDashboard, Layers, Plus, LogOut, ShieldOff } from "lucide-react";
 import type { FolderNode } from "../api";
 import { MAIN_ACCENTS } from "./nodeStyle";
 
@@ -9,6 +9,8 @@ interface Props {
   onSelectMain: (node: FolderNode) => void;
   onDashboard: () => void;
   onNewVessel: () => void;
+  onSignOut: () => void;
+  onGlobalSignOut: () => void;
 }
 
 export function Sidebar({
@@ -18,6 +20,8 @@ export function Sidebar({
   onSelectMain,
   onDashboard,
   onNewVessel,
+  onSignOut,
+  onGlobalSignOut,
 }: Props) {
   return (
     <aside className="flex h-full w-72 shrink-0 flex-col bg-navy-900 text-slate-200">
@@ -25,12 +29,14 @@ export function Sidebar({
         onClick={onDashboard}
         className="flex items-center gap-3 px-5 py-5 text-left transition hover:bg-white/5"
       >
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500/20 ring-1 ring-brand-400/30">
-          <Anchor className="h-5 w-5 text-brand-300" />
-        </div>
+        <img
+          src="/nissen-logo.svg"
+          alt="Nissen Kaiun logo"
+          className="h-10 w-auto drop-shadow-md"
+        />
         <div>
           <h1 className="text-sm font-semibold leading-tight text-white">
-            Vessel DMS
+            Nissen DMS
           </h1>
           <p className="text-[11px] text-slate-400">SharePoint Embedded</p>
         </div>
@@ -96,8 +102,26 @@ export function Sidebar({
         })}
       </nav>
 
-      <div className="border-t border-white/5 px-5 py-3 text-[11px] text-slate-500">
-        UI preview · stub data
+      {/* Sign-out section */}
+      <div className="border-t border-white/10 px-3 py-3 space-y-1">
+        <button
+          onClick={onSignOut}
+          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-300 transition hover:bg-white/5 hover:text-white"
+        >
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10">
+            <LogOut className="h-4 w-4 text-brand-300" />
+          </span>
+          Sign Out
+        </button>
+        <button
+          onClick={onGlobalSignOut}
+          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-300"
+        >
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/5">
+            <ShieldOff className="h-4 w-4 text-slate-500" />
+          </span>
+          Sign Out All Accounts
+        </button>
       </div>
     </aside>
   );
