@@ -17,6 +17,8 @@ import {
   type Stats,
   type Vessel,
 } from "./api";
+import { useMsal } from "@azure/msal-react";
+import { LoginPage } from "./components/LoginPage";
 import { Sidebar } from "./components/Sidebar";
 import { CreateVesselModal } from "./components/CreateVesselModal";
 import { Breadcrumb, type Crumb } from "./components/Breadcrumb";
@@ -43,6 +45,8 @@ interface PathEntry {
 export default function App() {
   const [mains, setMains] = useState<FolderNode[]>([]);
   const [vessels, setVessels] = useState<Vessel[]>([]);
+  const [user, setUser] = useState<{ display_name: string; email: string } | null>(null);
+  const { instance, accounts, inProgress } = useMsal();
   const [stats, setStats] = useState<Stats | null>(null);
   const [view, setView] = useState<"dashboard" | "explorer">("dashboard");
   const [path, setPath] = useState<PathEntry[]>([]);
@@ -59,6 +63,82 @@ export default function App() {
     setStats(s);
   }, []);
 
+  useEffect(() => {
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        window.location.reload();
+      }
+    };
+    window.addEventListener("pageshow", handlePageShow);
+    return () => window.removeEventListener("pageshow", handlePageShow);
+  }, []);
+
+  // Redirect unauthenticated users on the /homepage route back to the root path /
+  useEffect(() => {
+    if (
+      !user &&
+      inProgress === "none" &&
+      accounts.length === 0 &&
+      window.location.pathname === "/homepage"
+    ) {
+      window.history.replaceState({}, "", "/");
+    }
+  }, [user, inProgress, accounts]);
+
+  // Auto-authenticate from a cached MSAL session (only when MSAL is fully settled)
+  useEffect(() => {
+    let active = true;
+    if (
+      inProgress === "none" &&
+      accounts.length > 0 &&
+      !user &&
+      window.location.pathname !== "/signout"
+    ) {
+      const account = accounts[0];
+      instance
+        .acquireTokenSilent({
+          scopes: ["User.Read"],
+          account: account,
+        })
+        .then(async (response) => {
+          if (!active) return;
+          try {
+            const res = await fetch("/api/auth/login", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                access_token: response.accessToken,
+                tenant_id: account.tenantId || "",
+              }),
+            });
+            if (res.ok) {
+              const payload = await res.json();
+              setUser({
+                display_name: payload.display_name || account.name || account.username,
+                email: payload.email || account.username,
+              });
+            } else {
+              console.error("Backend validation failed during auto-login");
+            }
+          } catch (e) {
+            console.error("Backend login sync failed during auto-login", e);
+          }
+        })
+        .catch((err) => {
+          console.error("Token acquisition failed during auto-login", err);
+        });
+    }
+    return () => {
+      active = false;
+    };
+  }, [accounts, inProgress, user, instance]);
+
+  // Redirect to /homepage when authenticated
+  useEffect(() => {
+    if (user && window.location.pathname !== "/homepage") {
+      window.history.replaceState({}, "", "/homepage");
+    }
+  }, [user]);
   useEffect(() => {
     loadTop();
   }, [loadTop]);
@@ -199,9 +279,114 @@ export default function App() {
     // Land in the first main folder so the new ship is visible.
   };
 
+  const handleSignOut = async () => {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: user?.email }),
+      });
+    } catch (e) {
+      console.error("Backend logout call failed", e);
+    }
+
+    // Call MSAL logout locally for all accounts to clear cookies/session/local cache
+    for (const account of accounts) {
+      try {
+        await instance.logoutRedirect({
+          account,
+          onRedirectNavigate: () => false // blocks browser redirect to Microsoft
+        });
+      } catch (e) {
+        console.error("Local logout failed for account", account.username, e);
+      }
+    }
+
+    sessionStorage.clear();
+    localStorage.clear();
+    window.location.href = "/signout";
+  };
+
+  /** Sign out of ALL Microsoft accounts on this device (ends every SSO session) */
+  const handleGlobalSignOut = async () => {
+    // Send a backend logout request for every account cached in MSAL
+    const logoutPromises = accounts.map(account => {
+      const email = account.username;
+      return fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      }).catch(e => console.error("Backend logout failed for", email, e));
+    });
+
+    if (user?.email && !accounts.some(a => a.username === user.email)) {
+      logoutPromises.push(
+        fetch("/api/auth/logout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: user.email }),
+        }).catch(e => console.error("Backend logout failed for", user.email, e))
+      );
+    }
+
+    try {
+      await Promise.all(logoutPromises);
+    } catch (e) {
+      console.error("Failed to complete some backend logouts", e);
+    }
+
+    // Call MSAL logout locally for all accounts to clear cookies/session/local cache
+    // without redirecting to Microsoft's account-picking/logout pages.
+    for (const account of accounts) {
+      try {
+        await instance.logoutRedirect({
+          account,
+          onRedirectNavigate: () => false // blocks browser redirect to Microsoft
+        });
+      } catch (e) {
+        console.error("Local logout failed for account", account.username, e);
+      }
+    }
+
+    sessionStorage.clear();
+    localStorage.clear();
+    window.location.href = "/signout";
+  };
+
   const mainName = path.length ? path[0].name : undefined;
   const accent = (mainName && MAIN_ACCENTS[mainName]) || MAIN_ACCENTS["Insurance"];
   const canUpload = !!current && (current.upload || current.month_driven);
+  // Show a neutral loading screen while MSAL is handling any interaction
+  // or when we are in the process of auto-authenticating a cached account.
+  // This prevents the login page from briefly flashing before moving to the home page.
+  const isMsalActive = accounts.length > 0 && !user && window.location.pathname !== "/signout";
+
+  if (inProgress !== "none" || isMsalActive) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#fbf5ee]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 rounded-full border-2 border-violet-300 border-t-violet-600 animate-spin" />
+          <p className="text-sm text-slate-500 tracking-wide font-semibold">Signing in…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (window.location.pathname === "/signout") {
+    return (
+      <LoginPage
+        onAuthenticated={setUser}
+        signedOut
+        onSignBackIn={() => {
+          window.location.href = "/";
+        }}
+      />
+    );
+  }
+
+  if (!user) {
+    return <LoginPage onAuthenticated={setUser} />;
+  }
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -212,6 +397,8 @@ export default function App() {
         onSelectMain={openMain}
         onDashboard={goDashboard}
         onNewVessel={() => setShowModal(true)}
+        onSignOut={handleSignOut}
+        onGlobalSignOut={handleGlobalSignOut}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
