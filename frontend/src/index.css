@@ -17,6 +17,19 @@
   --color-navy-900: #0a2027;
   --color-navy-950: #06161b;
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* Custom animations */
+  --animate-fade-in: fadeIn 0.15s ease-out;
+  --animate-scale-up: scaleUp 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes scaleUp {
+    from { transform: scale(0.96); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
 }
 
 html,

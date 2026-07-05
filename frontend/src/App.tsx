@@ -296,7 +296,7 @@ export default function App() {
         await instance.logoutRedirect({
           account,
           onRedirectNavigate: () => false // blocks browser redirect to Microsoft
-        });
+        } as any);
       } catch (e) {
         console.error("Local logout failed for account", account.username, e);
       }
@@ -342,7 +342,7 @@ export default function App() {
         await instance.logoutRedirect({
           account,
           onRedirectNavigate: () => false // blocks browser redirect to Microsoft
-        });
+        } as any);
       } catch (e) {
         console.error("Local logout failed for account", account.username, e);
       }
