@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { LayoutDashboard, Layers, Plus, LogOut, ShieldOff } from "lucide-react";
 import type { FolderNode } from "../api";
 import { MAIN_ACCENTS } from "./nodeStyle";
@@ -23,6 +24,8 @@ export function Sidebar({
   onSignOut,
   onGlobalSignOut,
 }: Props) {
+  const [showSignOutPopup, setShowSignOutPopup] = useState(false);
+
   return (
     <aside className="flex h-full w-72 shrink-0 flex-col bg-navy-900 text-slate-200">
       <button
@@ -103,9 +106,9 @@ export function Sidebar({
       </nav>
 
       {/* Sign-out section */}
-      <div className="border-t border-white/10 px-3 py-3 space-y-1">
+      <div className="border-t border-white/10 px-3 py-3">
         <button
-          onClick={onSignOut}
+          onClick={() => setShowSignOutPopup(true)}
           className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-300 transition hover:bg-white/5 hover:text-white"
         >
           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10">
@@ -113,16 +116,77 @@ export function Sidebar({
           </span>
           Sign Out
         </button>
-        <button
-          onClick={onGlobalSignOut}
-          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-300"
-        >
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/5">
-            <ShieldOff className="h-4 w-4 text-slate-500" />
-          </span>
-          Sign Out All Accounts
-        </button>
       </div>
+
+      {/* Sign Out Modal Popup */}
+      {showSignOutPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
+          {/* Click outside to close */}
+          <div 
+            className="absolute inset-0" 
+            onClick={() => setShowSignOutPopup(false)} 
+          />
+          
+          <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-navy-950 p-6 shadow-2xl animate-scale-up text-slate-200">
+            <div className="flex items-center gap-3 border-b border-white/10 pb-4 mb-5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-400">
+                <LogOut className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-white">Sign Out</h3>
+                <p className="text-xs text-slate-400">Choose your sign out method</p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <button
+                onClick={() => {
+                  setShowSignOutPopup(false);
+                  onSignOut();
+                }}
+                className="group flex w-full items-center justify-between rounded-xl bg-white/5 p-4 text-left border border-white/5 transition hover:bg-white/10 hover:border-brand-500/30 cursor-pointer"
+              >
+                <div className="pr-4">
+                  <div className="text-sm font-semibold text-white group-hover:text-brand-300 transition">
+                    Sign Out (Current Account)
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    Sign out of your active session on this device.
+                  </div>
+                </div>
+                <LogOut className="h-5 w-5 text-slate-400 group-hover:text-brand-400 transition shrink-0" />
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowSignOutPopup(false);
+                  onGlobalSignOut();
+                }}
+                className="group flex w-full items-center justify-between rounded-xl bg-rose-500/5 p-4 text-left border border-rose-500/5 transition hover:bg-rose-500/10 hover:border-rose-500/30 cursor-pointer"
+              >
+                <div className="pr-4">
+                  <div className="text-sm font-semibold text-rose-300 group-hover:text-rose-200 transition">
+                    Sign Out All Accounts
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    Completely sign out of all Microsoft SSO accounts on this device.
+                  </div>
+                </div>
+                <ShieldOff className="h-5 w-5 text-slate-500 group-hover:text-rose-400 transition shrink-0" />
+              </button>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => setShowSignOutPopup(false)}
+                className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-sm font-medium text-slate-300 hover:bg-white/10 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

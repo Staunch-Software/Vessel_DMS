@@ -473,13 +473,13 @@ function LoginView() {
                         <button
                             type="button"
                             onClick={() => void handleContinue()}
-                            disabled={loading || inProgress === "login"}
+                            disabled={loading || (inProgress as string) === "login"}
                             className="w-full mt-6 flex items-center gap-3 px-5 py-3.5 rounded-lg bg-brand-600 hover:bg-brand-500 shadow-md shadow-brand-900/40 hover:shadow-lg active:scale-[0.99] transition disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                             <MicrosoftIcon />
                             <span className="flex-1">
                                 <span className="block text-sm font-semibold text-white">
-                                    {loading || inProgress === "login"
+                                    {loading || (inProgress as string) === "login"
                                         ? "Redirecting…"
                                         : "Continue with Microsoft"}
                                 </span>
