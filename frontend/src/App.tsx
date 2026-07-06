@@ -27,6 +27,11 @@ import { ToastStack, type ToastItem } from "./components/Toast";
 import { Dashboard } from "./components/Dashboard";
 import { SearchBar } from "./components/SearchBar";
 import { MAIN_ACCENTS, iconFor } from "./components/nodeStyle";
+<<<<<<< Updated upstream
+=======
+import { fileMeta, formatDate, formatSize } from "./components/fileType";
+import ProfilePage from "./components/Profile";
+>>>>>>> Stashed changes
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -48,7 +53,7 @@ export default function App() {
   const [user, setUser] = useState<{ display_name: string; email: string } | null>(null);
   const { instance, accounts, inProgress } = useMsal();
   const [stats, setStats] = useState<Stats | null>(null);
-  const [view, setView] = useState<"dashboard" | "explorer">("dashboard");
+  const [view, setView] = useState<"dashboard" | "explorer" | "profile">("dashboard");
   const [path, setPath] = useState<PathEntry[]>([]);
   const [current, setCurrent] = useState<FolderNode | null>(null);
   const [children, setChildren] = useState<FolderNode[]>([]);
@@ -171,6 +176,7 @@ export default function App() {
 
   // ----- navigation -----
   const goDashboard = () => setView("dashboard");
+  const goProfile = () => setView("profile");
   const openMain = (node: FolderNode) => {
     setView("explorer");
     setPath([{ id: node.id, name: node.name }]);
@@ -390,6 +396,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen overflow-hidden">
+<<<<<<< Updated upstream
       <Sidebar
         mains={mains}
         view={view}
@@ -423,8 +430,53 @@ export default function App() {
                 onOpenMain={openMain}
                 onNewVessel={() => setShowModal(true)}
               />
+=======
+      {view === "profile" ? (
+        <ProfilePage
+          mains={mains}
+          onBack={() => setView("explorer")}
+          onDashboard={goDashboard}
+        />
+      ) : (
+        <>
+          <Sidebar
+            mains={mains}
+            view={view as "dashboard" | "explorer"}
+            selectedMainId={path[0]?.id ?? null}
+            onSelectMain={openMain}
+            onDashboard={goDashboard}
+            onNewVessel={() => setShowModal(true)}
+            onProfile={goProfile}
+          />
+
+          <main className="flex flex-1 flex-col overflow-hidden">
+            {/* Top bar: vessel switcher + global search */}
+            <div className="flex items-center gap-3 border-b border-slate-200 bg-white px-8 py-2.5">
+              <VesselSwitcher vessels={vessels} selected={selectedVessel} onSelect={setSelectedVessel} />
+              <div className="ml-auto">
+                <SearchBar onNavigate={navigateToResult} vesselScope={selectedVessel} />
+              </div>
+>>>>>>> Stashed changes
             </div>
-          </>
+
+            {view === "dashboard" ? (
+              <>
+                <header className="border-b border-slate-100 bg-white px-8 py-5">
+                  <h2 className="text-xl font-semibold text-slate-800">Dashboard</h2>
+                  <p className="mt-0.5 text-sm text-slate-500">
+                    Fleet overview · shared SharePoint Embedded container
+                  </p>
+                </header>
+                <div className="flex-1 overflow-y-auto bg-slate-50 px-8 py-6">
+                  <Dashboard
+                    vessels={vessels}
+                    mains={mains}
+                    stats={stats}
+                    onOpenMain={openMain}
+                    onNewVessel={() => setShowModal(true)}
+                  />
+                </div>
+              </>
         ) : (
           <>
             {/* Breadcrumb bar */}
@@ -498,6 +550,8 @@ export default function App() {
       )}
 
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
+      </>
+      )}
     </div>
   );
 }

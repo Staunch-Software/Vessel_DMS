@@ -1,5 +1,9 @@
+<<<<<<< Updated upstream
 import { useState } from "react";
 import { LayoutDashboard, Layers, Plus, LogOut, ShieldOff } from "lucide-react";
+=======
+import { Anchor, LayoutDashboard, Layers, Plus, User } from "lucide-react";
+>>>>>>> Stashed changes
 import type { FolderNode } from "../api";
 import { MAIN_ACCENTS } from "./nodeStyle";
 
@@ -10,8 +14,12 @@ interface Props {
   onSelectMain: (node: FolderNode) => void;
   onDashboard: () => void;
   onNewVessel: () => void;
+<<<<<<< Updated upstream
   onSignOut: () => void;
   onGlobalSignOut: () => void;
+=======
+  onProfile: () => void;
+>>>>>>> Stashed changes
 }
 
 export function Sidebar({
@@ -21,8 +29,12 @@ export function Sidebar({
   onSelectMain,
   onDashboard,
   onNewVessel,
+<<<<<<< Updated upstream
   onSignOut,
   onGlobalSignOut,
+=======
+  onProfile,
+>>>>>>> Stashed changes
 }: Props) {
   const [showSignOutPopup, setShowSignOutPopup] = useState(false);
 
@@ -105,6 +117,7 @@ export function Sidebar({
         })}
       </nav>
 
+<<<<<<< Updated upstream
       {/* Sign-out section */}
       <div className="border-t border-white/10 px-3 py-3">
         <button
@@ -115,6 +128,24 @@ export function Sidebar({
             <LogOut className="h-4 w-4 text-brand-300" />
           </span>
           Sign Out
+=======
+      <div className="border-t border-white/5 px-4 py-3">
+        <button
+          onClick={onProfile}
+          className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition hover:bg-white/8 group"
+          title="View Profile"
+        >
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-500/20 ring-1 ring-brand-400/30">
+            <User className="h-4 w-4 text-brand-300" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-medium text-slate-200">Anjali Menon</p>
+            <p className="text-[10px] text-slate-500">Document Controller</p>
+          </div>
+          <span className="rounded-md bg-brand-600/20 px-1.5 py-0.5 text-[10px] font-medium text-brand-300 opacity-0 transition group-hover:opacity-100">
+            Profile
+          </span>
+>>>>>>> Stashed changes
         </button>
       </div>
 
