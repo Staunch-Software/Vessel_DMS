@@ -247,6 +247,8 @@ class RealBackend:
                         "month_driven": False,
                         "has_children": False,
                         "ext": ext,
+                        "size": it.get("size"),
+                        "modified": it.get("lastModifiedDateTime"),
                     }
                 out.append(node)
             db.commit()

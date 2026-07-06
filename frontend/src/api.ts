@@ -17,6 +17,8 @@ export interface FolderNode {
   month_driven: boolean;
   has_children: boolean;
   ext?: string;
+  size?: number | null;
+  modified?: string | null;
   categories?: string[];
   children?: FolderNode[];
 }

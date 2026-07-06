@@ -6,7 +6,7 @@ upload + month-folder behaviour so the UI can be built against realistic data.
 """
 import itertools
 import re
-from datetime import date
+from datetime import date, datetime
 
 from . import template
 
@@ -123,6 +123,9 @@ class Store:
         }
         if "ext" in node:
             out["ext"] = node["ext"]
+        if node["kind"] == "file":
+            out["size"] = node.get("size")
+            out["modified"] = node.get("modified")
         if node["month_driven"]:
             out["categories"] = [c["name"] for c in node.get("month_children", [])]
         if depth != 0:
@@ -180,6 +183,7 @@ class Store:
         node["content"] = content
         node["content_type"] = content_type or "application/octet-stream"
         node["size"] = len(content)
+        node["modified"] = datetime.now().isoformat()
         return node
 
     def _has_child_named(self, parent_id, name):
