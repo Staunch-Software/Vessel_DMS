@@ -136,9 +136,19 @@ class RealBackend:
     async def list_vessels(self):
         with SessionLocal() as db:
             rows = db.query(models.Vessel).order_by(models.Vessel.created_at).all()
-            return [{"id": str(v.id), "name": v.name, "imo": v.imo} for v in rows]
+            return [
+                {
+                    "id": str(v.id),
+                    "name": v.name,
+                    "imo": v.imo,
+                    "shipyard": v.shipyard,
+                    "hull_number": v.hull_number,
+                    "vessel_type": v.vessel_type,
+                }
+                for v in rows
+            ]
 
-    async def create_vessel(self, name, imo):
+    async def create_vessel(self, name, imo, shipyard=None, hull_number=None, vessel_type=None):
         name = (name or "").strip()
         imo = (imo or "").strip()
         if not name:
@@ -155,10 +165,17 @@ class RealBackend:
         drive_id = await self._drive()
         # Create the vessel row + capture main folder ids, then release the session.
         with SessionLocal() as db:
-            vessel = models.Vessel(name=name, imo=imo or None)
+            vessel = models.Vessel(
+                name=name,
+                imo=imo or None,
+                shipyard=shipyard,
+                hull_number=hull_number,
+                vessel_type=vessel_type,
+            )
             db.add(vessel)
             db.flush()
             vessel_id, vname, vimo = vessel.id, vessel.name, vessel.imo
+            vshipyard, vhull, vtype = vessel.shipyard, vessel.hull_number, vessel.vessel_type
             main_ids = {
                 m: db.query(models.Folder).filter_by(path=m).one().drive_item_id
                 for m in template.MAIN_FOLDERS
@@ -179,7 +196,14 @@ class RealBackend:
             )
 
         await asyncio.gather(*(provision_main(m) for m in template.MAIN_FOLDERS))
-        return {"id": str(vessel_id), "name": vname, "imo": vimo}
+        return {
+            "id": str(vessel_id),
+            "name": vname,
+            "imo": vimo,
+            "shipyard": vshipyard,
+            "hull_number": vhull,
+            "vessel_type": vtype,
+        }
 
     # ----------------------------------------------------------- navigation
     async def mains(self):

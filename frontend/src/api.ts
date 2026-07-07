@@ -27,7 +27,25 @@ export interface Vessel {
   id: string;
   name: string;
   imo?: string | null;
+  shipyard?: string | null;
+  hull_number?: string | null;
+  vessel_type?: string | null;
 }
+
+export interface VesselInput {
+  name: string;
+  imo?: string;
+  shipyard?: string;
+  hull_number?: string;
+  vessel_type?: string;
+}
+
+export const VESSEL_TYPES = [
+  "Bulk Carrier",
+  "Container Carrier",
+  "Gas Carrier",
+  "Other Cargo Ships",
+] as const;
 
 export interface Job {
   id: string;
@@ -43,11 +61,8 @@ export async function listVessels(): Promise<Vessel[]> {
   return (await api.get("/vessels")).data;
 }
 
-export async function createVessel(
-  name: string,
-  imo?: string
-): Promise<unknown> {
-  return (await api.post("/vessels", { name, imo })).data;
+export async function createVessel(payload: VesselInput): Promise<unknown> {
+  return (await api.post("/vessels", payload)).data;
 }
 
 export interface Stats {

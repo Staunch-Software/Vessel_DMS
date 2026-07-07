@@ -235,8 +235,8 @@ export default function App() {
     [refreshAfterMutation]
   );
 
-  const handleCreate = async (name: string, imo: string) => {
-    await createVessel(name, imo || undefined);
+  const handleCreate = async (data: import("./api").VesselInput) => {
+    await createVessel(data);
     await loadTop();
     setView("explorer");
   };

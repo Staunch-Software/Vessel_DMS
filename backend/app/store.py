@@ -72,7 +72,7 @@ class Store:
             self._build_subtree(template.COMMON_TEMPLATE[name], main["id"])
 
     # ----------------------------------------------------------------- vessels
-    def add_vessel(self, name, imo=None):
+    def add_vessel(self, name, imo=None, shipyard=None, hull_number=None, vessel_type=None):
         ship_folder_ids = {}
         for main_name, main in self.main_folders.items():
             ship = self._make_node(name, "ship", main["id"])
@@ -84,6 +84,9 @@ class Store:
             "id": _new_id(),
             "name": name,
             "imo": imo,
+            "shipyard": shipyard,
+            "hull_number": hull_number,
+            "vessel_type": vessel_type,
             "ship_folders": ship_folder_ids,
         }
         self.vessels.append(vessel)
