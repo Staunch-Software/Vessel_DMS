@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { ChevronRight, Eye, FolderOpen, Trash2 } from "lucide-react";
 import {
   createVessel,
@@ -27,11 +27,10 @@ import { ToastStack, type ToastItem } from "./components/Toast";
 import { Dashboard } from "./components/Dashboard";
 import { SearchBar } from "./components/SearchBar";
 import { MAIN_ACCENTS, iconFor } from "./components/nodeStyle";
-<<<<<<< Updated upstream
-=======
-import { fileMeta, formatDate, formatSize } from "./components/fileType";
 import ProfilePage from "./components/Profile";
->>>>>>> Stashed changes
+import AuthCallback from "./AuthCallback";
+
+
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -53,13 +52,38 @@ export default function App() {
   const [user, setUser] = useState<{ display_name: string; email: string } | null>(null);
   const { instance, accounts, inProgress } = useMsal();
   const [stats, setStats] = useState<Stats | null>(null);
-  const [view, setView] = useState<"dashboard" | "explorer" | "profile">("dashboard");
-  const [path, setPath] = useState<PathEntry[]>([]);
+
+  const [view, setView] = useState<"dashboard" | "explorer" | "profile">(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const v = params.get("view");
+      if (v === "explorer" || v === "profile" || v === "dashboard") {
+        return v;
+      }
+    }
+    return "dashboard";
+  });
+
+  const [path, setPath] = useState<PathEntry[]>(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const p = params.get("path");
+      if (p) {
+        try {
+          return JSON.parse(p);
+        } catch {
+          return [];
+        }
+      }
+    }
+    return [];
+  });
   const [current, setCurrent] = useState<FolderNode | null>(null);
   const [children, setChildren] = useState<FolderNode[]>([]);
   const [loadingChildren, setLoadingChildren] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const loadTop = useCallback(async () => {
     const [m, v, s] = await Promise.all([getMains(), listVessels(), getStats()]);
@@ -68,9 +92,28 @@ export default function App() {
     setStats(s);
   }, []);
 
+  // Post-auth history cleanup handshake.
+  // AuthCallback sets "_postAuthGoHome" then calls history.go(-delta) to
+  // navigate back to "/", which causes a full reload.  Once MSAL has settled
+  // (inProgress===none) we replace the current entry with /homepage — this
+  // also discards forward history (including any Microsoft auth URLs) so the
+  // back button can never land on login.microsoftonline.com again.
+  useEffect(() => {
+    if (!sessionStorage.getItem("_postAuthGoHome")) return;
+    if (inProgress !== "none") return; // Wait for MSAL to finish initialising
+    sessionStorage.removeItem("_postAuthGoHome");
+    if (accounts.length > 0) {
+      window.location.replace("/homepage?view=dashboard");
+    }
+    // If accounts is still empty after MSAL settled the auth didn't persist;
+    // just stay on the login page (flag is already removed).
+  }, [accounts, inProgress]);
+
   useEffect(() => {
     const handlePageShow = (event: PageTransitionEvent) => {
-      if (event.persisted) {
+      // Only force a reload for bfcache restores when NOT already on the homepage.
+      // Reloading on /homepage would interfere with our history management.
+      if (event.persisted && !window.location.pathname.startsWith("/homepage")) {
         window.location.reload();
       }
     };
@@ -90,6 +133,20 @@ export default function App() {
     }
   }, [user, inProgress, accounts]);
 
+  // For automated testing: allow passing test_login=true to bypass MSAL and authenticate instantly
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("test_login") === "true") {
+      sessionStorage.setItem("test_login", "true");
+    }
+    if (sessionStorage.getItem("test_login") === "true" && !user) {
+      setUser({
+        display_name: "Test User",
+        email: "testuser@example.com",
+      });
+    }
+  }, [user]);
+
   // Auto-authenticate from a cached MSAL session (only when MSAL is fully settled)
   useEffect(() => {
     let active = true;
@@ -97,6 +154,7 @@ export default function App() {
       inProgress === "none" &&
       accounts.length > 0 &&
       !user &&
+      !authError &&
       window.location.pathname !== "/signout"
     ) {
       const account = accounts[0];
@@ -122,28 +180,77 @@ export default function App() {
                 display_name: payload.display_name || account.name || account.username,
                 email: payload.email || account.username,
               });
+              setAuthError(null);
             } else {
-              console.error("Backend validation failed during auto-login");
+              const errBody = await res.text();
+              console.error("Backend validation failed during auto-login:", errBody);
+              setAuthError(`Backend validation failed: ${res.status} ${res.statusText}. Details: ${errBody}`);
             }
           } catch (e) {
             console.error("Backend login sync failed during auto-login", e);
+            setAuthError(`Backend connection failed: ${e instanceof Error ? e.message : String(e)}`);
           }
         })
         .catch((err) => {
           console.error("Token acquisition failed during auto-login", err);
+          setAuthError(`Token acquisition failed: ${err instanceof Error ? err.message : String(err)}`);
         });
     }
     return () => {
       active = false;
     };
-  }, [accounts, inProgress, user, instance]);
+  }, [accounts, inProgress, user, authError, instance]);
 
-  // Redirect to /homepage when authenticated
-  useEffect(() => {
-    if (user && window.location.pathname !== "/homepage") {
-      window.history.replaceState({}, "", "/homepage");
+  const signOutRef = useRef<() => void>(() => { });
+
+  const navigateTo = useCallback((newView: "dashboard" | "explorer" | "profile", newPath: PathEntry[]) => {
+    setView(newView);
+    setPath(newPath);
+
+    // Build query params
+    const params = new URLSearchParams();
+    params.set("view", newView);
+    if (newPath.length > 0) {
+      params.set("path", JSON.stringify(newPath));
     }
+
+    const newUrl = `/homepage?${params.toString()}`;
+    window.history.pushState({ view: newView, path: newPath }, "", newUrl);
+  }, []);
+
+
+  useEffect(() => {
+    if (!user) return;
+
+    const homeUrl = "/homepage?view=dashboard";
+
+    // Write the floor sentinel (replaces current entry, no extra history push)
+    window.history.replaceState({ view: "dashboard", path: [], isInitial: true }, "", homeUrl);
+
+    const handlePopState = (event: PopStateEvent) => {
+      const state = (event.state || {}) as { view?: string; path?: PathEntry[]; isInitial?: boolean };
+
+      // Floor reached — bounce the user forward so they stay on the dashboard
+      // instead of navigating away from the app entirely.
+      if (state.isInitial) {
+        window.history.forward();
+        return;
+      }
+
+      // Sync React state with what the history entry remembers
+      if (state.view === "dashboard" || state.view === "explorer" || state.view === "profile") {
+        setView(state.view as "dashboard" | "explorer" | "profile");
+        setPath(state.path || []);
+      } else {
+        setView("dashboard");
+        setPath([]);
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
   }, [user]);
+
   useEffect(() => {
     loadTop();
   }, [loadTop]);
@@ -175,17 +282,14 @@ export default function App() {
   }, [view, currentId, loadCurrent]);
 
   // ----- navigation -----
-  const goDashboard = () => setView("dashboard");
-  const goProfile = () => setView("profile");
-  const openMain = (node: FolderNode) => {
-    setView("explorer");
-    setPath([{ id: node.id, name: node.name }]);
-  };
+  const goDashboard = () => navigateTo("dashboard", []);
+  const goProfile = () => navigateTo("profile", []);
+  const openMain = (node: FolderNode) => navigateTo("explorer", [{ id: node.id, name: node.name }]);
   const openChild = (node: FolderNode) => {
     if (node.kind === "file") return;
-    setPath((p) => [...p, { id: node.id, name: node.name }]);
+    navigateTo("explorer", [...path, { id: node.id, name: node.name }]);
   };
-  const crumbTo = (i: number) => setPath((p) => (i === 0 ? [] : p.slice(0, i)));
+  const crumbTo = (i: number) => navigateTo("explorer", i === 0 ? [] : path.slice(0, i));
 
   const crumbs: Crumb[] = useMemo(
     () => [{ id: null, name: "Home" }, ...path.map((p) => ({ id: p.id, name: p.name }))],
@@ -296,22 +400,28 @@ export default function App() {
       console.error("Backend logout call failed", e);
     }
 
-    // Call MSAL logout locally for all accounts to clear cookies/session/local cache
-    for (const account of accounts) {
+    sessionStorage.clear();
+    localStorage.clear();
+
+    const account = accounts[0] || instance.getActiveAccount();
+    if (account) {
       try {
+        // onRedirectNavigate returning false clears the MSAL token cache
+        // locally without navigating the browser to Microsoft's logout page.
         await instance.logoutRedirect({
           account,
-          onRedirectNavigate: () => false // blocks browser redirect to Microsoft
-        } as any);
+          onRedirectNavigate: () => false,
+        });
       } catch (e) {
-        console.error("Local logout failed for account", account.username, e);
+        console.error("MSAL logout failed", e);
       }
     }
 
-    sessionStorage.clear();
-    localStorage.clear();
     window.location.href = "/signout";
   };
+
+  // Keep ref up-to-date so the popstate handler always calls the latest version
+  signOutRef.current = handleSignOut;
 
   /** Sign out of ALL Microsoft accounts on this device (ends every SSO session) */
   const handleGlobalSignOut = async () => {
@@ -341,21 +451,23 @@ export default function App() {
       console.error("Failed to complete some backend logouts", e);
     }
 
-    // Call MSAL logout locally for all accounts to clear cookies/session/local cache
-    // without redirecting to Microsoft's account-picking/logout pages.
-    for (const account of accounts) {
+    sessionStorage.clear();
+    localStorage.clear();
+
+    // Clear MSAL cache silently — onRedirectNavigate returning false stops
+    // the browser from navigating to Microsoft's logout page while still
+    // removing the account from the local token cache.
+    if (accounts.length > 0) {
       try {
         await instance.logoutRedirect({
-          account,
-          onRedirectNavigate: () => false // blocks browser redirect to Microsoft
-        } as any);
+          account: accounts[0],
+          onRedirectNavigate: () => false,
+        });
       } catch (e) {
-        console.error("Local logout failed for account", account.username, e);
+        console.error("MSAL silent cache clear failed", e);
       }
     }
 
-    sessionStorage.clear();
-    localStorage.clear();
     window.location.href = "/signout";
   };
 
@@ -367,6 +479,37 @@ export default function App() {
   // This prevents the login page from briefly flashing before moving to the home page.
   const isMsalActive = accounts.length > 0 && !user && window.location.pathname !== "/signout";
 
+  if (authError) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#fbf5ee]">
+        <div className="w-full max-w-md bg-white border border-rose-200 rounded-2xl p-8 shadow-lg text-center">
+          <div className="w-12 h-12 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto mb-4 font-bold text-xl">!</div>
+          <h3 className="text-lg font-semibold text-slate-800 mb-2">Authentication Error</h3>
+          <p className="text-sm text-rose-600 bg-rose-50/50 border border-rose-100 rounded-xl p-4 mb-6 text-left font-mono break-all whitespace-pre-wrap">
+            {authError}
+          </p>
+          <div className="space-y-2">
+            <button
+              onClick={() => {
+                setAuthError(null);
+                loadTop();
+              }}
+              className="w-full py-2.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-sm font-semibold transition cursor-pointer"
+            >
+              Retry Connection
+            </button>
+            <button
+              onClick={handleSignOut}
+              className="w-full py-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-sm font-semibold transition cursor-pointer"
+            >
+              Sign Out & Try Another Account
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (inProgress !== "none" || isMsalActive) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#fbf5ee]">
@@ -376,6 +519,10 @@ export default function App() {
         </div>
       </div>
     );
+  }
+
+  if (window.location.pathname === "/auth") {
+    return <AuthCallback />;
   }
 
   if (window.location.pathname === "/signout") {
@@ -394,9 +541,22 @@ export default function App() {
     return <LoginPage onAuthenticated={setUser} />;
   }
 
+  // Profile page takes the full screen (no sidebar)
+  if (view === "profile") {
+    return (
+      <ProfilePage
+        mains={mains}
+        userEmail={user.email}
+        onBack={() => setView("explorer")}
+        onDashboard={goDashboard}
+        onSignOut={handleSignOut}
+        onGlobalSignOut={handleGlobalSignOut}
+      />
+    );
+  }
+
   return (
     <div className="flex h-screen overflow-hidden">
-<<<<<<< Updated upstream
       <Sidebar
         mains={mains}
         view={view}
@@ -406,6 +566,7 @@ export default function App() {
         onNewVessel={() => setShowModal(true)}
         onSignOut={handleSignOut}
         onGlobalSignOut={handleGlobalSignOut}
+        onProfile={goProfile}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
@@ -430,53 +591,8 @@ export default function App() {
                 onOpenMain={openMain}
                 onNewVessel={() => setShowModal(true)}
               />
-=======
-      {view === "profile" ? (
-        <ProfilePage
-          mains={mains}
-          onBack={() => setView("explorer")}
-          onDashboard={goDashboard}
-        />
-      ) : (
-        <>
-          <Sidebar
-            mains={mains}
-            view={view as "dashboard" | "explorer"}
-            selectedMainId={path[0]?.id ?? null}
-            onSelectMain={openMain}
-            onDashboard={goDashboard}
-            onNewVessel={() => setShowModal(true)}
-            onProfile={goProfile}
-          />
-
-          <main className="flex flex-1 flex-col overflow-hidden">
-            {/* Top bar: vessel switcher + global search */}
-            <div className="flex items-center gap-3 border-b border-slate-200 bg-white px-8 py-2.5">
-              <VesselSwitcher vessels={vessels} selected={selectedVessel} onSelect={setSelectedVessel} />
-              <div className="ml-auto">
-                <SearchBar onNavigate={navigateToResult} vesselScope={selectedVessel} />
-              </div>
->>>>>>> Stashed changes
             </div>
-
-            {view === "dashboard" ? (
-              <>
-                <header className="border-b border-slate-100 bg-white px-8 py-5">
-                  <h2 className="text-xl font-semibold text-slate-800">Dashboard</h2>
-                  <p className="mt-0.5 text-sm text-slate-500">
-                    Fleet overview · shared SharePoint Embedded container
-                  </p>
-                </header>
-                <div className="flex-1 overflow-y-auto bg-slate-50 px-8 py-6">
-                  <Dashboard
-                    vessels={vessels}
-                    mains={mains}
-                    stats={stats}
-                    onOpenMain={openMain}
-                    onNewVessel={() => setShowModal(true)}
-                  />
-                </div>
-              </>
+          </>
         ) : (
           <>
             {/* Breadcrumb bar */}
@@ -550,8 +666,6 @@ export default function App() {
       )}
 
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
-      </>
-      )}
     </div>
   );
 }

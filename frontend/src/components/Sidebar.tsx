@@ -1,25 +1,18 @@
-<<<<<<< Updated upstream
 import { useState } from "react";
-import { LayoutDashboard, Layers, Plus, LogOut, ShieldOff } from "lucide-react";
-=======
-import { Anchor, LayoutDashboard, Layers, Plus, User } from "lucide-react";
->>>>>>> Stashed changes
+import { LayoutDashboard, Layers, Plus, User, LogOut, ShieldOff } from "lucide-react";
 import type { FolderNode } from "../api";
 import { MAIN_ACCENTS } from "./nodeStyle";
 
 interface Props {
   mains: FolderNode[];
-  view: "dashboard" | "explorer";
+  view: "dashboard" | "explorer" | "profile";
   selectedMainId: string | null;
   onSelectMain: (node: FolderNode) => void;
   onDashboard: () => void;
   onNewVessel: () => void;
-<<<<<<< Updated upstream
   onSignOut: () => void;
   onGlobalSignOut: () => void;
-=======
   onProfile: () => void;
->>>>>>> Stashed changes
 }
 
 export function Sidebar({
@@ -29,12 +22,9 @@ export function Sidebar({
   onSelectMain,
   onDashboard,
   onNewVessel,
-<<<<<<< Updated upstream
   onSignOut,
   onGlobalSignOut,
-=======
   onProfile,
->>>>>>> Stashed changes
 }: Props) {
   const [showSignOutPopup, setShowSignOutPopup] = useState(false);
 
@@ -117,9 +107,26 @@ export function Sidebar({
         })}
       </nav>
 
-<<<<<<< Updated upstream
-      {/* Sign-out section */}
-      <div className="border-t border-white/10 px-3 py-3">
+      {/* Bottom: Profile + Sign-out section */}
+      <div className="border-t border-white/10 px-3 py-3 space-y-1">
+        {/* Profile button */}
+        <button
+          onClick={onProfile}
+          className={
+            "group flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition " +
+            (view === "profile"
+              ? "bg-white/10 font-medium text-white"
+              : "text-slate-300 hover:bg-white/5 hover:text-white")
+          }
+          title="View Profile"
+        >
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10">
+            <User className="h-4 w-4 text-brand-300" />
+          </span>
+          Profile
+        </button>
+
+        {/* Sign-out button */}
         <button
           onClick={() => setShowSignOutPopup(true)}
           className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-300 transition hover:bg-white/5 hover:text-white"
@@ -128,24 +135,6 @@ export function Sidebar({
             <LogOut className="h-4 w-4 text-brand-300" />
           </span>
           Sign Out
-=======
-      <div className="border-t border-white/5 px-4 py-3">
-        <button
-          onClick={onProfile}
-          className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition hover:bg-white/8 group"
-          title="View Profile"
-        >
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-500/20 ring-1 ring-brand-400/30">
-            <User className="h-4 w-4 text-brand-300" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-medium text-slate-200">Anjali Menon</p>
-            <p className="text-[10px] text-slate-500">Document Controller</p>
-          </div>
-          <span className="rounded-md bg-brand-600/20 px-1.5 py-0.5 text-[10px] font-medium text-brand-300 opacity-0 transition group-hover:opacity-100">
-            Profile
-          </span>
->>>>>>> Stashed changes
         </button>
       </div>
 
@@ -153,11 +142,11 @@ export function Sidebar({
       {showSignOutPopup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
           {/* Click outside to close */}
-          <div 
-            className="absolute inset-0" 
-            onClick={() => setShowSignOutPopup(false)} 
+          <div
+            className="absolute inset-0"
+            onClick={() => setShowSignOutPopup(false)}
           />
-          
+
           <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-navy-950 p-6 shadow-2xl animate-scale-up text-slate-200">
             <div className="flex items-center gap-3 border-b border-white/10 pb-4 mb-5">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-400">

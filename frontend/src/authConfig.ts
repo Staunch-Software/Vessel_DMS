@@ -2,7 +2,12 @@ import { PublicClientApplication, type Configuration } from "@azure/msal-browser
 
 const tenantId = import.meta.env.VITE_AZURE_TENANT_ID || "";
 const clientId = import.meta.env.VITE_AZURE_CLIENT_ID || "";
-const redirectUri = import.meta.env.VITE_REDIRECT_URI || window.location.origin;
+
+// Ensure the redirect URI points to /homepage (the protected app page)
+const redirectUri =
+    typeof window !== "undefined"
+        ? `${window.location.origin}/auth`
+        : "http://localhost:5173/auth";
 
 const msalConfig: Configuration = {
     auth: {
@@ -12,7 +17,7 @@ const msalConfig: Configuration = {
         postLogoutRedirectUri: redirectUri,
     },
     cache: {
-        cacheLocation: "sessionStorage",
+        cacheLocation: "localStorage",
     },
 };
 

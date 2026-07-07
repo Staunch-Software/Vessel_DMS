@@ -57,3 +57,90 @@ class UploadJob(Base):
     detected_month: Mapped[str | None] = mapped_column(String(40), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(200))
+    first_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    azure_oid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    job_title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    department: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    office_location: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    office_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    address_line1: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    address_line2: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    area_locality: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    landmark: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    country: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    company_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    employee_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    manager_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    manager_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    two_factor_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    emergency_contact: Mapped["EmergencyContact | None"] = relationship(
+        back_populates="user", cascade="all, delete-orphan", uselist=False
+    )
+    folder_permissions: Mapped[list["FolderPermission"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    activity_logs: Mapped[list["ActivityLog"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class EmergencyContact(Base):
+    __tablename__ = "emergency_contacts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_email: Mapped[str] = mapped_column(
+        String(320), ForeignKey("user_profiles.email", ondelete="CASCADE"),
+        unique=True, index=True,
+    )
+    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    relationship_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    user: Mapped["UserProfile"] = relationship(back_populates="emergency_contact")
+
+
+class FolderPermission(Base):
+    __tablename__ = "folder_permissions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_email: Mapped[str] = mapped_column(
+        String(320), ForeignKey("user_profiles.email", ondelete="CASCADE"), index=True
+    )
+    folder_name: Mapped[str] = mapped_column(String(400))
+    permission_level: Mapped[str] = mapped_column(String(20))  # edit / view / approve
+
+    user: Mapped["UserProfile"] = relationship(back_populates="folder_permissions")
+
+
+class ActivityLog(Base):
+    __tablename__ = "activity_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_email: Mapped[str] = mapped_column(
+        String(320), ForeignKey("user_profiles.email", ondelete="CASCADE"), index=True
+    )
+    action: Mapped[str] = mapped_column(String(100))
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    user: Mapped["UserProfile"] = relationship(back_populates="activity_logs")

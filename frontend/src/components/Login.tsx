@@ -301,10 +301,6 @@ function SignedOutView({ onSignBackIn }: { onSignBackIn: () => void }) {
     );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────── */
-/*  Login view                                                                   */
-/* ─────────────────────────────────────────────────────────────────────────── */
-
 function LoginView() {
     const { instance, inProgress } = useMsal();
     const [email, setEmail] = useState("");
@@ -342,10 +338,12 @@ function LoginView() {
 
         setLoading(true);
         try {
+            sessionStorage.setItem("_preLoginHistLen", String(window.history.length));
+            sessionStorage.removeItem("_historyClean");
             await instance.loginRedirect({
                 ...loginRequest,
                 loginHint: hasEmail ? trimmed : undefined,
-                prompt: "login",
+                prompt: hasEmail ? "login" : "select_account",
                 extraQueryParameters: { domain_hint: "organizations" },
             });
         } catch (err) {
