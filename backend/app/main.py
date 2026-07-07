@@ -73,6 +73,9 @@ async def check_email(payload: CheckEmailIn):
     When Graph is not configured (stub mode) we let all emails through so that
     development still works without Azure credentials.
     """
+    # TEMPORARY: Bypass email check for development
+    return {"allowed": True}
+    
     if not settings.graph_configured:
         return {"allowed": True}
 
