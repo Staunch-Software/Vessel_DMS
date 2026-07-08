@@ -38,7 +38,7 @@ class Store:
             "kind": kind,
             "parent_id": parent_id,
             "children": [],
-            "upload": kind in ("leaf", "month_driven"),
+            "upload": kind in ("leaf", "month_driven", "month"),
             "month_driven": kind == "month_driven",
         }
         if month_children is not None:
@@ -178,6 +178,28 @@ class Store:
         for cat in md.get("month_children", []):
             self._build_subtree(cat, month_node["id"])
         return month_node
+
+    # ----------------------------------------------------------------- uploads
+    def create_subfolder(self, parent_id: str, name: str):
+        """Manually create a named sub-folder inside a month_driven folder,
+        including its category children."""
+        from .services.errors import BadRequest, Conflict
+        parent = self.nodes.get(parent_id)
+        if parent is None:
+            from .services.errors import NotFound
+            raise NotFound("Parent folder not found")
+        if not parent["month_driven"]:
+            raise BadRequest("Can only create sub-folders inside month-driven folders")
+        name = name.strip()
+        if not name:
+            raise BadRequest("Folder name is required")
+        if self._has_child_named(parent_id, name):
+            raise Conflict(f"A folder named '{name}' already exists here")
+        month_node = self._make_node(name, "month", parent_id)
+        month_node["is_month"] = True
+        for cat in parent.get("month_children", []):
+            self._build_subtree(cat, month_node["id"])
+        return self.serialize(month_node, depth=1)
 
     # ----------------------------------------------------------------- uploads
     def _add_file(self, parent_id, filename, content=b"", content_type=""):

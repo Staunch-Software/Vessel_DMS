@@ -98,6 +98,13 @@ export async function uploadFile(
   return (await api.post(`/folders/${folderId}/upload`, form)).data;
 }
 
+export async function createSubfolder(
+  folderId: string,
+  name: string
+): Promise<FolderNode> {
+  return (await api.post(`/folders/${folderId}/subfolder`, { name })).data;
+}
+
 export async function monthUpload(
   folderId: string,
   file: File,

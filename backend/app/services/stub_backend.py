@@ -56,6 +56,7 @@ class StubBackend:
         node = store.get_node(folder_id)
         if node is None:
             raise NotFound("Folder not found")
+        # Allow uploads into leaf, month_driven, and month folders
         if not node["upload"] or node["month_driven"]:
             raise BadRequest("This folder does not accept direct uploads")
         return store.upload(folder_id, filename, content, content_type)
@@ -67,6 +68,10 @@ class StubBackend:
         if not node["month_driven"]:
             raise BadRequest("This folder is not a month-driven folder")
         return store.month_upload(folder_id, filename, category, content, content_type)
+
+    async def create_subfolder(self, folder_id: str, name: str):
+        """Manually create a named sub-folder inside a month_driven folder."""
+        return store.create_subfolder(folder_id, name)
 
     async def get_file(self, file_id):
         return store.get_file(file_id)

@@ -624,6 +624,19 @@ async def upload(folder_id: str, file: UploadFile):
         _raise(e)
 
 
+class CreateSubfolderIn(BaseModel):
+    name: str
+
+
+@app.post("/api/folders/{folder_id}/subfolder", status_code=201)
+async def create_subfolder(folder_id: str, payload: CreateSubfolderIn):
+    """Manually create a named sub-folder inside a month_driven folder."""
+    try:
+        return await get_backend().create_subfolder(folder_id, payload.name.strip())
+    except (NotFound, BadRequest, Conflict) as e:
+        _raise(e)
+
+
 @app.post("/api/folders/{folder_id}/month-upload")
 async def month_upload(folder_id: str, file: UploadFile, category: str = Form(None)):
     data = await file.read()

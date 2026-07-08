@@ -37,7 +37,7 @@ def _descend(nodes, rest):
     if node["kind"] == "month_driven":
         # rest[1] is a "{Month YYYY}" folder; anything deeper is a category leaf.
         if len(rest) == 2:
-            return {"kind": "month", "upload": False, "month_driven": False}
+            return {"kind": "month", "upload": True, "month_driven": False}
         return {"kind": "leaf", "upload": True, "month_driven": False}
     if node["kind"] == "folder":
         return _descend(node.get("children", []), rest[1:])

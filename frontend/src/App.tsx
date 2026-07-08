@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
-import { ChevronRight, Eye, FolderOpen, Trash2 } from "lucide-react";
+import { ChevronRight, Eye, FolderOpen, FolderPlus, Trash2, X } from "lucide-react";
 import {
   createVessel,
+  createSubfolder,
   deleteFile,
   getChildren,
   getFolder,
@@ -121,6 +122,7 @@ export default function App() {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 <<<<<<< HEAD
   const [authError, setAuthError] = useState<string | null>(null);
+<<<<<<< Updated upstream
 =======
   const [selectedVessel, setSelectedVessel] = useState<string | null>(null);
   const [preview, setPreview] = useState<FolderNode | null>(null);
@@ -131,6 +133,13 @@ export default function App() {
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [layout, setLayout] = useState<ViewKey>("grid");
 >>>>>>> dev/seenu
+=======
+  const [sessionExpiredReason, setSessionExpiredReason] = useState<"inactivity" | "token_expiry" | null>(null);
+  const [showCreateFolderModal, setShowCreateFolderModal] = useState(false);
+  const [createFolderName, setCreateFolderName] = useState("");
+  const [createFolderLoading, setCreateFolderLoading] = useState(false);
+  const [createFolderError, setCreateFolderError] = useState<string | null>(null);
+>>>>>>> Stashed changes
 
   const loadTop = useCallback(async () => {
     const [m, v, s] = await Promise.all([getMains(), listVessels(), getStats()]);
@@ -249,6 +258,8 @@ export default function App() {
   }, [accounts, inProgress, user, authError, instance]);
 
   const signOutRef = useRef<() => void>(() => { });
+  const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const expireSessionRef = useRef<(reason: "inactivity" | "token_expiry") => void>(() => {});
 
   const navigateTo = useCallback((newView: "dashboard" | "explorer" | "profile", newPath: PathEntry[]) => {
     setView(newView);
@@ -437,6 +448,25 @@ export default function App() {
     setView("explorer");
   };
 
+  const handleCreateFolder = async () => {
+    if (!current || !createFolderName.trim()) return;
+    setCreateFolderLoading(true);
+    setCreateFolderError(null);
+    try {
+      await createSubfolder(current.id, createFolderName.trim());
+      setShowCreateFolderModal(false);
+      setCreateFolderName("");
+      await loadCurrent();
+    } catch (e) {
+      setCreateFolderError(
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        "Failed to create folder. Please try again."
+      );
+    } finally {
+      setCreateFolderLoading(false);
+    }
+  };
+
   const handleSignOut = async () => {
     try {
       await fetch("/api/auth/logout", {
@@ -468,8 +498,31 @@ export default function App() {
     window.location.href = "/signout";
   };
 
-  // Keep ref up-to-date so the popstate handler always calls the latest version
+  // ── Keep refs up-to-date so closures always see the latest version ────────
   signOutRef.current = handleSignOut;
+
+  expireSessionRef.current = (reason) => {
+    // Stop the periodic checker
+    if (sessionTimerRef.current) {
+      clearInterval(sessionTimerRef.current);
+      sessionTimerRef.current = null;
+    }
+    // Backend logout (best-effort, non-blocking)
+    fetch("/api/auth/logout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: user?.email }),
+    }).catch(() => {});
+    // MSAL silent cache clear
+    const account = accounts[0] || instance.getActiveAccount();
+    if (account) {
+      instance.logoutRedirect({ account, onRedirectNavigate: () => false }).catch(() => {});
+    }
+    sessionStorage.clear();
+    localStorage.clear();
+    setUser(null);
+    setSessionExpiredReason(reason);
+  };
 
   /** Sign out of ALL Microsoft accounts on this device (ends every SSO session) */
   const handleGlobalSignOut = async () => {
@@ -518,6 +571,50 @@ export default function App() {
 
     window.location.href = "/signout";
   };
+
+  // ── Session timeout: 8-hour inactivity + 24-hour absolute token limit ──────
+  useEffect(() => {
+    if (!user) {
+      if (sessionTimerRef.current) {
+        clearInterval(sessionTimerRef.current);
+        sessionTimerRef.current = null;
+      }
+      return;
+    }
+    // ── TEST VALUES (restore for production) ──────────────────────────────────
+    // Inactivity:  30 s of no mouse/keyboard → "Session Timed Out"
+    // Token expiry: 2 min after login        → "Session Expired"
+    const INACTIVITY_MS  = 8  * 60 * 60 * 1000;   // TODO: restore to 8  * 60 * 60 * 1000  (8 hours)
+    const TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // TODO: restore to 24 * 60 * 60 * 1000 (24 hours)
+    // Seed timestamps on first login
+    if (!sessionStorage.getItem("session_login_at")) {
+      sessionStorage.setItem("session_login_at", Date.now().toString());
+    }
+    sessionStorage.setItem("session_last_activity", Date.now().toString());
+    // Track user activity
+    const onActivity = () =>
+      sessionStorage.setItem("session_last_activity", Date.now().toString());
+    const events = ["mousemove", "mousedown", "keypress", "scroll", "touchstart", "click"];
+    events.forEach(ev => window.addEventListener(ev, onActivity, { passive: true }));
+    // Periodic expiry check — 5 s during testing (restore to 60_000 for production)
+    sessionTimerRef.current = setInterval(() => {
+      const now          = Date.now();
+      const loginAt      = parseInt(sessionStorage.getItem("session_login_at")      || "0", 10);
+      const lastActivity = parseInt(sessionStorage.getItem("session_last_activity") || "0", 10);
+      if (loginAt > 0 && now - loginAt >= TOKEN_EXPIRY_MS) {
+        expireSessionRef.current("token_expiry");
+      } else if (lastActivity > 0 && now - lastActivity >= INACTIVITY_MS) {
+        expireSessionRef.current("inactivity");
+      }
+    }, 60_000);
+    return () => {
+      events.forEach(ev => window.removeEventListener(ev, onActivity));
+      if (sessionTimerRef.current) {
+        clearInterval(sessionTimerRef.current);
+        sessionTimerRef.current = null;
+      }
+    };
+  }, [user]);
 
   const mainName = path.length ? path[0].name : undefined;
   const accent = (mainName && MAIN_ACCENTS[mainName]) || MAIN_ACCENTS["Insurance"];
@@ -582,6 +679,17 @@ export default function App() {
         onSignBackIn={() => {
           window.location.href = "/";
         }}
+      />
+    );
+  }
+
+  // Session expired — show inline without a URL redirect
+  if (sessionExpiredReason) {
+    return (
+      <LoginPage
+        onAuthenticated={(u) => { setUser(u); setSessionExpiredReason(null); }}
+        sessionExpired={sessionExpiredReason}
+        onSignBackIn={() => setSessionExpiredReason(null)}
       />
     );
   }
@@ -680,9 +788,27 @@ export default function App() {
                     : "Shared container · pick a main folder to browse"}
                 </p>
               </div>
+<<<<<<< Updated upstream
               {canUpload && (
                 <UploadControl node={current!} onUpload={handleUpload} variant="primary" />
               )}
+=======
+
+              <div className="flex items-center gap-3">
+                {current?.month_driven && current.name === "Month End Reports" && (
+                  <button
+                    onClick={() => { setCreateFolderName(""); setCreateFolderError(null); setShowCreateFolderModal(true); }}
+                    className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-violet-700 ring-1 ring-violet-200 bg-violet-50 hover:bg-violet-100 transition shadow-sm"
+                  >
+                    <FolderPlus className="h-4 w-4" />
+                    Create Folder
+                  </button>
+                )}
+                {canUpload && (
+                  <UploadControl node={current!} onUpload={handleUpload} variant="primary" />
+                )}
+              </div>
+>>>>>>> Stashed changes
             </header>
 
             <div className="flex-1 overflow-y-auto bg-slate-50 px-8 py-6">
@@ -699,6 +825,7 @@ export default function App() {
                 />
               )}
               {loadingChildren ? (
+<<<<<<< Updated upstream
                 <FolderGridSkeleton />
               ) : displayed.length === 0 ? (
                 children.length > 0 ? (
@@ -709,6 +836,16 @@ export default function App() {
                   <p className="mx-auto max-w-5xl rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
                     No month folders yet — upload a document to create one.
                   </p>
+=======
+                <p className="text-sm text-slate-500">Loading…</p>
+              ) : children.length === 0 ? (
+                current?.month_driven ? (
+                  current.name === "Month End Reports" ? (
+                    <p className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
+                      No month folders yet — upload a document to auto-create one, or click <strong className="text-violet-600">Create Folder</strong> to add one manually.
+                    </p>
+                  ) : null
+>>>>>>> Stashed changes
                 ) : (
                   <EmptyFolder canUpload={canUpload} />
                 )
@@ -732,6 +869,68 @@ export default function App() {
       )}
       <PreviewDrawer file={preview} onClose={() => setPreview(null)} />
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
+
+      {/* ── Create Folder Modal ───────────────────────────────────────────── */}
+      {showCreateFolderModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="absolute inset-0" onClick={() => setShowCreateFolderModal(false)} />
+          <div className="relative w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-50">
+                  <FolderPlus className="h-4 w-4 text-violet-600" />
+                </div>
+                <h2 className="text-base font-semibold text-slate-800">Create Month Folder</h2>
+              </div>
+              <button
+                onClick={() => setShowCreateFolderModal(false)}
+                className="rounded-lg p-1 hover:bg-slate-100 transition"
+              >
+                <X className="h-4 w-4 text-slate-500" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 mb-4">
+              Creates a folder inside <strong className="text-slate-700">{current?.name}</strong> with the standard category sub-folders. You can then upload files directly into it.
+            </p>
+
+            <label className="block text-xs font-semibold text-slate-600 mb-1">
+              Folder Name
+            </label>
+            <input
+              autoFocus
+              type="text"
+              value={createFolderName}
+              onChange={(e) => setCreateFolderName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void handleCreateFolder()}
+              placeholder="e.g. July 2026 or 2026-07"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100"
+            />
+
+            {createFolderError && (
+              <p className="mt-2 text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {createFolderError}
+              </p>
+            )}
+
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={() => setShowCreateFolderModal(false)}
+                className="flex-1 rounded-lg border border-slate-200 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleCreateFolder()}
+                disabled={!createFolderName.trim() || createFolderLoading}
+                className="flex-1 rounded-lg bg-violet-600 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                {createFolderLoading ? "Creating…" : "Create Folder"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

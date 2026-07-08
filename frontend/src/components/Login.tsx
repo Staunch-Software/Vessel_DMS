@@ -13,6 +13,8 @@ import {
     Ship,
     Compass,
     Award,
+    Clock,
+    AlertTriangle,
 } from "lucide-react";
 
 const NISSEN_LOGO = "/nissen-logo.svg";
@@ -28,6 +30,8 @@ interface LoginPageProps {
     signedOut?: boolean;
     /** Called when the user clicks "Back to Login" on the signed-out view */
     onSignBackIn?: () => void;
+    /** Set when the session expired automatically (inactivity or token limit) */
+    sessionExpired?: "inactivity" | "token_expiry";
 }
 
 /* ─────────────────────────────────────────────────────────────────────────── */
@@ -185,8 +189,95 @@ function MicrosoftIcon() {
     );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────── */
-/*  Signed-out view                                                              */
+/* ─────────────────────────────────────────────────────────────────────────── *//*  Session-expired view (inactivity or 24-h token limit)                        */
+/* ───────────────────────────────────────────────────────────────────────────── */
+
+function SessionExpiredView({
+    reason,
+    onSignBackIn,
+}: {
+    reason: "inactivity" | "token_expiry";
+    onSignBackIn: () => void;
+}) {
+    const isInactivity = reason === "inactivity";
+    return (
+        <PageShell>
+            <main className="relative z-10 px-8 md:px-14 py-14 flex flex-col lg:flex-row gap-12 items-start justify-between">
+                {/* Left column */}
+                <div className="w-full lg:max-w-[calc(100%-30rem)] lg:pr-8 mb-12 lg:mb-0">
+                    <div className="flex items-center gap-2 text-brand-400 text-[11px] tracking-[0.2em] font-semibold mb-6">
+                        <span className="w-6 h-px bg-brand-500 inline-block" />
+                        NISSEN KAIUN SINGAPORE FLEET
+                    </div>
+
+                    <h1 className="font-serif text-5xl md:text-[3.75rem] leading-[1.05] text-white mb-6">
+                        Premium global shipping,
+                        <br />
+                        <span className="italic text-brand-300">managed locally.</span>
+                    </h1>
+
+                    <p className="text-slate-400 text-base leading-relaxed max-w-lg mb-10">
+                        Nissen Kaiun Singapore oversees the technical management, crewing,
+                        and compliance of a high-specification global fleet operating
+                        state-of-the-art bulkers, eco-friendly container ships, and
+                        advanced product tankers.
+                    </p>
+
+                    <div className="grid sm:grid-cols-3 gap-4 max-w-xl mb-10">
+                        <FeatureCard icon={<Ship className="w-4 h-4" />} title="Modern Fleet" copy="Over 100 high-spec bulkers, tankers, and boxships." />
+                        <FeatureCard icon={<Compass className="w-4 h-4" />} title="Global Routing" copy="Reliable sea transport routes across all major oceans." />
+                        <FeatureCard icon={<Award className="w-4 h-4" />} title="Class Certified" copy="Classified under top maritime boards for safety." />
+                    </div>
+                </div>
+
+                {/* Right column — expired card */}
+                <div className="relative lg:fixed z-10 w-full max-w-md lg:w-[26rem] top-auto right-auto lg:top-[7.5rem] lg:right-[3.5rem] self-center lg:self-auto">
+                    <Anchor className="absolute -top-6 -right-6 w-28 h-28 text-brand-500/10 -z-10" strokeWidth={1} />
+
+                    <div className="bg-white/5 backdrop-blur-md rounded-2xl shadow-xl shadow-black/30 border border-white/10 p-8 md:p-9">
+                        {/* Icon badge */}
+                        <div className="w-14 h-14 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center mb-5">
+                            {isInactivity
+                                ? <Clock className="w-7 h-7 text-amber-400" />
+                                : <AlertTriangle className="w-7 h-7 text-amber-400" />}
+                        </div>
+
+                        <h2 className="font-serif text-3xl text-white mb-2 font-semibold">
+                            {isInactivity ? "Session Timed Out" : "Session Expired"}
+                        </h2>
+                        <p className="text-[11px] tracking-[0.12em] text-slate-400 font-medium mb-7">
+                            {isInactivity
+                                ? "INACTIVE FOR 8 HOURS — SESSION CLOSED"
+                                : "24-HOUR SESSION LIMIT REACHED"}
+                        </p>
+
+                        <div className="space-y-4">
+                            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3.5">
+                                <p className="text-sm text-amber-200/80 leading-relaxed">
+                                    {isInactivity
+                                        ? "Your session was automatically closed after 8 hours of inactivity to protect your documents."
+                                        : "Your session reached the 24-hour security limit. Please sign in again to continue."}
+                                </p>
+                            </div>
+
+                            <button
+                                onClick={onSignBackIn}
+                                className="w-full py-3.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-sm font-semibold flex items-center justify-center gap-2 shadow-md shadow-brand-900/40 hover:shadow-lg active:scale-[0.99] transition cursor-pointer"
+                            >
+                                <LogIn className="w-4 h-4" />
+                                Sign In Again
+                            </button>
+                        </div>
+
+                        <CardFooter />
+                    </div>
+                </div>
+            </main>
+        </PageShell>
+    );
+}
+
+/* ───────────────────────────────────────────────────────────────────────────── *//*  Signed-out view                                                              */
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 function SignedOutView({ onSignBackIn }: { onSignBackIn: () => void }) {
@@ -504,8 +595,17 @@ export function LoginPage({
     onAuthenticated,
     signedOut = false,
     onSignBackIn,
+    sessionExpired,
 }: LoginPageProps) {
     void onAuthenticated;
+    if (sessionExpired) {
+        return (
+            <SessionExpiredView
+                reason={sessionExpired}
+                onSignBackIn={onSignBackIn ?? (() => (window.location.href = "/"))}
+            />
+        );
+    }
     if (signedOut) {
         return (
             <SignedOutView

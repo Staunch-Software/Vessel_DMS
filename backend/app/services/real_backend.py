@@ -306,6 +306,39 @@ class RealBackend:
         await gd.upload_file(drive_id, folder_id, filename, content, content_type)
         return self._make_job(filename, f"{path}/{filename}", None)
 
+    async def create_subfolder(self, folder_id: str, name: str) -> dict:
+        """Manually create a named sub-folder inside a month_driven folder,
+        then provision its category children from the template."""
+        name = (name or "").strip()
+        if not name:
+            raise BadRequest("Folder name is required")
+        drive_id = await self._drive()
+        parent_path = await self._folder_path(drive_id, folder_id)
+        parent_parts = parent_path.split("/") if parent_path else []
+        parent_flags = classify(parent_parts)
+        if not parent_flags.get("month_driven"):
+            raise BadRequest("Can only create sub-folders inside month-driven folders")
+        new_item = await gd.ensure_folder(drive_id, folder_id, name)
+        mpath = f"{parent_path}/{name}"
+        cats = parent_flags.get("categories", [])
+        with SessionLocal() as db:
+            parent_row = self._folder_by_item(db, folder_id)
+            vessel_id = parent_row.vessel_id if parent_row else None
+            self._upsert(db, mpath, name, "month", new_item["id"], False, vessel_id)
+            for cat_name in cats:
+                cat_item = await gd.ensure_folder(drive_id, new_item["id"], cat_name)
+                self._upsert(db, f"{mpath}/{cat_name}", cat_name, "leaf",
+                             cat_item["id"], False, vessel_id)
+            db.commit()
+        return {
+            "id": new_item["id"],
+            "name": name,
+            "kind": "month",
+            "upload": True,
+            "month_driven": False,
+            "has_children": bool(cats),
+        }
+
     async def month_upload(self, folder_id, filename, category, content, content_type):
         drive_id = await self._drive()
         md_path = await self._folder_path(drive_id, folder_id)
