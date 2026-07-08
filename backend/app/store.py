@@ -268,6 +268,31 @@ class Store:
             return None
         return node["content"], node["content_type"], node["name"]
 
+    def delete_folder(self, folder_id):
+        """Remove a folder and all its descendants from the in-memory tree."""
+        node = self.nodes.get(folder_id)
+        if not node:
+            return False
+        # Recursively collect all descendant IDs
+        to_remove = []
+        stack = [folder_id]
+        while stack:
+            nid = stack.pop()
+            n = self.nodes.get(nid)
+            if n:
+                to_remove.append(nid)
+                stack.extend(n.get("children", []))
+        # Remove from parent's children list
+        pid = node.get("parent_id")
+        if pid and pid in self.nodes:
+            self.nodes[pid]["children"] = [
+                c for c in self.nodes[pid]["children"] if c != folder_id
+            ]
+        # Delete all collected nodes
+        for nid in to_remove:
+            self.nodes.pop(nid, None)
+        return True
+
     def delete_file(self, node_id):
         node = self.nodes.get(node_id)
         if not node or node["kind"] != "file":

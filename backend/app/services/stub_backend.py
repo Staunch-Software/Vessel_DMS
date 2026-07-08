@@ -73,6 +73,12 @@ class StubBackend:
         """Manually create a named sub-folder inside a month_driven folder."""
         return store.create_subfolder(folder_id, name)
 
+    async def delete_folder(self, folder_id: str) -> bool:
+        node = store.get_node(folder_id)
+        if node is None:
+            raise NotFound("Folder not found")
+        return store.delete_folder(folder_id)
+
     async def get_file(self, file_id):
         return store.get_file(file_id)
 

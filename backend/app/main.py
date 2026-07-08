@@ -628,6 +628,20 @@ class CreateSubfolderIn(BaseModel):
     name: str
 
 
+@app.delete("/api/folders/{folder_id}", status_code=204)
+async def delete_folder(folder_id: str):
+    """Delete a folder and all its contents."""
+    try:
+        result = await get_backend().delete_folder(folder_id)
+        if not result:
+            raise HTTPException(404, "Folder not found")
+    except HTTPException:
+        raise
+    except (NotFound, BadRequest) as e:
+        _raise(e)
+    return Response(status_code=204)
+
+
 @app.post("/api/folders/{folder_id}/subfolder", status_code=201)
 async def create_subfolder(folder_id: str, payload: CreateSubfolderIn):
     """Manually create a named sub-folder inside a month_driven folder."""

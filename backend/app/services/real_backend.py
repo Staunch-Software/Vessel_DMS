@@ -306,6 +306,23 @@ class RealBackend:
         await gd.upload_file(drive_id, folder_id, filename, content, content_type)
         return self._make_job(filename, f"{path}/{filename}", None)
 
+    async def delete_folder(self, folder_id: str) -> bool:
+        """Delete a folder and all its contents via Graph API."""
+        drive_id = await self._drive()
+        from ..graph import drive as _gd
+        await _gd.delete_item(drive_id, folder_id)
+        # Remove from DB cache
+        with SessionLocal() as db:
+            rows = (
+                db.query(models.Folder)
+                .filter(models.Folder.drive_item_id == folder_id)
+                .all()
+            )
+            for row in rows:
+                db.delete(row)
+            db.commit()
+        return True
+
     async def create_subfolder(self, folder_id: str, name: str) -> dict:
         """Manually create a named sub-folder inside a month_driven folder,
         then provision its category children from the template."""

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
-import { ChevronRight, Eye, FolderOpen, FolderPlus, Trash2, X } from "lucide-react";
+import { createPortal } from "react-dom";
+import { ChevronRight, MoreVertical, Download, RotateCcw, FolderOpen, FolderPlus, Trash2, X, Archive, ArchiveRestore } from "lucide-react";
 import {
   createVessel,
   createSubfolder,
@@ -12,6 +13,8 @@ import {
   listVessels,
   monthUpload,
   uploadFile,
+  fileContentUrl,
+  deleteFolder,
   type FolderNode,
   type SearchResult,
   type Stats,
@@ -36,14 +39,10 @@ import {
   type ViewKey,
 } from "./components/FolderToolbar";
 import { MAIN_ACCENTS, iconFor } from "./components/nodeStyle";
-<<<<<<< HEAD
 import ProfilePage from "./components/Profile";
 import AuthCallback from "./AuthCallback";
-
-
-=======
 import { fileMeta, formatDate, formatSize } from "./components/fileType";
->>>>>>> dev/seenu
+
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const IMG = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff"];
@@ -120,10 +119,20 @@ export default function App() {
   const [loadingChildren, setLoadingChildren] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
-<<<<<<< HEAD
   const [authError, setAuthError] = useState<string | null>(null);
-<<<<<<< Updated upstream
-=======
+  const [sessionExpiredReason, setSessionExpiredReason] = useState<"inactivity" | "token_expiry" | null>(null);
+  const [showCreateFolderModal, setShowCreateFolderModal] = useState(false);
+  const [createFolderName, setCreateFolderName] = useState("");
+  const [createFolderLoading, setCreateFolderLoading] = useState(false);
+  const [createFolderError, setCreateFolderError] = useState<string | null>(null);
+  const [archivedFolderIds, setArchivedFolderIds] = useState<Set<string>>(new Set());
+  const [archivedNodes, setArchivedNodes] = useState<FolderNode[]>([]);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showArchiveSelectModal, setShowArchiveSelectModal] = useState(false);
+  const [showArchivePanel, setShowArchivePanel] = useState(false);
+  const [restoreConfirmNode, setRestoreConfirmNode] = useState<FolderNode | null>(null);
+  const [deleteFolderIds, setDeleteFolderIds] = useState<Set<string>>(new Set());
+  const [archiveSelectIds, setArchiveSelectIds] = useState<Set<string>>(new Set());
   const [selectedVessel, setSelectedVessel] = useState<string | null>(null);
   const [preview, setPreview] = useState<FolderNode | null>(null);
 
@@ -132,14 +141,6 @@ export default function App() {
   const [typeKey, setTypeKey] = useState<TypeKey>("all");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [layout, setLayout] = useState<ViewKey>("grid");
->>>>>>> dev/seenu
-=======
-  const [sessionExpiredReason, setSessionExpiredReason] = useState<"inactivity" | "token_expiry" | null>(null);
-  const [showCreateFolderModal, setShowCreateFolderModal] = useState(false);
-  const [createFolderName, setCreateFolderName] = useState("");
-  const [createFolderLoading, setCreateFolderLoading] = useState(false);
-  const [createFolderError, setCreateFolderError] = useState<string | null>(null);
->>>>>>> Stashed changes
 
   const loadTop = useCallback(async () => {
     const [m, v, s] = await Promise.all([getMains(), listVessels(), getStats()]);
@@ -366,14 +367,14 @@ export default function App() {
 
   // ----- displayed items (vessel scope + filter + sort) -----
   const displayed = useMemo(() => {
-    let items = children;
+    let items = children.filter((c) => !archivedFolderIds.has(c.id));
     if (current?.kind === "main" && selectedVessel)
       items = items.filter((c) => c.kind !== "ship" || c.name === selectedVessel);
     const q = fQuery.trim().toLowerCase();
     if (q) items = items.filter((c) => c.name.toLowerCase().includes(q));
     items = items.filter((c) => matchesType(c, typeKey));
     return sortItems(items, sortKey);
-  }, [children, current, selectedVessel, fQuery, typeKey, sortKey]);
+  }, [children, current, selectedVessel, fQuery, typeKey, sortKey, archivedFolderIds]);
 
   // ----- toasts -----
   const upsertToast = (t: ToastItem) =>
@@ -442,6 +443,110 @@ export default function App() {
     [refreshAfterMutation]
   );
 
+  const handleDownload = useCallback((node: FolderNode) => {
+    const a = document.createElement("a");
+    a.href = fileContentUrl(node.id);
+    a.download = node.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }, []);
+
+  const handleRenew = useCallback(
+    async (node: FolderNode, newFile: File) => {
+      if (!current) return;
+      const id = Date.now() + Math.floor(Math.random() * 1000);
+      upsertToast({ id, status: "processing", title: `Renewing ${node.name}`, detail: "Uploading new version…" });
+      try {
+        const job = current.month_driven
+          ? await monthUpload(current.id, newFile)
+          : await uploadFile(current.id, newFile);
+        let final = job;
+        for (let i = 0; i < 10 && final.status === "processing"; i++) {
+          await sleep(500);
+          final = await getJob(job.id);
+        }
+        upsertToast({
+          id,
+          status: final.status,
+          title: final.status === "done" ? "Document renewed" : "Renew failed",
+          detail: final.destination,
+          detectedMonth: final.detected_month,
+        });
+        await refreshAfterMutation();
+        setTimeout(() => dismissToast(id), 6000);
+      } catch (e) {
+        upsertToast({ id, status: "failed", title: "Renew failed", detail: errDetail(e, node.name) });
+        setTimeout(() => dismissToast(id), 6000);
+      }
+    },
+    [current, refreshAfterMutation]
+  );
+
+  const handleBulkFolderArchive = useCallback(() => {
+    if (archiveSelectIds.size === 0) return;
+    const nodesToArchive = children.filter((c) => archiveSelectIds.has(c.id));
+    setArchivedFolderIds((prev) => {
+      const next = new Set(prev);
+      archiveSelectIds.forEach((id) => next.add(id));
+      return next;
+    });
+    setArchivedNodes((prev) => {
+      const existingIds = new Set(prev.map((n) => n.id));
+      return [...prev, ...nodesToArchive.filter((n) => !existingIds.has(n.id))];
+    });
+    setShowArchiveSelectModal(false);
+    setArchiveSelectIds(new Set());
+    // Success toast
+    const tid = Date.now() + Math.floor(Math.random() * 1000);
+    upsertToast({
+      id: tid,
+      status: "done",
+      title: `${nodesToArchive.length} folder${nodesToArchive.length !== 1 ? "s" : ""} archived`,
+      detail: nodesToArchive.map((n) => n.name).join(", "),
+    });
+    setTimeout(() => dismissToast(tid), 4000);
+  }, [archiveSelectIds, children]);
+
+  const handleFolderArchive = useCallback((node: FolderNode) => {
+    setArchivedFolderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(node.id)) { next.delete(node.id); } else { next.add(node.id); }
+      return next;
+    });
+    setArchivedNodes((prev) =>
+      prev.some((n) => n.id === node.id)
+        ? prev.filter((n) => n.id !== node.id)   // restore: remove from list
+        : [...prev, node]                          // archive: add to list
+    );
+    // Success toast
+    const isRestoring = archivedNodes.some((n) => n.id === node.id);
+    const tid2 = Date.now() + Math.floor(Math.random() * 1000);
+    upsertToast({
+      id: tid2,
+      status: "done",
+      title: isRestoring ? `"${node.name}" restored` : `"${node.name}" archived`,
+      detail: isRestoring ? "Folder is visible again" : "Folder hidden from main view",
+    });
+    setTimeout(() => dismissToast(tid2), 4000);
+  }, [archivedNodes]);
+
+  const handleBulkFolderDelete = useCallback(async () => {
+    if (deleteFolderIds.size === 0) return;
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    setShowDeleteModal(false);
+    upsertToast({ id, status: "processing", title: `Deleting ${deleteFolderIds.size} folder(s)…`, detail: "Please wait" });
+    try {
+      await Promise.all([...deleteFolderIds].map((fid) => deleteFolder(fid)));
+      await refreshAfterMutation();
+      upsertToast({ id, status: "done", title: "Folders deleted", detail: `${deleteFolderIds.size} folder(s) removed` });
+    } catch (e) {
+      upsertToast({ id, status: "failed", title: "Delete failed", detail: errDetail(e, "") });
+    }
+    setDeleteFolderIds(new Set());
+    setTimeout(() => dismissToast(id), 5000);
+  }, [deleteFolderIds, refreshAfterMutation]);
+
   const handleCreate = async (data: import("./api").VesselInput) => {
     await createVessel(data);
     await loadTop();
@@ -483,16 +588,8 @@ export default function App() {
 
     const account = accounts[0] || instance.getActiveAccount();
     if (account) {
-      try {
-        // onRedirectNavigate returning false clears the MSAL token cache
-        // locally without navigating the browser to Microsoft's logout page.
-        await instance.logoutRedirect({
-          account,
-          onRedirectNavigate: () => false,
-        });
-      } catch (e) {
-        console.error("MSAL logout failed", e);
-      }
+      // Clear MSAL local token cache silently
+      instance.setActiveAccount(null);
     }
 
     window.location.href = "/signout";
@@ -516,7 +613,7 @@ export default function App() {
     // MSAL silent cache clear
     const account = accounts[0] || instance.getActiveAccount();
     if (account) {
-      instance.logoutRedirect({ account, onRedirectNavigate: () => false }).catch(() => {});
+      instance.setActiveAccount(null);
     }
     sessionStorage.clear();
     localStorage.clear();
@@ -559,14 +656,7 @@ export default function App() {
     // the browser from navigating to Microsoft's logout page while still
     // removing the account from the local token cache.
     if (accounts.length > 0) {
-      try {
-        await instance.logoutRedirect({
-          account: accounts[0],
-          onRedirectNavigate: () => false,
-        });
-      } catch (e) {
-        console.error("MSAL silent cache clear failed", e);
-      }
+      instance.setActiveAccount(null);
     }
 
     window.location.href = "/signout";
@@ -619,7 +709,8 @@ export default function App() {
   const mainName = path.length ? path[0].name : undefined;
   const accent = (mainName && MAIN_ACCENTS[mainName]) || MAIN_ACCENTS["Insurance"];
   const canUpload = !!current && (current.upload || current.month_driven);
-<<<<<<< HEAD
+  const showToolbar = view === "explorer" && !!current && children.length > 0;
+
   // Show a neutral loading screen while MSAL is handling any interaction
   // or when we are in the process of auto-authenticating a cached account.
   // This prevents the login page from briefly flashing before moving to the home page.
@@ -711,9 +802,6 @@ export default function App() {
       />
     );
   }
-=======
-  const showToolbar = view === "explorer" && !!current && children.length > 0;
->>>>>>> dev/seenu
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -788,13 +876,25 @@ export default function App() {
                     : "Shared container · pick a main folder to browse"}
                 </p>
               </div>
-<<<<<<< Updated upstream
-              {canUpload && (
-                <UploadControl node={current!} onUpload={handleUpload} variant="primary" />
-              )}
-=======
-
               <div className="flex items-center gap-3">
+                {current?.kind === "main" && (
+                  <>
+                    <button
+                      onClick={() => { setArchiveSelectIds(new Set()); setShowArchiveSelectModal(true); }}
+                      className="inline-flex items-center gap-2 rounded-lg bg-slate-700 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-600"
+                    >
+                      <Archive className="h-4 w-4" />
+                      Archive
+                    </button>
+                    <button
+                      onClick={() => { setDeleteFolderIds(new Set()); setShowDeleteModal(true); }}
+                      className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-rose-700"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete Folders
+                    </button>
+                  </>
+                )}
                 {current?.month_driven && current.name === "Month End Reports" && (
                   <button
                     onClick={() => { setCreateFolderName(""); setCreateFolderError(null); setShowCreateFolderModal(true); }}
@@ -808,7 +908,6 @@ export default function App() {
                   <UploadControl node={current!} onUpload={handleUpload} variant="primary" />
                 )}
               </div>
->>>>>>> Stashed changes
             </header>
 
             <div className="flex-1 overflow-y-auto bg-slate-50 px-8 py-6">
@@ -825,7 +924,6 @@ export default function App() {
                 />
               )}
               {loadingChildren ? (
-<<<<<<< Updated upstream
                 <FolderGridSkeleton />
               ) : displayed.length === 0 ? (
                 children.length > 0 ? (
@@ -833,19 +931,11 @@ export default function App() {
                     Nothing matches your filter.
                   </p>
                 ) : current?.month_driven ? (
-                  <p className="mx-auto max-w-5xl rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
-                    No month folders yet — upload a document to create one.
-                  </p>
-=======
-                <p className="text-sm text-slate-500">Loading…</p>
-              ) : children.length === 0 ? (
-                current?.month_driven ? (
                   current.name === "Month End Reports" ? (
-                    <p className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
+                    <p className="mx-auto max-w-5xl rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
                       No month folders yet — upload a document to auto-create one, or click <strong className="text-violet-600">Create Folder</strong> to add one manually.
                     </p>
                   ) : null
->>>>>>> Stashed changes
                 ) : (
                   <EmptyFolder canUpload={canUpload} />
                 )
@@ -857,6 +947,8 @@ export default function App() {
                   onOpen={openChild}
                   onPreview={setPreview}
                   onDelete={handleDelete}
+                  onDownload={handleDownload}
+                  onRenew={handleRenew}
                 />
               )}
             </div>
@@ -869,6 +961,191 @@ export default function App() {
       )}
       <PreviewDrawer file={preview} onClose={() => setPreview(null)} />
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
+
+      {/* ── Archive Folders Modal (two-column) ───────────────────────── */}
+      {showArchiveSelectModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="absolute inset-0" onClick={() => setShowArchiveSelectModal(false)} />
+          <div className="relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-50">
+                  <Archive className="h-5 w-5 text-amber-600" />
+                </div>
+                <div>
+                  <h2 className="text-base font-semibold text-slate-800">Archive Folders</h2>
+                  <p className="text-xs text-slate-500">Hide folders — restore anytime from the archived list</p>
+                </div>
+              </div>
+              <button onClick={() => setShowArchiveSelectModal(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 transition">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Two-column body */}
+            <div className="flex divide-x divide-slate-100">
+
+              {/* Left: Select folders to archive */}
+              <div className="flex-1 p-4">
+                <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Select to Archive</p>
+                <div className="max-h-64 space-y-0.5 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 p-1.5">
+                  {children.filter((c) => c.kind !== "file" && !archivedFolderIds.has(c.id)).length === 0 ? (
+                    <p className="py-6 text-center text-sm text-slate-400">No folders available.</p>
+                  ) : (
+                    children.filter((c) => c.kind !== "file" && !archivedFolderIds.has(c.id)).map((f) => (
+                      <label key={f.id} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-white transition">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded accent-amber-600"
+                          checked={archiveSelectIds.has(f.id)}
+                          onChange={(e) => {
+                            const next = new Set(archiveSelectIds);
+                            if (e.target.checked) next.add(f.id); else next.delete(f.id);
+                            setArchiveSelectIds(next);
+                          }}
+                        />
+                        <span className="text-sm font-medium text-slate-700">{f.name}</span>
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Right: Already archived */}
+              <div className="w-64 shrink-0 bg-amber-50/40 p-4">
+                <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-amber-700">
+                  Archived ({archivedNodes.length})
+                </p>
+                <div className="max-h-64 space-y-0.5 overflow-y-auto">
+                  {archivedNodes.length === 0 ? (
+                    <p className="py-6 text-center text-xs text-slate-400">No archived folders yet.</p>
+                  ) : (
+                    archivedNodes.map((f) => (
+                      <div key={f.id} className="flex items-center justify-between rounded-lg px-2 py-2 hover:bg-amber-50 transition">
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-700">{f.name}</span>
+                        <button
+                          onClick={() => setRestoreConfirmNode(f)}
+                          className="ml-2 shrink-0 rounded px-2 py-0.5 text-[10px] font-semibold text-brand-600 hover:bg-brand-50 transition"
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex gap-3 border-t border-slate-100 px-6 py-4">
+              <button onClick={() => setShowArchiveSelectModal(false)}
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">
+                Cancel
+              </button>
+              <button
+                onClick={() => handleBulkFolderArchive()}
+                disabled={archiveSelectIds.size === 0}
+                className="flex-1 rounded-lg bg-amber-600 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Archive {archiveSelectIds.size > 0 ? `(${archiveSelectIds.size})` : ""} Selected
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete Folders Modal ──────────────────────────────────────────── */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="absolute inset-0" onClick={() => setShowDeleteModal(false)} />
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-50">
+                <Trash2 className="h-5 w-5 text-rose-600" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-slate-800">Delete Folders</h2>
+                <p className="text-xs text-slate-500">Selected folders will be permanently deleted</p>
+              </div>
+            </div>
+            <div className="mb-4 max-h-60 space-y-1 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 p-2">
+              {children.filter((c) => c.kind !== "file" && !archivedFolderIds.has(c.id)).length === 0 ? (
+                <p className="py-4 text-center text-sm text-slate-400">No folders available.</p>
+              ) : (
+                children.filter((c) => c.kind !== "file" && !archivedFolderIds.has(c.id)).map((f) => (
+                  <label key={f.id} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 hover:bg-white">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded accent-rose-600"
+                      checked={deleteFolderIds.has(f.id)}
+                      onChange={(e) => {
+                        const next = new Set(deleteFolderIds);
+                        if (e.target.checked) next.add(f.id); else next.delete(f.id);
+                        setDeleteFolderIds(next);
+                      }}
+                    />
+                    <span className="text-sm font-medium text-slate-700">{f.name}</span>
+                  </label>
+                ))
+              )}
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setShowDeleteModal(false)}
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">
+                Cancel
+              </button>
+              <button
+                onClick={() => handleBulkFolderDelete()}
+                disabled={deleteFolderIds.size === 0}
+                className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Delete {deleteFolderIds.size > 0 ? `(${deleteFolderIds.size})` : ""}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Archive Panel ──────────────────────────────────────────────────────── */}
+      {showArchivePanel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="absolute inset-0" onClick={() => setShowArchivePanel(false)} />
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-50">
+                <Archive className="h-5 w-5 text-amber-600" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-slate-800">Archived Folders</h2>
+                <p className="text-xs text-slate-500">Deleted folders — restore to bring them back</p>
+              </div>
+            </div>
+            <div className="mb-4 max-h-60 space-y-1 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 p-2">
+              {archivedNodes.length === 0 ? (
+                <p className="py-4 text-center text-sm text-slate-400">No archived folders.</p>
+              ) : (
+                archivedNodes.map((f) => (
+                  <div key={f.id} className="flex items-center justify-between rounded-lg px-3 py-2 hover:bg-white">
+                    <span className="text-sm font-medium text-slate-700">{f.name}</span>
+                    <button
+                      onClick={() => setRestoreConfirmNode(f)}
+                      className="rounded-md px-2.5 py-1 text-xs font-medium text-brand-600 hover:bg-brand-50 transition"
+                    >
+                      <ArchiveRestore className="mr-1 inline h-3.5 w-3.5" />Restore
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            <button onClick={() => setShowArchivePanel(false)}
+              className="w-full rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">
+              Close
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Create Folder Modal ───────────────────────────────────────────── */}
       {showCreateFolderModal && (
@@ -931,6 +1208,41 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ── Restore Confirmation Modal ───────────────────────── */}
+      {restoreConfirmNode && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setRestoreConfirmNode(null)} />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-1 flex items-center gap-2">
+              <ArchiveRestore className="h-5 w-5 text-brand-600" />
+              <h3 className="text-base font-semibold text-slate-800">Restore folder?</h3>
+            </div>
+            <p className="mt-2 text-sm text-slate-600">
+              <span className="font-medium">&ldquo;{restoreConfirmNode.name}&rdquo;</span> will be visible again in the main folder view.
+            </p>
+            <div className="mt-5 flex gap-3">
+              <button
+                onClick={() => setRestoreConfirmNode(null)}
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  handleFolderArchive(restoreConfirmNode);
+                  setRestoreConfirmNode(null);
+                  setShowArchiveSelectModal(false);
+                  setShowArchivePanel(false);
+                }}
+                className="flex-1 rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-500 transition"
+              >
+                Restore
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -942,6 +1254,8 @@ function FolderGrid({
   onOpen,
   onPreview,
   onDelete,
+  onDownload,
+  onRenew,
 }: {
   items: FolderNode[];
   accent: (typeof MAIN_ACCENTS)[string];
@@ -949,6 +1263,8 @@ function FolderGrid({
   onOpen: (n: FolderNode) => void;
   onPreview: (n: FolderNode) => void;
   onDelete: (n: FolderNode) => void;
+  onDownload: (n: FolderNode) => void;
+  onRenew: (n: FolderNode, f: File) => void;
 }) {
   const folders = items.filter((i) => i.kind !== "file");
   const files = items.filter((i) => i.kind === "file");
@@ -978,13 +1294,13 @@ function FolderGrid({
           {layout === "grid" ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {files.map((f) => (
-                <FileCard key={f.id} file={f} onPreview={onPreview} onDelete={onDelete} />
+                <FileCard key={f.id} file={f} onPreview={onPreview} onDelete={onDelete} onDownload={onDownload} onRenew={onRenew} />
               ))}
             </div>
           ) : (
             <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
               {files.map((f) => (
-                <FileRow key={f.id} file={f} onPreview={onPreview} onDelete={onDelete} />
+                <FileRow key={f.id} file={f} onPreview={onPreview} onDelete={onDelete} onDownload={onDownload} onRenew={onRenew} />
               ))}
             </div>
           )}
@@ -1019,7 +1335,7 @@ function FolderCard({
   return (
     <button
       onClick={() => onOpen(node)}
-      className="group flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md"
+      className="group flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md"
     >
       <span className={"flex h-11 w-11 shrink-0 items-center justify-center rounded-xl " + accent.chip}>
         <Icon className={"h-5 w-5 " + cls} />
@@ -1037,7 +1353,6 @@ function FolderCard({
     </button>
   );
 }
-
 function FolderRow({
   node,
   accent,
@@ -1062,34 +1377,115 @@ function FolderRow({
     </button>
   );
 }
-
 function FileActions({
   file,
   onPreview,
   onDelete,
+  onDownload,
+  onRenew,
 }: {
   file: FolderNode;
   onPreview: (n: FolderNode) => void;
   onDelete: (n: FolderNode) => void;
+  onDownload: (n: FolderNode) => void;
+  onRenew: (n: FolderNode, f: File) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [dropPos, setDropPos] = useState({ top: 0, bottom: 0, right: 0, flipped: false });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const renewInputRef = useRef<HTMLInputElement>(null);
+
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      const MENU_H = 200; // estimated menu height
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const flipped = spaceBelow < MENU_H && rect.top > MENU_H;
+      setDropPos({
+        top: flipped ? 0 : rect.bottom + 4,
+        bottom: flipped ? window.innerHeight - rect.top + 4 : 0,
+        right: window.innerWidth - rect.right,
+        flipped,
+      });
+    }
+    setOpen((v) => !v);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  void onPreview;
+
   return (
-    <div className="flex items-center gap-1">
+    <div className="relative" onClick={(e) => e.stopPropagation()}>
+      <input
+        ref={renewInputRef}
+        type="file"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onRenew(file, f);
+          e.target.value = "";
+          setOpen(false);
+        }}
+      />
       <button
-        onClick={(e) => { e.stopPropagation(); onPreview(file); }}
-        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-brand-700 transition hover:bg-brand-50"
-        title="View document"
+        ref={btnRef}
+        onClick={handleToggle}
+        className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+        title="More actions"
       >
-        <Eye className="h-3.5 w-3.5" />
-        View
+        <MoreVertical className="h-4 w-4" />
       </button>
-      <button
-        onClick={(e) => { e.stopPropagation(); onDelete(file); }}
-        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-50"
-        title="Delete document"
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-        Delete
-      </button>
+
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          style={{
+            position: "fixed",
+            ...(dropPos.flipped
+              ? { bottom: dropPos.bottom }
+              : { top: dropPos.top }),
+            right: dropPos.right,
+            zIndex: 9999,
+            maxHeight: "280px",
+            overflowY: "auto",
+          }}
+          className="w-44 rounded-xl bg-transparent py-0.5"
+        >
+          <button
+            onClick={() => { onDownload(file); setOpen(false); }}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-bold text-slate-800 transition-all hover:bg-brand-600 hover:text-white hover:shadow-sm"
+          >
+            <Download className="h-4 w-4 text-brand-600" />
+            Download
+          </button>
+          <button
+            onClick={() => renewInputRef.current?.click()}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-bold text-slate-800 transition-all hover:bg-brand-600 hover:text-white hover:shadow-sm"
+          >
+            <RotateCcw className="h-4 w-4 text-violet-600" />
+            Renew
+          </button>
+          <div className="my-0.5" />
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(file); setOpen(false); }}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-bold text-rose-600 transition-all hover:bg-rose-600 hover:text-white hover:shadow-sm"
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete
+          </button>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
@@ -1098,10 +1494,14 @@ function FileCard({
   file,
   onPreview,
   onDelete,
+  onDownload,
+  onRenew,
 }: {
   file: FolderNode;
   onPreview: (n: FolderNode) => void;
   onDelete: (n: FolderNode) => void;
+  onDownload: (n: FolderNode) => void;
+  onRenew: (n: FolderNode, f: File) => void;
 }) {
   const meta = fileMeta(file.ext);
   const sub = [formatSize(file.size), formatDate(file.modified)].filter(Boolean).join(" · ");
@@ -1118,7 +1518,7 @@ function FileCard({
         <span className="mt-0.5 block truncate text-xs text-slate-400">{sub || meta.label}</span>
       </span>
       <div className="opacity-0 transition group-hover:opacity-100">
-        <FileActions file={file} onPreview={onPreview} onDelete={onDelete} />
+        <FileActions file={file} onPreview={onPreview} onDelete={onDelete} onDownload={onDownload} onRenew={onRenew} />
       </div>
     </div>
   );
@@ -1128,10 +1528,14 @@ function FileRow({
   file,
   onPreview,
   onDelete,
+  onDownload,
+  onRenew,
 }: {
   file: FolderNode;
   onPreview: (n: FolderNode) => void;
   onDelete: (n: FolderNode) => void;
+  onDownload: (n: FolderNode) => void;
+  onRenew: (n: FolderNode, f: File) => void;
 }) {
   const meta = fileMeta(file.ext);
   return (
@@ -1145,7 +1549,7 @@ function FileRow({
       <span className="hidden w-16 text-right text-xs text-slate-400 sm:block">{formatSize(file.size)}</span>
       <span className="hidden w-24 text-right text-xs text-slate-400 md:block">{formatDate(file.modified)}</span>
       <div className="opacity-0 transition group-hover:opacity-100">
-        <FileActions file={file} onPreview={onPreview} onDelete={onDelete} />
+        <FileActions file={file} onPreview={onPreview} onDelete={onDelete} onDownload={onDownload} onRenew={onRenew} />
       </div>
     </div>
   );

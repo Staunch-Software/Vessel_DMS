@@ -136,6 +136,10 @@ export async function deleteFile(fileId: string): Promise<void> {
   await api.delete(`/files/${fileId}`);
 }
 
+export async function deleteFolder(folderId: string): Promise<void> {
+  await api.delete(`/folders/${folderId}`);
+}
+
 export function fileContentUrl(fileId: string): string {
   return `/api/files/${fileId}/content`;
 }
