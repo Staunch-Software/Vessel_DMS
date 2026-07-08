@@ -44,9 +44,20 @@ def _raise(e: Exception):
     raise
 
 
+VESSEL_TYPES = {
+    "Bulk Carrier",
+    "Container Carrier",
+    "Gas Carrier",
+    "Other Cargo Ships",
+}
+
+
 class VesselIn(BaseModel):
     name: str
     imo: str | None = None
+    shipyard: str | None = None
+    hull_number: str | None = None
+    vessel_type: str | None = None
 
 
 @app.on_event("startup")
@@ -563,8 +574,17 @@ async def list_vessels():
 
 @app.post("/api/vessels", status_code=201)
 async def create_vessel(payload: VesselIn):
+    vtype = (payload.vessel_type or "").strip() or None
+    if vtype and vtype not in VESSEL_TYPES:
+        raise HTTPException(400, "Invalid vessel type")
     try:
-        return await get_backend().create_vessel(payload.name, payload.imo)
+        return await get_backend().create_vessel(
+            payload.name,
+            payload.imo,
+            shipyard=(payload.shipyard or "").strip() or None,
+            hull_number=(payload.hull_number or "").strip() or None,
+            vessel_type=vtype,
+        )
     except (BadRequest, Conflict) as e:
         _raise(e)
 

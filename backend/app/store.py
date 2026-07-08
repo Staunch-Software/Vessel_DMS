@@ -6,7 +6,7 @@ upload + month-folder behaviour so the UI can be built against realistic data.
 """
 import itertools
 import re
-from datetime import date
+from datetime import date, datetime
 
 from . import template
 
@@ -72,7 +72,7 @@ class Store:
             self._build_subtree(template.COMMON_TEMPLATE[name], main["id"])
 
     # ----------------------------------------------------------------- vessels
-    def add_vessel(self, name, imo=None):
+    def add_vessel(self, name, imo=None, shipyard=None, hull_number=None, vessel_type=None):
         ship_folder_ids = {}
         for main_name, main in self.main_folders.items():
             ship = self._make_node(name, "ship", main["id"])
@@ -84,6 +84,9 @@ class Store:
             "id": _new_id(),
             "name": name,
             "imo": imo,
+            "shipyard": shipyard,
+            "hull_number": hull_number,
+            "vessel_type": vessel_type,
             "ship_folders": ship_folder_ids,
         }
         self.vessels.append(vessel)
@@ -123,6 +126,9 @@ class Store:
         }
         if "ext" in node:
             out["ext"] = node["ext"]
+        if node["kind"] == "file":
+            out["size"] = node.get("size")
+            out["modified"] = node.get("modified")
         if node["month_driven"]:
             out["categories"] = [c["name"] for c in node.get("month_children", [])]
         if depth != 0:
@@ -180,6 +186,7 @@ class Store:
         node["content"] = content
         node["content_type"] = content_type or "application/octet-stream"
         node["size"] = len(content)
+        node["modified"] = datetime.now().isoformat()
         return node
 
     def _has_child_named(self, parent_id, name):

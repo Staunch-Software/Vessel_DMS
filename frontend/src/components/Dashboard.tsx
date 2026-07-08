@@ -92,14 +92,21 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
                   <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50">
                     <Ship className="h-4 w-4 text-brand-600" />
                   </span>
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-slate-800">
                       {v.name}
                     </p>
-                    <p className="text-xs text-slate-500">
+                    <p className="truncate text-xs text-slate-500">
                       IMO {v.imo ?? "—"}
+                      {v.hull_number ? ` · Hull ${v.hull_number}` : ""}
+                      {v.shipyard ? ` · ${v.shipyard}` : ""}
                     </p>
                   </div>
+                  {v.vessel_type && (
+                    <span className="shrink-0 rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-100">
+                      {v.vessel_type}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>

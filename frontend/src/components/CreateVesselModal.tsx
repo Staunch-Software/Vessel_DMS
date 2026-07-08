@@ -1,14 +1,21 @@
 import { useState } from "react";
 import { Loader2, Ship, X } from "lucide-react";
+import { VESSEL_TYPES, type VesselInput } from "../api";
 
 interface Props {
   onClose: () => void;
-  onCreate: (name: string, imo: string) => Promise<void>;
+  onCreate: (data: VesselInput) => Promise<void>;
 }
+
+const inputCls =
+  "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100";
 
 export function CreateVesselModal({ onClose, onCreate }: Props) {
   const [name, setName] = useState("");
   const [imo, setImo] = useState("");
+  const [shipyard, setShipyard] = useState("");
+  const [hull, setHull] = useState("");
+  const [vesselType, setVesselType] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,7 +26,13 @@ export function CreateVesselModal({ onClose, onCreate }: Props) {
     setBusy(true);
     setError(null);
     try {
-      await onCreate(name.trim(), imo.trim());
+      await onCreate({
+        name: name.trim(),
+        imo: imo.trim(),
+        shipyard: shipyard.trim(),
+        hull_number: hull.trim(),
+        vessel_type: vesselType || undefined,
+      });
       onClose();
     } catch (e: unknown) {
       const msg =
@@ -36,7 +49,7 @@ export function CreateVesselModal({ onClose, onCreate }: Props) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-start justify-between">
@@ -45,43 +58,32 @@ export function CreateVesselModal({ onClose, onCreate }: Props) {
               <Ship className="h-5 w-5 text-brand-600" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-slate-800">
-                New Vessel
-              </h2>
+              <h2 className="text-base font-semibold text-slate-800">New Vessel</h2>
               <p className="text-xs text-slate-500">
                 Provisions the full folder structure across all 3 main folders.
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="rounded p-1 text-slate-400 hover:bg-slate-100"
-          >
+          <button onClick={onClose} className="rounded p-1 text-slate-400 hover:bg-slate-100">
             <X className="h-5 w-5" />
           </button>
         </div>
 
         <label className="mb-1.5 block text-sm font-medium text-slate-700">
-          Vessel name
+          Vessel name <span className="text-rose-500">*</span>
         </label>
         <input
           autoFocus
           value={name}
           onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
           placeholder="e.g. MV Pacific Trader"
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100"
+          className={inputCls}
         />
 
-        <label className="mb-1.5 mt-4 block text-sm font-medium text-slate-700">
-          IMO number
-        </label>
+        <label className="mb-1.5 mt-4 block text-sm font-medium text-slate-700">IMO number</label>
         <input
           value={imo}
-          onChange={(e) =>
-            setImo(e.target.value.replace(/\D/g, "").slice(0, 7))
-          }
-          onKeyDown={(e) => e.key === "Enter" && submit()}
+          onChange={(e) => setImo(e.target.value.replace(/\D/g, "").slice(0, 7))}
           inputMode="numeric"
           placeholder="7 digits, e.g. 9074729"
           className={
@@ -92,14 +94,42 @@ export function CreateVesselModal({ onClose, onCreate }: Props) {
           }
         />
         {!imoValid && (
-          <p className="mt-1 text-xs text-rose-600">
-            IMO number must be exactly 7 digits.
-          </p>
+          <p className="mt-1 text-xs text-rose-600">IMO number must be exactly 7 digits.</p>
         )}
 
-        {error && (
-          <p className="mt-2 text-sm text-rose-600">{error}</p>
-        )}
+        <label className="mb-1.5 mt-4 block text-sm font-medium text-slate-700">
+          Ship yard name
+        </label>
+        <input
+          value={shipyard}
+          onChange={(e) => setShipyard(e.target.value)}
+          placeholder="e.g. Hyundai Heavy Industries"
+          className={inputCls}
+        />
+
+        <label className="mb-1.5 mt-4 block text-sm font-medium text-slate-700">Hull number</label>
+        <input
+          value={hull}
+          onChange={(e) => setHull(e.target.value)}
+          placeholder="e.g. H2456"
+          className={inputCls}
+        />
+
+        <label className="mb-1.5 mt-4 block text-sm font-medium text-slate-700">Vessel type</label>
+        <select
+          value={vesselType}
+          onChange={(e) => setVesselType(e.target.value)}
+          className={inputCls + " bg-white"}
+        >
+          <option value="">Select a type…</option>
+          {VESSEL_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+
+        {error && <p className="mt-3 text-sm text-rose-600">{error}</p>}
 
         <div className="mt-6 flex justify-end gap-2">
           <button

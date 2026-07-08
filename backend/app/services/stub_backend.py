@@ -8,9 +8,19 @@ from .errors import BadRequest, Conflict, NotFound
 
 class StubBackend:
     async def list_vessels(self):
-        return [{"id": v["id"], "name": v["name"], "imo": v.get("imo")} for v in store.vessels]
+        return [
+            {
+                "id": v["id"],
+                "name": v["name"],
+                "imo": v.get("imo"),
+                "shipyard": v.get("shipyard"),
+                "hull_number": v.get("hull_number"),
+                "vessel_type": v.get("vessel_type"),
+            }
+            for v in store.vessels
+        ]
 
-    async def create_vessel(self, name, imo):
+    async def create_vessel(self, name, imo, shipyard=None, hull_number=None, vessel_type=None):
         name = (name or "").strip()
         imo = (imo or "").strip()
         if not name:
@@ -21,7 +31,9 @@ class StubBackend:
             raise Conflict("A vessel with that name already exists")
         if imo and any(v.get("imo") == imo for v in store.vessels):
             raise Conflict("A vessel with that IMO number already exists")
-        return store.add_vessel(name, imo or None)
+        return store.add_vessel(
+            name, imo or None, shipyard=shipyard, hull_number=hull_number, vessel_type=vessel_type
+        )
 
     async def mains(self):
         return store.mains()
