@@ -6,9 +6,9 @@
              flags (kind / month_driven) derived from the folder template.
 - UploadJob: tracks an upload's OCR + filing lifecycle for the polling UI.
 """
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -76,12 +76,25 @@ class UserProfile(Base):
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     office_location: Mapped[str | None] = mapped_column(String(300), nullable=True)
     office_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    office_address_line1: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    office_address_line2: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    office_area_locality: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    office_landmark: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    office_city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    office_state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    office_province: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    office_postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    office_country: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    office_tel: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    office_fax: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    office_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     address_line1: Mapped[str | None] = mapped_column(String(300), nullable=True)
     address_line2: Mapped[str | None] = mapped_column(String(300), nullable=True)
     area_locality: Mapped[str | None] = mapped_column(String(200), nullable=True)
     landmark: Mapped[str | None] = mapped_column(String(200), nullable=True)
     city: Mapped[str | None] = mapped_column(String(100), nullable=True)
     state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    province: Mapped[str | None] = mapped_column(String(100), nullable=True)
     postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     country: Mapped[str | None] = mapped_column(String(100), nullable=True)
     company_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -93,6 +106,8 @@ class UserProfile(Base):
     password_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    photo_base64: Mapped[str | None] = mapped_column(Text, nullable=True)
+    date_of_joining: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     emergency_contact: Mapped["EmergencyContact | None"] = relationship(
         back_populates="user", cascade="all, delete-orphan", uselist=False

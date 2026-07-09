@@ -11,7 +11,9 @@ import {
   getMains,
   getStats,
   listVessels,
+  logActivity,
   monthUpload,
+  setApiEmail,
   uploadFile,
   fileContentUrl,
   deleteFolder,
@@ -52,6 +54,23 @@ function errDetail(e: unknown, fallback: string): string {
     (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
     fallback
   );
+}
+
+function formatUploadSuccessDetail(dest: string): string {
+  if (!dest) return "";
+  const parts = dest.split("/").map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 3) {
+    const mainFolder = parts[0];
+    const vesselName = parts[1];
+    const leafFolder = parts[parts.length - 2];
+    return `file exists in folder '${leafFolder}' under main folder '${mainFolder}' and vessel '${vesselName}'`;
+  }
+  if (parts.length >= 2) {
+    const mainFolder = parts[0];
+    const leafFolder = parts[parts.length - 2];
+    return `file exists in folder '${leafFolder}' under main folder '${mainFolder}'`;
+  }
+  return `file exists: ${dest}`;
 }
 
 function matchesType(n: FolderNode, key: TypeKey): boolean {
@@ -201,6 +220,7 @@ export default function App() {
         display_name: "Test User",
         email: "testuser@example.com",
       });
+      setApiEmail("testuser@example.com");
     }
   }, [user]);
 
@@ -233,10 +253,12 @@ export default function App() {
             });
             if (res.ok) {
               const payload = await res.json();
+              const email = payload.email || account.username;
               setUser({
                 display_name: payload.display_name || account.name || account.username,
-                email: payload.email || account.username,
+                email,
               });
+              setApiEmail(email);
               setAuthError(null);
             } else {
               const errBody = await res.text();
@@ -403,8 +425,8 @@ export default function App() {
       });
       try {
         const job = node.month_driven
-          ? await monthUpload(node.id, file, category)
-          : await uploadFile(node.id, file);
+          ? await monthUpload(node.id, file, category, user?.email)
+          : await uploadFile(node.id, file, user?.email);
         let final = job;
         for (let i = 0; i < 10 && final.status === "processing"; i++) {
           await sleep(500);
@@ -414,7 +436,7 @@ export default function App() {
           id,
           status: final.status,
           title: final.status === "done" ? "Uploaded & filed" : "Upload failed",
-          detail: final.destination,
+          detail: final.status === "done" && final.destination ? formatUploadSuccessDetail(final.destination) : final.destination,
           detectedMonth: final.detected_month,
         });
         await refreshAfterMutation();
@@ -432,7 +454,7 @@ export default function App() {
       if (!window.confirm(`Delete "${node.name}"? This cannot be undone.`)) return;
       const id = Date.now() + Math.floor(Math.random() * 1000);
       try {
-        await deleteFile(node.id);
+        await deleteFile(node.id, user?.email);
         await refreshAfterMutation();
         upsertToast({ id, status: "done", title: "Deleted", detail: node.name });
       } catch (e) {
@@ -459,8 +481,8 @@ export default function App() {
       upsertToast({ id, status: "processing", title: `Renewing ${node.name}`, detail: "Uploading new version…" });
       try {
         const job = current.month_driven
-          ? await monthUpload(current.id, newFile)
-          : await uploadFile(current.id, newFile);
+          ? await monthUpload(current.id, newFile, undefined, user?.email)
+          : await uploadFile(current.id, newFile, user?.email);
         let final = job;
         for (let i = 0; i < 10 && final.status === "processing"; i++) {
           await sleep(500);
@@ -497,6 +519,12 @@ export default function App() {
     });
     setShowArchiveSelectModal(false);
     setArchiveSelectIds(new Set());
+    // Log activity
+    if (user?.email) {
+      nodesToArchive.forEach((n) =>
+        logActivity(user.email, "archive_folder", `Archived folder: ${n.name}`)
+      );
+    }
     // Success toast
     const tid = Date.now() + Math.floor(Math.random() * 1000);
     upsertToast({
@@ -506,7 +534,7 @@ export default function App() {
       detail: nodesToArchive.map((n) => n.name).join(", "),
     });
     setTimeout(() => dismissToast(tid), 4000);
-  }, [archiveSelectIds, children]);
+  }, [archiveSelectIds, children, user]);
 
   const handleFolderArchive = useCallback((node: FolderNode) => {
     setArchivedFolderIds((prev) => {
@@ -519,8 +547,16 @@ export default function App() {
         ? prev.filter((n) => n.id !== node.id)   // restore: remove from list
         : [...prev, node]                          // archive: add to list
     );
-    // Success toast
+    // Log activity
     const isRestoring = archivedNodes.some((n) => n.id === node.id);
+    if (user?.email) {
+      logActivity(
+        user.email,
+        isRestoring ? "restore_folder" : "archive_folder",
+        isRestoring ? `Restored folder: ${node.name}` : `Archived folder: ${node.name}`
+      );
+    }
+    // Success toast
     const tid2 = Date.now() + Math.floor(Math.random() * 1000);
     upsertToast({
       id: tid2,
@@ -529,15 +565,17 @@ export default function App() {
       detail: isRestoring ? "Folder is visible again" : "Folder hidden from main view",
     });
     setTimeout(() => dismissToast(tid2), 4000);
-  }, [archivedNodes]);
+  }, [archivedNodes, user]);
 
   const handleBulkFolderDelete = useCallback(async () => {
     if (deleteFolderIds.size === 0) return;
     const id = Date.now() + Math.floor(Math.random() * 1000);
+    // Build id→name map from children
+    const nameMap = new Map(children.map((c) => [c.id, c.name]));
     setShowDeleteModal(false);
     upsertToast({ id, status: "processing", title: `Deleting ${deleteFolderIds.size} folder(s)…`, detail: "Please wait" });
     try {
-      await Promise.all([...deleteFolderIds].map((fid) => deleteFolder(fid)));
+      await Promise.all([...deleteFolderIds].map((fid) => deleteFolder(fid, user?.email, nameMap.get(fid))));
       await refreshAfterMutation();
       upsertToast({ id, status: "done", title: "Folders deleted", detail: `${deleteFolderIds.size} folder(s) removed` });
     } catch (e) {
@@ -545,7 +583,7 @@ export default function App() {
     }
     setDeleteFolderIds(new Set());
     setTimeout(() => dismissToast(id), 5000);
-  }, [deleteFolderIds, refreshAfterMutation]);
+  }, [deleteFolderIds, children, refreshAfterMutation]);
 
   const handleCreate = async (data: import("./api").VesselInput) => {
     await createVessel(data);
@@ -558,7 +596,7 @@ export default function App() {
     setCreateFolderLoading(true);
     setCreateFolderError(null);
     try {
-      await createSubfolder(current.id, createFolderName.trim());
+      await createSubfolder(current.id, createFolderName.trim(), user?.email);
       setShowCreateFolderModal(false);
       setCreateFolderName("");
       await loadCurrent();
@@ -786,7 +824,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <LoginPage onAuthenticated={setUser} />;
+    return <LoginPage onAuthenticated={(u) => { setUser(u); setApiEmail(u.email); }} />;
   }
 
   // Profile page takes the full screen (no sidebar)
@@ -881,14 +919,14 @@ export default function App() {
                   <>
                     <button
                       onClick={() => { setArchiveSelectIds(new Set()); setShowArchiveSelectModal(true); }}
-                      className="inline-flex items-center gap-2 rounded-lg bg-slate-700 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-600"
+                      className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-brand-500"
                     >
                       <Archive className="h-4 w-4" />
                       Archive
                     </button>
                     <button
                       onClick={() => { setDeleteFolderIds(new Set()); setShowDeleteModal(true); }}
-                      className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-rose-700"
+                      className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-brand-500"
                     >
                       <Trash2 className="h-4 w-4" />
                       Delete Folders
@@ -1047,7 +1085,7 @@ export default function App() {
               <button
                 onClick={() => handleBulkFolderArchive()}
                 disabled={archiveSelectIds.size === 0}
-                className="flex-1 rounded-lg bg-amber-600 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex-1 rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-500 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Archive {archiveSelectIds.size > 0 ? `(${archiveSelectIds.size})` : ""} Selected
               </button>
@@ -1099,7 +1137,7 @@ export default function App() {
               <button
                 onClick={() => handleBulkFolderDelete()}
                 disabled={deleteFolderIds.size === 0}
-                className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex-1 rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-500 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Delete {deleteFolderIds.size > 0 ? `(${deleteFolderIds.size})` : ""}
               </button>

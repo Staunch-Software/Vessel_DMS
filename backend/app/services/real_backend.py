@@ -292,6 +292,77 @@ class RealBackend:
         }
 
     # -------------------------------------------------------------- uploads
+    async def _check_global_duplicate(
+        self,
+        drive_id: str,
+        filename: str,
+        target_folder_id: str,
+        target_folder_path: str,
+    ):
+        """Check ALL folders in the entire container/drive for a file with the same name.
+        Uses list items with webUrl to identify duplicates across all main folders and subfolders.
+
+        Raises Conflict with a clear message when a duplicate is found.
+        Any DB or Graph error is swallowed so infrastructure issues never block an upload.
+        """
+        from urllib.parse import unquote
+        from ..graph.client import graph
+
+        try:
+            items = []
+            url = f"/drives/{drive_id}/list/items?$top=1000"
+            while url:
+                data = await graph().get(url)
+                items.extend(data.get("value", []))
+                url = data.get("@odata.nextLink")
+        except Exception:
+            return  # degrade gracefully if Graph API fails
+
+        name_lc = filename.lower()
+        # Normalize target folder path for comparison
+        target_norm = target_folder_path.lower().replace(" ", "").replace("\\", "/").strip("/")
+
+        for item in items:
+            web_url = item.get("webUrl", "")
+            web_url_decoded = unquote(web_url)
+            
+            # Find document library in url case-insensitively
+            doc_lib_marker = "/document library/"
+            idx = web_url_decoded.lower().find(doc_lib_marker)
+            if idx == -1:
+                continue
+                
+            rel_path = web_url_decoded[idx + len(doc_lib_marker):].replace("\\", "/").strip("/")
+            if not rel_path:
+                continue
+
+            path_segments = [p.strip() for p in rel_path.split("/") if p.strip()]
+            if not path_segments:
+                continue
+
+            found_filename = path_segments[-1]
+            found_folder_path = "/".join(path_segments[:-1])
+            found_folder_norm = found_folder_path.lower().replace(" ", "").strip("/")
+
+            # Check if this item matches our duplicate filename
+            if found_filename.lower() == name_lc:
+                # If it's in a different folder, raise Conflict
+                if found_folder_norm != target_norm:
+                    parts_folder = [p.strip() for p in found_folder_path.split("/") if p.strip()]
+                    if len(parts_folder) >= 2:
+                        main_folder = parts_folder[0]
+                        vessel_name = parts_folder[1]
+                        leaf_folder = parts_folder[-1]
+                        msg = (
+                            f"Duplicate files upload, file already exists in folder '{leaf_folder}' "
+                            f"under main folder '{main_folder}' and vessel '{vessel_name}'"
+                        )
+                    elif parts_folder:
+                        msg = f"Duplicate files upload, file already exists in folder '{parts_folder[0]}'"
+                    else:
+                        msg = f"Duplicate files upload, file already exists in another folder"
+                    raise Conflict(msg)
+
     async def upload(self, folder_id, filename, content, content_type):
         drive_id = await self._drive()
         path = await self._folder_path(drive_id, folder_id)
@@ -303,8 +374,11 @@ class RealBackend:
         existing = await gd.find_child(drive_id, folder_id, filename)
         if existing and "file" in existing:
             raise Conflict(f"'{filename}' already exists in this folder")
+        # Pass the folder's own path so _check_global_duplicate can scope by vessel
+        await self._check_global_duplicate(drive_id, filename, folder_id, path)
         await gd.upload_file(drive_id, folder_id, filename, content, content_type)
         return self._make_job(filename, f"{path}/{filename}", None)
+
 
     async def delete_folder(self, folder_id: str) -> bool:
         """Delete a folder and all its contents via Graph API."""
@@ -392,6 +466,9 @@ class RealBackend:
         existing = await gd.find_child(drive_id, target_id, filename)
         if existing and "file" in existing:
             raise Conflict(f"'{filename}' already exists in the target folder")
+        # Derive target folder path by stripping the filename from dest_path
+        target_folder_path = dest_path[: -len(filename)].rstrip("/ ") if dest_path.endswith(filename) else dest_path
+        await self._check_global_duplicate(drive_id, filename, target_id, target_folder_path)
         await gd.upload_file(drive_id, target_id, filename, content, content_type)
         return self._make_job(filename, dest_path, detected_label)
 

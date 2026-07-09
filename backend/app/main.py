@@ -15,7 +15,7 @@ warnings.filterwarnings("ignore", message="Timezone offset does not match system
 
 import httpx
 
-from fastapi import FastAPI, Form, HTTPException, Response, UploadFile
+from fastapi import FastAPI, Form, Header, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -107,6 +107,31 @@ class LogoutIn(BaseModel):
     email: str | None = None
 
 
+def _log_activity(email: str | None, action: str, detail: str | None = None) -> None:
+    """Write an ActivityLog row if DB is configured and email is known."""
+    if not email or not settings.db_configured:
+        return
+    email = email.lower().strip()
+    try:
+        from .db.base import SessionLocal
+        from .db import models as db_models
+        with SessionLocal() as db:
+            db.add(db_models.ActivityLog(user_email=email, action=action, detail=detail))
+            # Keep only last 50
+            old = (
+                db.query(db_models.ActivityLog)
+                .filter_by(user_email=email)
+                .order_by(db_models.ActivityLog.created_at.desc())
+                .offset(50)
+                .all()
+            )
+            for entry in old:
+                db.delete(entry)
+            db.commit()
+    except Exception:
+        pass
+
+
 @app.post("/api/auth/check-email")
 async def check_email(payload: CheckEmailIn):
     """Pre-flight check: confirm the email is a member/guest in the Entra tenant.
@@ -180,12 +205,12 @@ async def auth_login(payload: LoginIn):
             "manager_email": None,
             "tenant_id": payload.tenant_id or None,
             "two_factor_enabled": True,
-            "password_changed_at": (now - timedelta(days=92)).isoformat(),
-            "last_login": now.isoformat(),
-            "created_at": now.isoformat(),
+            "password_changed_at": (now - timedelta(days=92)).isoformat() + "Z",
+            "last_login": now.isoformat() + "Z",
+            "created_at": now.isoformat() + "Z",
             "emergency_contact": None,
             "folder_permissions": [],
-            "recent_activity": [{"action": "login", "detail": "Logged in", "created_at": now.isoformat()}],
+            "recent_activity": [{"action": "login", "detail": "Logged in", "created_at": now.isoformat() + "Z"}],
         }
         _profile_cache["testuser@example.com"] = profile
         return {"display_name": profile["display_name"], "email": profile["email"]}
@@ -247,7 +272,7 @@ async def auth_login(payload: LoginIn):
         "tenant_id": payload.tenant_id or None,
         "two_factor_enabled": True,
         "password_changed_at": None,
-        "last_login": now.isoformat(),
+        "last_login": now.isoformat() + "Z",
     }
 
     if settings.db_configured:
@@ -320,10 +345,10 @@ async def auth_login(payload: LoginIn):
                     db.delete(entry)
 
                 db.commit()
-                profile["created_at"] = row.created_at.isoformat()
+                profile["created_at"] = row.created_at.isoformat() + "Z"
                 profile["two_factor_enabled"] = row.two_factor_enabled
                 profile["password_changed_at"] = (
-                    row.password_changed_at.isoformat() if row.password_changed_at else None
+                    row.password_changed_at.isoformat() + "Z" if row.password_changed_at else None
                 )
         except Exception:
             pass  # Non-critical; don't break login
@@ -343,6 +368,7 @@ async def auth_logout(payload: LogoutIn):
 
     Any server-side session state (e.g. token cache entries) can be cleared here.
     """
+    _log_activity(payload.email, "logout", "Signed out")
     return {"ok": True}
 
 
@@ -379,12 +405,25 @@ async def get_profile(email: str):
                         "phone": row.phone,
                         "office_location": row.office_location,
                         "office_name": row.office_name,
+                        "office_address_line1": row.office_address_line1,
+                        "office_address_line2": row.office_address_line2,
+                        "office_area_locality": row.office_area_locality,
+                        "office_landmark": row.office_landmark,
+                        "office_city": row.office_city,
+                        "office_state": row.office_state,
+                        "office_province": row.office_province,
+                        "office_postal_code": row.office_postal_code,
+                        "office_country": row.office_country,
+                        "office_tel": row.office_tel,
+                        "office_fax": row.office_fax,
+                        "office_phone": row.office_phone,
                         "address_line1": row.address_line1,
                         "address_line2": row.address_line2,
                         "area_locality": row.area_locality,
                         "landmark": row.landmark,
                         "city": row.city,
                         "state": row.state,
+                        "province": row.province,
                         "postal_code": row.postal_code,
                         "country": row.country,
                         "company_name": row.company_name,
@@ -393,9 +432,11 @@ async def get_profile(email: str):
                         "manager_email": row.manager_email,
                         "tenant_id": row.tenant_id,
                         "two_factor_enabled": row.two_factor_enabled,
-                        "password_changed_at": row.password_changed_at.isoformat() if row.password_changed_at else None,
-                        "last_login": row.last_login.isoformat() if row.last_login else None,
-                        "created_at": row.created_at.isoformat(),
+                        "password_changed_at": row.password_changed_at.isoformat() + "Z" if row.password_changed_at else None,
+                        "last_login": row.last_login.isoformat() + "Z" if row.last_login else None,
+                        "created_at": row.created_at.isoformat() + "Z",
+                        "photo_base64": row.photo_base64,
+                        "date_of_joining": row.date_of_joining.isoformat() if row.date_of_joining else None,
                         "emergency_contact": {
                             "name": ec.name,
                             "relationship_type": ec.relationship_type,
@@ -410,7 +451,7 @@ async def get_profile(email: str):
                             {
                                 "action": lg.action,
                                 "detail": lg.detail,
-                                "created_at": lg.created_at.isoformat(),
+                                "created_at": lg.created_at.isoformat() + "Z",
                             }
                             for lg in logs
                         ],
@@ -435,6 +476,8 @@ async def get_profile(email: str):
                         tenant_id=cached.get("tenant_id"),
                         two_factor_enabled=bool(cached.get("two_factor_enabled", False)),
                     )
+                    if cached.get("last_login"):
+                        row.last_login = datetime.fromisoformat(cached["last_login"].rstrip("Z"))
                     db.add(row)
                     db.add(db_models.EmergencyContact(user_email=email))
                     db.commit()
@@ -463,6 +506,7 @@ class ProfileUpdateIn(BaseModel):
     landmark: str | None = None
     city: str | None = None
     state: str | None = None
+    province: str | None = None
     postal_code: str | None = None
     country: str | None = None
     department: str | None = None
@@ -473,6 +517,20 @@ class ProfileUpdateIn(BaseModel):
     emergency_contact_relationship: str | None = None
     emergency_contact_phone: str | None = None
     emergency_contact_email: str | None = None
+    photo_base64: str | None = None
+    date_of_joining: str | None = None
+    office_address_line1: str | None = None
+    office_address_line2: str | None = None
+    office_area_locality: str | None = None
+    office_landmark: str | None = None
+    office_city: str | None = None
+    office_state: str | None = None
+    office_province: str | None = None
+    office_postal_code: str | None = None
+    office_country: str | None = None
+    office_tel: str | None = None
+    office_fax: str | None = None
+    office_phone: str | None = None
 
 
 @app.patch("/api/profile")
@@ -501,12 +559,22 @@ async def patch_profile(email: str, payload: ProfileUpdateIn):
 
                 for field in ("employee_id", "first_name", "last_name", "phone", "office_location",
                               "office_name", "address_line1", "address_line2",
-                              "area_locality", "landmark", "city", "state",
+                              "area_locality", "landmark", "city", "state", "province",
                               "postal_code", "country",
-                              "department", "manager_name", "manager_email"):
+                              "department", "manager_name", "manager_email", "photo_base64",
+                              "office_address_line1", "office_address_line2", "office_area_locality",
+                              "office_landmark", "office_city", "office_state", "office_province",
+                              "office_postal_code", "office_country", "office_tel", "office_fax", "office_phone"):
                     val = getattr(payload, field)
                     if val is not None:
                         setattr(row, field, val)
+
+                if payload.date_of_joining is not None:
+                    if payload.date_of_joining.strip():
+                        from datetime import datetime
+                        row.date_of_joining = datetime.strptime(payload.date_of_joining.strip(), "%Y-%m-%d").date()
+                    else:
+                        row.date_of_joining = None
 
                 if payload.two_factor_enabled is not None:
                     row.two_factor_enabled = payload.two_factor_enabled
@@ -616,21 +684,37 @@ async def folder(folder_id: str):
 
 
 @app.post("/api/folders/{folder_id}/upload")
-async def upload(folder_id: str, file: UploadFile):
+async def upload(folder_id: str, file: UploadFile, user_email: str | None = Form(None), x_user_email: str | None = Header(default=None)):
     data = await file.read()
+    email = user_email or x_user_email
     try:
-        return await get_backend().upload(folder_id, file.filename, data, file.content_type)
+        result = await get_backend().upload(folder_id, file.filename, data, file.content_type)
+        dest = result.get("destination") or ""
+        # Strip trailing filename from dest to get the folder path
+        if dest and dest.endswith(file.filename):
+            folder_path = dest[: -len(file.filename)].rstrip("/ ")
+        else:
+            folder_path = dest
+        detail = (
+            f"Uploaded: {file.filename}|{folder_path}"
+            if folder_path
+            else f"Uploaded: {file.filename}"
+        )
+        _log_activity(email, "file_upload", detail)
+        return result
     except (NotFound, BadRequest, Conflict) as e:
         _raise(e)
 
 
 class CreateSubfolderIn(BaseModel):
     name: str
+    user_email: str | None = None
 
 
 @app.delete("/api/folders/{folder_id}", status_code=204)
-async def delete_folder(folder_id: str):
+async def delete_folder(folder_id: str, user_email: str | None = Query(None), folder_name: str | None = Query(None), x_user_email: str | None = Header(default=None)):
     """Delete a folder and all its contents."""
+    email = user_email or x_user_email
     try:
         result = await get_backend().delete_folder(folder_id)
         if not result:
@@ -639,25 +723,43 @@ async def delete_folder(folder_id: str):
         raise
     except (NotFound, BadRequest) as e:
         _raise(e)
+    detail = f"Deleted folder: {folder_name}" if folder_name else f"Deleted folder: {folder_id}"
+    _log_activity(email, "delete_folder", detail)
     return Response(status_code=204)
 
 
 @app.post("/api/folders/{folder_id}/subfolder", status_code=201)
-async def create_subfolder(folder_id: str, payload: CreateSubfolderIn):
+async def create_subfolder(folder_id: str, payload: CreateSubfolderIn, x_user_email: str | None = Header(default=None)):
     """Manually create a named sub-folder inside a month_driven folder."""
+    email = payload.user_email or x_user_email
     try:
-        return await get_backend().create_subfolder(folder_id, payload.name.strip())
+        result = await get_backend().create_subfolder(folder_id, payload.name.strip())
+        _log_activity(email, "create_folder", f"Created folder: {payload.name.strip()}")
+        return result
     except (NotFound, BadRequest, Conflict) as e:
         _raise(e)
 
 
 @app.post("/api/folders/{folder_id}/month-upload")
-async def month_upload(folder_id: str, file: UploadFile, category: str = Form(None)):
+async def month_upload(folder_id: str, file: UploadFile, category: str = Form(None), user_email: str | None = Form(None), x_user_email: str | None = Header(default=None)):
     data = await file.read()
+    email = user_email or x_user_email
     try:
-        return await get_backend().month_upload(
+        result = await get_backend().month_upload(
             folder_id, file.filename, category, data, file.content_type
         )
+        dest = result.get("destination") or ""
+        if dest and dest.endswith(file.filename):
+            folder_path = dest[: -len(file.filename)].rstrip("/ ")
+        else:
+            folder_path = dest
+        detail = (
+            f"Uploaded: {file.filename}|{folder_path}"
+            if folder_path
+            else f"Uploaded: {file.filename}"
+        )
+        _log_activity(email, "file_upload", detail)
+        return result
     except (NotFound, BadRequest, Conflict) as e:
         _raise(e)
 
@@ -676,15 +778,29 @@ async def file_content(file_id: str):
 
 
 @app.delete("/api/files/{file_id}", status_code=204)
-async def delete_file(file_id: str):
+async def delete_file(file_id: str, user_email: str | None = Query(None), x_user_email: str | None = Header(default=None)):
     if not await get_backend().delete_file(file_id):
         raise HTTPException(404, "File not found")
+    _log_activity(user_email or x_user_email, "delete_file", f"Deleted file: {file_id}")
     return Response(status_code=204)
 
 
 @app.get("/api/search")
 async def search(q: str = ""):
     return await get_backend().search(q)
+
+
+class LogActivityIn(BaseModel):
+    email: str
+    action: str
+    detail: str | None = None
+
+
+@app.post("/api/activity", status_code=204)
+async def log_activity_endpoint(payload: LogActivityIn):
+    """Frontend-initiated activity log (archive, restore, etc.)."""
+    _log_activity(payload.email, payload.action, payload.detail)
+    return Response(status_code=204)
 
 
 @app.get("/api/jobs/{job_id}")

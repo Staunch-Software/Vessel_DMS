@@ -217,6 +217,21 @@ class Store:
             for c in self.nodes[parent_id]["children"]
         )
 
+    def _find_file_globally(self, filename: str, exclude_folder_id: str | None = None):
+        """Return (node, folder_path) if a file with the same name already exists
+        in ANY folder other than `exclude_folder_id`, or (None, None) otherwise."""
+        name_lc = filename.lower()
+        for node in self.nodes.values():
+            if node["kind"] != "file":
+                continue
+            if node["name"].lower() != name_lc:
+                continue
+            parent_id = node["parent_id"]
+            if exclude_folder_id and parent_id == exclude_folder_id:
+                continue
+            return node, self._path_of(parent_id)
+        return None, None
+
     def _path_of(self, node_id):
         parts = []
         nid = node_id
@@ -229,7 +244,21 @@ class Store:
     def upload(self, folder_id, filename, content=b"", content_type=""):
         """Plain leaf upload — place the file directly in the folder."""
         if self._has_child_named(folder_id, filename):
-            raise DuplicateFile(filename)
+            raise DuplicateFile(f"'{filename}' already exists in this folder")
+        _, existing_path = self._find_file_globally(filename, exclude_folder_id=folder_id)
+        if existing_path:
+            parts = [p.strip() for p in existing_path.split(" / ") if p.strip()]
+            if len(parts) >= 2:
+                main_folder = parts[0]
+                vessel_name = parts[1]
+                leaf_folder = parts[-1]
+                msg = (
+                    f"Duplicate files upload, file already exists in folder '{leaf_folder}' "
+                    f"under main folder '{main_folder}' and vessel '{vessel_name}'"
+                )
+            else:
+                msg = f"Duplicate files upload, file already exists in folder: {existing_path}"
+            raise DuplicateFile(msg)
         self._add_file(folder_id, filename, content, content_type)
         path = self._path_of(folder_id)
         return self._make_job(filename, "done", path, detected_month=None)
@@ -255,7 +284,21 @@ class Store:
                     break
             detected = f"{_MONTHS[month - 1]} {year}"
         if self._has_child_named(target["id"], filename):
-            raise DuplicateFile(filename)
+            raise DuplicateFile(f"'{filename}' already exists in this folder")
+        _, existing_path = self._find_file_globally(filename, exclude_folder_id=target["id"])
+        if existing_path:
+            parts = [p.strip() for p in existing_path.split(" / ") if p.strip()]
+            if len(parts) >= 2:
+                main_folder = parts[0]
+                vessel_name = parts[1]
+                leaf_folder = parts[-1]
+                msg = (
+                    f"Duplicate files upload, file already exists in folder '{leaf_folder}' "
+                    f"under main folder '{main_folder}' and vessel '{vessel_name}'"
+                )
+            else:
+                msg = f"Duplicate files upload, file already exists in folder: {existing_path}"
+            raise DuplicateFile(msg)
         self._add_file(target["id"], filename, content, content_type)
         return self._make_job(
             filename, "done", self._path_of(target["id"]), detected_month=detected

@@ -57,6 +57,11 @@ export interface Job {
 
 const api = axios.create({ baseURL: "/api" });
 
+/** Call once after login to attach the user's email to every request. */
+export function setApiEmail(email: string) {
+  api.defaults.headers.common["X-User-Email"] = email;
+}
+
 export async function listVessels(): Promise<Vessel[]> {
   return (await api.get("/vessels")).data;
 }
@@ -91,28 +96,33 @@ export async function getStats(): Promise<Stats> {
 
 export async function uploadFile(
   folderId: string,
-  file: File
+  file: File,
+  userEmail?: string
 ): Promise<Job> {
   const form = new FormData();
   form.append("file", file);
+  if (userEmail) form.append("user_email", userEmail);
   return (await api.post(`/folders/${folderId}/upload`, form)).data;
 }
 
 export async function createSubfolder(
   folderId: string,
-  name: string
+  name: string,
+  userEmail?: string
 ): Promise<FolderNode> {
-  return (await api.post(`/folders/${folderId}/subfolder`, { name })).data;
+  return (await api.post(`/folders/${folderId}/subfolder`, { name, user_email: userEmail || undefined })).data;
 }
 
 export async function monthUpload(
   folderId: string,
   file: File,
-  category?: string
+  category?: string,
+  userEmail?: string
 ): Promise<Job> {
   const form = new FormData();
   form.append("file", file);
   if (category) form.append("category", category);
+  if (userEmail) form.append("user_email", userEmail);
   return (await api.post(`/folders/${folderId}/month-upload`, form)).data;
 }
 
@@ -132,12 +142,23 @@ export async function search(q: string): Promise<SearchResult[]> {
   return (await api.get("/search", { params: { q } })).data;
 }
 
-export async function deleteFile(fileId: string): Promise<void> {
-  await api.delete(`/files/${fileId}`);
+export async function deleteFile(fileId: string, userEmail?: string): Promise<void> {
+  await api.delete(`/files/${fileId}`, userEmail ? { params: { user_email: userEmail } } : undefined);
 }
 
-export async function deleteFolder(folderId: string): Promise<void> {
-  await api.delete(`/folders/${folderId}`);
+export async function deleteFolder(folderId: string, userEmail?: string, folderName?: string): Promise<void> {
+  const params: Record<string, string> = {};
+  if (userEmail) params.user_email = userEmail;
+  if (folderName) params.folder_name = folderName;
+  await api.delete(`/folders/${folderId}`, Object.keys(params).length ? { params } : undefined);
+}
+
+export async function logActivity(email: string, action: string, detail?: string): Promise<void> {
+  try {
+    await api.post("/activity", { email, action, detail });
+  } catch {
+    // non-critical — never let logging break the UI
+  }
 }
 
 export function fileContentUrl(fileId: string): string {
@@ -179,12 +200,25 @@ export interface UserProfile {
   landmark: string | null;
   city: string | null;
   state: string | null;
+  province: string | null;
   postal_code: string | null;
   country: string | null;
   company_name: string | null;
   employee_id: string | null;
   manager_name: string | null;
   manager_email: string | null;
+  office_address_line1: string | null;
+  office_address_line2: string | null;
+  office_area_locality: string | null;
+  office_landmark: string | null;
+  office_city: string | null;
+  office_state: string | null;
+  office_province: string | null;
+  office_postal_code: string | null;
+  office_country: string | null;
+  office_tel: string | null;
+  office_fax: string | null;
+  office_phone: string | null;
   tenant_id: string | null;
   two_factor_enabled: boolean;
   password_changed_at: string | null;
@@ -193,6 +227,8 @@ export interface UserProfile {
   emergency_contact: EmergencyContact | null;
   folder_permissions: FolderPermission[];
   recent_activity: ActivityEntry[];
+  photo_base64: string | null;
+  date_of_joining: string | null;
 }
 
 export interface ProfileUpdatePayload {
@@ -201,12 +237,26 @@ export interface ProfileUpdatePayload {
   last_name?: string;
   phone?: string;
   office_name?: string;
+  office_location?: string;
+  office_address_line1?: string;
+  office_address_line2?: string;
+  office_area_locality?: string;
+  office_landmark?: string;
+  office_city?: string;
+  office_state?: string;
+  office_province?: string;
+  office_postal_code?: string;
+  office_country?: string;
+  office_tel?: string;
+  office_fax?: string;
+  office_phone?: string;
   address_line1?: string;
   address_line2?: string;
   area_locality?: string;
   landmark?: string;
   city?: string;
   state?: string;
+  province?: string;
   postal_code?: string;
   country?: string;
   department?: string;
@@ -217,6 +267,8 @@ export interface ProfileUpdatePayload {
   emergency_contact_relationship?: string;
   emergency_contact_phone?: string;
   emergency_contact_email?: string;
+  photo_base64?: string | null;
+  date_of_joining?: string | null;
 }
 
 export async function getProfile(email: string): Promise<UserProfile> {
