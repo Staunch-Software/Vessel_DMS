@@ -5,12 +5,12 @@ export function FolderGridSkeleton() {
         {Array.from({ length: 6 }).map((_, i) => (
           <div
             key={i}
-            className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-4"
+            className="flex items-center gap-3 rounded-xl border border-border bg-surface p-4"
           >
-            <div className="h-11 w-11 shrink-0 animate-pulse rounded-xl bg-slate-200" />
+            <div className="h-11 w-11 shrink-0 animate-pulse rounded-xl bg-border" />
             <div className="flex-1 space-y-2">
-              <div className="h-3.5 w-2/3 animate-pulse rounded bg-slate-200" />
-              <div className="h-2.5 w-1/3 animate-pulse rounded bg-slate-100" />
+              <div className="h-3.5 w-2/3 animate-pulse rounded bg-border" />
+              <div className="h-2.5 w-1/3 animate-pulse rounded bg-surface2" />
             </div>
           </div>
         ))}
@@ -20,5 +20,5 @@ export function FolderGridSkeleton() {
 }
 
 export function Shimmer({ className = "" }: { className?: string }) {
-  return <div className={"animate-pulse rounded bg-slate-200 " + className} />;
+  return <div className={"animate-pulse rounded bg-border " + className} />;
 }

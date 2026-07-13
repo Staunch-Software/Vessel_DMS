@@ -10,7 +10,7 @@ from datetime import date, datetime
 
 from . import template
 
-from .services.errors import DuplicateFile  # noqa: E402  (re-exported for callers)
+from .services.errors import Conflict, DuplicateFile  # noqa: E402  (re-exported for callers)
 
 _ids = itertools.count(1)
 
@@ -28,6 +28,9 @@ class Store:
         # id -> job dict.
         self.jobs = {}
         self._job_ids = itertools.count(1)
+        # id -> pending/approved/rejected approval request dict.
+        self.approvals = {}
+        self._approval_ids = itertools.count(1)
         self._build_roots()
 
     # ------------------------------------------------------------------ build
@@ -201,24 +204,28 @@ class Store:
             nid = n["parent_id"]
         return " / ".join(reversed(parts))
 
-    def upload(self, folder_id, filename, content=b"", content_type=""):
-        """Plain leaf upload — place the file directly in the folder."""
+    def path_of(self, node_id):
+        return self._path_of(node_id)
+
+    def place_file(self, folder_id, filename, content=b"", content_type=""):
+        """Actually add a file node under folder_id. Raises DuplicateFile on collision.
+
+        This is the low-level primitive shared by the approval workflow's
+        approve step (whichever folder was ultimately resolved for a request).
+        """
         if self._has_child_named(folder_id, filename):
             raise DuplicateFile(filename)
         self._add_file(folder_id, filename, content, content_type)
-        path = self._path_of(folder_id)
-        return self._make_job(filename, "done", path, detected_month=None)
+        return self._path_of(folder_id)
 
-    def month_upload(
-        self, month_driven_id, filename, category=None, content=b"", content_type=""
-    ):
-        """Special upload: fake OCR month detection, ensure the month folder,
-        then file the doc into the chosen category (or `To be Classified`)."""
+    def resolve_month_target(self, month_driven_id, filename, category=None):
+        """Fake OCR month detection + ensure the month/category folders exist;
+        return (target_node, detected_month_label) without placing any file."""
         year, month = _detect_month(filename)
         md = self.nodes[month_driven_id]
         if year is None:
             # No confident date -> month-agnostic "To be Classified".
-            target = self._ensure_unclassified(md)
+            target = self.ensure_to_be_classified(md["id"])
             detected = None
         else:
             month_node = self.ensure_month_folder(month_driven_id, year, month)
@@ -229,12 +236,22 @@ class Store:
                     target = self.nodes[cid]
                     break
             detected = f"{_MONTHS[month - 1]} {year}"
-        if self._has_child_named(target["id"], filename):
-            raise DuplicateFile(filename)
-        self._add_file(target["id"], filename, content, content_type)
-        return self._make_job(
-            filename, "done", self._path_of(target["id"]), detected_month=detected
-        )
+        return target, detected
+
+    def reject_target_for(self, destination_folder_id):
+        """The sibling "To be Classified" folder for a rejected upload — found
+        inside the same parent as the originally-selected destination. If the
+        destination already IS a "To be Classified" folder, reuse it as-is."""
+        node = self.nodes[destination_folder_id]
+        if node["name"].strip().lower() == "to be classified":
+            return destination_folder_id
+        return self.ensure_to_be_classified(node["parent_id"])["id"]
+
+    def ensure_to_be_classified(self, parent_id):
+        for cid in self.nodes[parent_id]["children"]:
+            if self.nodes[cid]["name"].strip().lower() == "to be classified":
+                return self.nodes[cid]
+        return self._make_node("To be Classified", "leaf", parent_id)
 
     # ----------------------------------------------------------- files / search
     def get_file(self, node_id):
@@ -279,11 +296,129 @@ class Store:
             walk(r, [])
         return results[:50]
 
-    def _ensure_unclassified(self, md):
-        for cid in md["children"]:
-            if self.nodes[cid]["name"] == "To be Classified":
-                return self.nodes[cid]
-        return self._make_node("To be Classified", "leaf", md["id"])
+    # ------------------------------------------------------------- approvals
+    def create_approval(
+        self,
+        destination_id,
+        destination_path,
+        filename,
+        content,
+        content_type,
+        uploaded_by_email,
+        uploaded_by_name,
+        *,
+        is_month_upload=False,
+        category=None,
+        detected_month=None,
+    ):
+        for a in self.approvals.values():
+            if (
+                a["status"] == "pending"
+                and a["destination_folder_id"] == destination_id
+                and a["filename"].lower() == filename.lower()
+            ):
+                raise Conflict(
+                    f"A request for '{filename}' in this folder is already pending approval"
+                )
+        if self._has_child_named(destination_id, filename):
+            raise DuplicateFile(filename)
+        req = {
+            "id": str(next(self._approval_ids)),
+            "filename": filename,
+            "content": content,
+            "content_type": content_type or "application/octet-stream",
+            "size": len(content),
+            "uploaded_by_email": uploaded_by_email,
+            "uploaded_by_name": uploaded_by_name or "",
+            "uploaded_at": datetime.now().isoformat(),
+            "destination_folder_id": destination_id,
+            "destination_path": destination_path,
+            "is_month_upload": is_month_upload,
+            "category": category,
+            "detected_month": detected_month,
+            "status": "pending",
+            "decided_by_email": None,
+            "decided_at": None,
+            "rejection_reason": None,
+            "final_path": None,
+        }
+        self.approvals[req["id"]] = req
+        return self.public_approval(req)
+
+    def list_approvals(self, status=None, q=None):
+        items = list(self.approvals.values())
+        if status and status != "all":
+            items = [a for a in items if a["status"] == status]
+        if q:
+            ql = q.lower().strip()
+            items = [
+                a
+                for a in items
+                if ql in a["filename"].lower()
+                or ql in a["uploaded_by_email"].lower()
+                or ql in a["destination_path"].lower()
+            ]
+        items.sort(key=lambda a: a["uploaded_at"], reverse=True)
+        return [self.public_approval(a) for a in items]
+
+    def get_approval(self, request_id):
+        req = self.approvals.get(request_id)
+        return self.public_approval(req) if req else None
+
+    def get_approval_file(self, request_id):
+        req = self.approvals.get(request_id)
+        if not req:
+            return None
+        return req["content"], req["content_type"], req["filename"]
+
+    def approve_approval(self, request_id, decided_by_email):
+        req = self.approvals.get(request_id)
+        if req is None:
+            return None
+        if req["status"] != "pending":
+            raise Conflict(f"This request has already been {req['status']}")
+        req["status"] = "approved"
+        req["decided_by_email"] = decided_by_email
+        req["decided_at"] = datetime.now().isoformat()
+        try:
+            path = self.place_file(
+                req["destination_folder_id"], req["filename"], req["content"], req["content_type"]
+            )
+        except Exception:
+            req["status"] = "pending"
+            req["decided_by_email"] = None
+            req["decided_at"] = None
+            raise
+        req["final_path"] = path
+        req["content"] = b""  # release staged bytes once filed
+        return self.public_approval(req)
+
+    def reject_approval(self, request_id, decided_by_email, reason=None):
+        req = self.approvals.get(request_id)
+        if req is None:
+            return None
+        if req["status"] != "pending":
+            raise Conflict(f"This request has already been {req['status']}")
+        req["status"] = "rejected"
+        req["decided_by_email"] = decided_by_email
+        req["decided_at"] = datetime.now().isoformat()
+        req["rejection_reason"] = reason
+        try:
+            target_id = self.reject_target_for(req["destination_folder_id"])
+            path = self.place_file(target_id, req["filename"], req["content"], req["content_type"])
+        except Exception:
+            req["status"] = "pending"
+            req["decided_by_email"] = None
+            req["decided_at"] = None
+            req["rejection_reason"] = None
+            raise
+        req["final_path"] = path
+        req["content"] = b""
+        return self.public_approval(req)
+
+    @staticmethod
+    def public_approval(req):
+        return {k: v for k, v in req.items() if k != "content"}
 
     # -------------------------------------------------------------------- jobs
     def _make_job(self, filename, status, dest_path, detected_month):

@@ -1,22 +1,63 @@
 @import "tailwindcss";
 
+/* Enables `dark:` utilities driven by the .dark class ThemeProvider toggles
+   on <html> (Tailwind v4 opt-in syntax), for the rare case a component needs
+   more than a color swap (e.g. shadow intensity) between modes. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
-  /* Ocean teal primary */
-  --color-brand-50: #f0fdfa;
-  --color-brand-100: #ccfbf1;
-  --color-brand-200: #99f6e4;
-  --color-brand-300: #5eead4;
-  --color-brand-400: #2dd4bf;
-  --color-brand-500: #14b8a6;
-  --color-brand-600: #0d9488;
-  --color-brand-700: #0f766e;
-  --color-brand-800: #115e59;
-  --color-brand-900: #134e4a;
-  /* Deep ink sidebar */
-  --color-navy-800: #0e2a33;
-  --color-navy-900: #0a2027;
-  --color-navy-950: #06161b;
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* ------------------------------------------------------------------ *
+   * Theme tokens — every value is a CSS custom property (--dms-*) that
+   * ThemeProvider rewrites at runtime (see src/theme/). Tailwind generates
+   * bg-primary / text-fg / border-border / ring-focus-ring / etc. utilities
+   * from these; the *values* live only in src/theme/palettes.ts. Never hex
+   * literals in components — see CLAUDE.md / theme README.
+   * ------------------------------------------------------------------ */
+  --color-bg: var(--dms-bg);
+  --color-surface: var(--dms-surface);
+  --color-surface2: var(--dms-surface2);
+  --color-surface-hover: var(--dms-surface-hover);
+  --color-border: var(--dms-border);
+  --color-border-strong: var(--dms-border-strong);
+  --color-fg: var(--dms-fg);
+  --color-muted: var(--dms-muted);
+  --color-subtle: var(--dms-subtle);
+  --color-inverse: var(--dms-inverse);
+  --color-primary: var(--dms-primary);
+  --color-primary-hover: var(--dms-primary-hover);
+  --color-primary-fg: var(--dms-primary-fg);
+  --color-secondary: var(--dms-secondary);
+  --color-secondary-hover: var(--dms-secondary-hover);
+  --color-secondary-fg: var(--dms-secondary-fg);
+  --color-accent: var(--dms-accent);
+  --color-accent-hover: var(--dms-accent-hover);
+  --color-accent-fg: var(--dms-accent-fg);
+  --color-sidebar-bg: var(--dms-sidebar-bg);
+  --color-sidebar-fg: var(--dms-sidebar-fg);
+  --color-sidebar-muted: var(--dms-sidebar-muted);
+  --color-sidebar-active: var(--dms-sidebar-active);
+  --color-sidebar-border: var(--dms-sidebar-border);
+  --color-topnav-bg: var(--dms-topnav-bg);
+  --color-topnav-fg: var(--dms-topnav-fg);
+  --color-topnav-border: var(--dms-topnav-border);
+  --color-success: var(--dms-success);
+  --color-success-bg: var(--dms-success-bg);
+  --color-success-fg: var(--dms-success-fg);
+  --color-warning: var(--dms-warning);
+  --color-warning-bg: var(--dms-warning-bg);
+  --color-warning-fg: var(--dms-warning-fg);
+  --color-error: var(--dms-error);
+  --color-error-bg: var(--dms-error-bg);
+  --color-error-fg: var(--dms-error-fg);
+  --color-info: var(--dms-info);
+  --color-info-bg: var(--dms-info-bg);
+  --color-info-fg: var(--dms-info-fg);
+  --color-selection: var(--dms-selection);
+  --color-focus-ring: var(--dms-focus-ring);
+  --color-scrollbar: var(--dms-scrollbar);
+  --color-scrollbar-hover: var(--dms-scrollbar-hover);
 
   /* Custom animations */
   --animate-fade-in: fadeIn 0.15s ease-out;
@@ -32,6 +73,16 @@
   }
 }
 
+/* Static fallback so the very first paint (before ThemeProvider's
+   useLayoutEffect runs) is already close to the default theme instead of
+   stark black-on-white. Ocean Blue / light, matching theme/palettes.ts. */
+:root {
+  --dms-bg: #f7fafc;
+  --dms-surface: #ffffff;
+  --dms-fg: #12181f;
+  color-scheme: light;
+}
+
 html,
 body,
 #root {
@@ -44,20 +95,47 @@ body {
     Arial, sans-serif;
   font-weight: 400;
   -webkit-font-smoothing: antialiased;
-  background: #f1f5f9;
-  color: #0f172a;
+  background: var(--color-bg);
+  color: var(--color-fg);
 }
 
-/* Thin, unobtrusive scrollbars */
+/* Smooth, non-reload theme switching: color-related properties transition,
+   layout properties never do (so resizing/scrolling stays instant). */
+* {
+  transition-property: background-color, border-color, color, fill, stroke,
+    box-shadow, outline-color;
+  transition-duration: 180ms;
+  transition-timing-function: ease-out;
+}
+/* Users who've asked the OS for reduced motion get instant theme switches. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+::selection {
+  background: var(--color-selection);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+/* Thin, unobtrusive, themed scrollbars */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-color: var(--color-scrollbar) transparent;
 }
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 *::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--color-scrollbar);
   border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scrollbar-hover);
 }

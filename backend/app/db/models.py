@@ -57,3 +57,44 @@ class UploadJob(Base):
     detected_month: Mapped[str | None] = mapped_column(String(40), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ApprovalRequest(Base):
+    """A document uploaded by a user, held for admin approval before it's filed.
+
+    The file itself is staged (real mode: in a "Pending Approvals" container
+    folder via Graph; stub mode: in-memory) — `drive_item_id` stays valid across
+    the eventual move to `destination_folder_id` (approve) or the sibling
+    "To be Classified" folder (reject), since moving a driveItem in Graph keeps
+    its id. `content`/`content_type` hold the staged bytes in stub mode only.
+    """
+
+    __tablename__ = "approval_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    filename: Mapped[str] = mapped_column(String(400))
+    content_type: Mapped[str] = mapped_column(String(200), default="application/octet-stream")
+    size: Mapped[int] = mapped_column(default=0)
+
+    uploaded_by_email: Mapped[str] = mapped_column(String(320))
+    uploaded_by_name: Mapped[str] = mapped_column(String(200), default="")
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    # Where the file is intended to land once approved.
+    destination_folder_id: Mapped[str] = mapped_column(String(256))
+    destination_path: Mapped[str] = mapped_column(String(1024))
+    is_month_upload: Mapped[bool] = mapped_column(Boolean, default=False)
+    category: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    detected_month: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+    # Where the file is physically sitting right now (Graph driveItem id).
+    drive_item_id: Mapped[str] = mapped_column(String(256))
+
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/approved/rejected
+    decided_by_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    final_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

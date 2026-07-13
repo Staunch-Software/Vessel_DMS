@@ -8,11 +8,12 @@ import asyncio
 
 import httpx
 
-from fastapi import FastAPI, Form, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, Form, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .config import settings
+from .graph.http import verify as graph_tls_verify
 from .services import backend_mode, get_backend
 from .services.errors import BadRequest, Conflict, NotFound
 
@@ -37,6 +38,29 @@ def _raise(e: Exception):
 class VesselIn(BaseModel):
     name: str
     imo: str | None = None
+
+
+class RejectIn(BaseModel):
+    reason: str | None = None
+
+
+def _require_admin(
+    x_user_email: str | None = Header(default=None), admin_email: str | None = None
+) -> str:
+    """Approval decisions are restricted to settings.admin_emails.
+
+    Matches this codebase's current auth maturity (see the TEMPORARY bypass in
+    check_email below): there's no server-side session yet, so the frontend
+    identifies the acting user via a header set from its already-verified
+    MSAL login, and we check it against the admin allow-list. The preview
+    endpoint is also reachable from a plain <img>/<iframe>/<a href>, which
+    can't attach custom headers, so it's allowed to pass the email as a query
+    param instead — same admin-list check either way.
+    """
+    email = (x_user_email or admin_email or "").strip().lower()
+    if not email or email not in settings.admin_email_set:
+        raise HTTPException(403, "Administrator access required")
+    return email
 
 
 @app.on_event("startup")
@@ -85,7 +109,7 @@ async def check_email(payload: CheckEmailIn):
 
     # Acquire an app-only token for Graph
     token_url = f"{settings.graph_authority}/{settings.azure_tenant_id}/oauth2/v2.0/token"
-    async with httpx.AsyncClient(verify=settings.graph_verify_ssl) as client:
+    async with httpx.AsyncClient(verify=graph_tls_verify()) as client:
         # 1. Get an app-only access token
         token_resp = await client.post(
             token_url,
@@ -122,7 +146,7 @@ async def check_email(payload: CheckEmailIn):
 @app.post("/api/auth/login")
 async def auth_login(payload: LoginIn):
     """Validate the MSAL access token by calling Graph /me and return user info."""
-    async with httpx.AsyncClient(verify=settings.graph_verify_ssl) as client:
+    async with httpx.AsyncClient(verify=graph_tls_verify()) as client:
         me_resp = await client.get(
             f"{settings.graph_base_url}/me",
             headers={"Authorization": f"Bearer {payload.access_token}"},
@@ -194,20 +218,37 @@ async def folder(folder_id: str):
 
 
 @app.post("/api/folders/{folder_id}/upload")
-async def upload(folder_id: str, file: UploadFile):
+async def upload(
+    folder_id: str,
+    file: UploadFile,
+    uploader_email: str = Form(...),
+    uploader_name: str = Form(""),
+):
+    """Stages the file and creates a pending approval request — it is no
+    longer saved into the folder directly. See docs on the approval workflow
+    in services/stub_backend.py / services/real_backend.py."""
     data = await file.read()
     try:
-        return await get_backend().upload(folder_id, file.filename, data, file.content_type)
+        return await get_backend().upload(
+            folder_id, file.filename, data, file.content_type, uploader_email, uploader_name
+        )
     except (NotFound, BadRequest, Conflict) as e:
         _raise(e)
 
 
 @app.post("/api/folders/{folder_id}/month-upload")
-async def month_upload(folder_id: str, file: UploadFile, category: str = Form(None)):
+async def month_upload(
+    folder_id: str,
+    file: UploadFile,
+    category: str = Form(None),
+    uploader_email: str = Form(...),
+    uploader_name: str = Form(""),
+):
     data = await file.read()
     try:
         return await get_backend().month_upload(
-            folder_id, file.filename, category, data, file.content_type
+            folder_id, file.filename, category, data, file.content_type,
+            uploader_email, uploader_name,
         )
     except (NotFound, BadRequest, Conflict) as e:
         _raise(e)
@@ -244,3 +285,53 @@ async def get_job(job_id: str):
     if job is None:
         raise HTTPException(404, "Job not found")
     return job
+
+
+# ---------------------------------------------------------------------------
+# Approval workflow (admin only)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/approvals")
+async def list_approvals(
+    status: str | None = None, q: str | None = None, admin: str = Depends(_require_admin)
+):
+    return await get_backend().list_approvals(status, q)
+
+
+@app.get("/api/approvals/{request_id}")
+async def get_approval(request_id: str, admin: str = Depends(_require_admin)):
+    try:
+        return await get_backend().get_approval(request_id)
+    except NotFound as e:
+        _raise(e)
+
+
+@app.get("/api/approvals/{request_id}/preview")
+async def approval_preview(request_id: str, admin: str = Depends(_require_admin)):
+    result = await get_backend().get_approval_file(request_id)
+    if result is None:
+        raise HTTPException(404, "Staged file not found")
+    content, content_type, name = result
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{name}"'},
+    )
+
+
+@app.post("/api/approvals/{request_id}/approve")
+async def approve_approval(request_id: str, admin: str = Depends(_require_admin)):
+    try:
+        return await get_backend().approve_request(request_id, admin)
+    except (NotFound, BadRequest, Conflict) as e:
+        _raise(e)
+
+
+@app.post("/api/approvals/{request_id}/reject")
+async def reject_approval(
+    request_id: str, payload: RejectIn, admin: str = Depends(_require_admin)
+):
+    try:
+        return await get_backend().reject_request(request_id, admin, payload.reason)
+    except (NotFound, BadRequest, Conflict) as e:
+        _raise(e)

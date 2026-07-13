@@ -65,8 +65,8 @@ export function SearchBar({
       className={
         "rounded-full px-2.5 py-0.5 text-xs font-medium transition " +
         (facet === key
-          ? "bg-brand-600 text-white"
-          : "bg-slate-100 text-slate-600 hover:bg-slate-200")
+          ? "bg-primary text-primary-fg"
+          : "bg-surface2 text-muted hover:bg-surface-hover")
       }
     >
       {label}
@@ -76,18 +76,18 @@ export function SearchBar({
   return (
     <div ref={boxRef} className="relative w-full max-w-md">
       <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle" />
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onFocus={() => raw.length && setOpen(true)}
           placeholder="Search folders & documents…"
-          className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-8 text-sm text-slate-700 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100"
+          className="w-full rounded-lg border border-border bg-bg py-2 pl-9 pr-8 text-sm text-fg focus:border-primary focus:bg-surface focus:outline-none focus:ring-2 focus:ring-primary/20"
         />
         {q && (
           <button
             onClick={() => { setQ(""); setRaw([]); }}
-            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-400 hover:bg-slate-100"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-subtle hover:bg-surface2"
           >
             <X className="h-4 w-4" />
           </button>
@@ -95,18 +95,18 @@ export function SearchBar({
       </div>
 
       {open && (
-        <div className="absolute z-40 mt-2 w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
-          <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-100 px-3 py-2">
+        <div className="absolute z-40 mt-2 w-full overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-3 py-2">
             {chip("all", "All")}
             {chip("folders", "Folders")}
             {chip("files", "Files")}
             {vesselScope && (
-              <label className="ml-auto flex items-center gap-1.5 text-xs text-slate-500">
+              <label className="ml-auto flex items-center gap-1.5 text-xs text-muted">
                 <input
                   type="checkbox"
                   checked={scoped}
                   onChange={(e) => setScoped(e.target.checked)}
-                  className="accent-brand-600"
+                  className="accent-primary"
                 />
                 {vesselScope} only
               </label>
@@ -114,7 +114,7 @@ export function SearchBar({
           </div>
           <div className="max-h-80 overflow-y-auto py-1">
             {results.length === 0 ? (
-              <p className="px-4 py-3 text-sm text-slate-500">No matches.</p>
+              <p className="px-4 py-3 text-sm text-muted">No matches.</p>
             ) : (
               results.map((r) => {
                 const isFile = r.kind === "file";
@@ -129,12 +129,12 @@ export function SearchBar({
                   <button
                     key={r.id}
                     onClick={() => pick(r)}
-                    className="flex w-full items-start gap-3 px-4 py-2 text-left transition hover:bg-slate-50"
+                    className="flex w-full items-start gap-3 px-4 py-2 text-left transition hover:bg-bg"
                   >
                     <Icon className={"mt-0.5 h-4 w-4 shrink-0 " + cls} />
                     <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium text-slate-800">{r.name}</span>
-                      <span className="block truncate text-xs text-slate-400">{r.path}</span>
+                      <span className="block truncate text-sm font-medium text-fg">{r.name}</span>
+                      <span className="block truncate text-xs text-subtle">{r.path}</span>
                     </span>
                   </button>
                 );

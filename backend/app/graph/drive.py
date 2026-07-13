@@ -111,6 +111,20 @@ async def get_item(drive_id: str, item_id: str) -> dict:
     return await graph().get(f"/drives/{drive_id}/items/{item_id}")
 
 
+async def move_item(
+    drive_id: str, item_id: str, new_parent_id: str, new_name: str | None = None
+) -> dict:
+    """Move (and optionally rename) a driveItem in place — same item id, new parent.
+
+    Used by the approval workflow to relocate a staged upload to its final
+    destination (or to a "To be Classified" folder) without re-uploading bytes.
+    """
+    body: dict = {"parentReference": {"id": new_parent_id}}
+    if new_name:
+        body["name"] = new_name
+    return await graph().patch(f"/drives/{drive_id}/items/{item_id}", json=body)
+
+
 async def download_file(drive_id: str, item_id: str) -> tuple[bytes, str, str]:
     """Return (content, content_type, name) for a file driveItem.
 

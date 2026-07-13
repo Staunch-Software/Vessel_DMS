@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     ocr_min_confidence: float = 0.5
     graph_verify_ssl: bool = True  # set false only to bypass TLS verification
 
+    # --- Approval workflow ---
+    # Comma-separated emails authorised to review/approve pending uploads.
+    admin_emails: str = "spe.admin@sg-nissenkaiun.com"
+    # Mailbox Graph sends notifications from (requires the app-only Mail.Send
+    # permission, which is NOT part of the current Graph permission set — see
+    # docs/SETUP.md). Leave blank to only log notifications instead of emailing.
+    notify_sender_email: str = ""
+
     @property
     def graph_configured(self) -> bool:
         return bool(
@@ -52,6 +60,10 @@ class Settings(BaseSettings):
     @property
     def authority_url(self) -> str:
         return f"{self.graph_authority}/{self.azure_tenant_id}"
+
+    @property
+    def admin_email_set(self) -> set[str]:
+        return {e.strip().lower() for e in self.admin_emails.split(",") if e.strip()}
 
 
 @lru_cache

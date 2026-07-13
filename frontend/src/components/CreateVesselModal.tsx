@@ -32,36 +32,36 @@ export function CreateVesselModal({ onClose, onCreate }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-fg/50 p-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+        className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 ring-1 ring-brand-100">
-              <Ship className="h-5 w-5 text-brand-600" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/20">
+              <Ship className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-slate-800">
+              <h2 className="text-base font-semibold text-fg">
                 New Vessel
               </h2>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-muted">
                 Provisions the full folder structure across all 3 main folders.
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="rounded p-1 text-slate-400 hover:bg-slate-100"
+            className="rounded p-1 text-subtle hover:bg-surface2"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <label className="mb-1.5 block text-sm font-medium text-slate-700">
+        <label className="mb-1.5 block text-sm font-medium text-fg">
           Vessel name
         </label>
         <input
@@ -70,10 +70,10 @@ export function CreateVesselModal({ onClose, onCreate }: Props) {
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
           placeholder="e.g. MV Pacific Trader"
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100"
+          className="w-full rounded-lg border border-border-strong px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
         />
 
-        <label className="mb-1.5 mt-4 block text-sm font-medium text-slate-700">
+        <label className="mb-1.5 mt-4 block text-sm font-medium text-fg">
           IMO number
         </label>
         <input
@@ -87,31 +87,31 @@ export function CreateVesselModal({ onClose, onCreate }: Props) {
           className={
             "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 " +
             (imoValid
-              ? "border-slate-300 focus:border-brand-400 focus:ring-brand-100"
-              : "border-rose-300 focus:border-rose-400 focus:ring-rose-100")
+              ? "border-border-strong focus:border-primary focus:ring-primary/20"
+              : "border-error/50 focus:border-error focus:ring-error/20")
           }
         />
         {!imoValid && (
-          <p className="mt-1 text-xs text-rose-600">
+          <p className="mt-1 text-xs text-error">
             IMO number must be exactly 7 digits.
           </p>
         )}
 
         {error && (
-          <p className="mt-2 text-sm text-rose-600">{error}</p>
+          <p className="mt-2 text-sm text-error">{error}</p>
         )}
 
         <div className="mt-6 flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+            className="rounded-lg px-4 py-2 text-sm font-medium text-muted hover:bg-surface2"
           >
             Cancel
           </button>
           <button
             onClick={submit}
             disabled={busy || !name.trim() || !imoValid}
-            className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-500 disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-fg transition hover:bg-primary-hover disabled:opacity-50"
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             Create Vessel

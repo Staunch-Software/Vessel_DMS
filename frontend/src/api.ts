@@ -32,7 +32,7 @@ export interface Vessel {
 export interface Job {
   id: string;
   filename: string;
-  status: "processing" | "done" | "failed";
+  status: "processing" | "done" | "failed" | "pending";
   destination: string;
   detected_month: string | null;
 }
@@ -76,21 +76,29 @@ export async function getStats(): Promise<Stats> {
 
 export async function uploadFile(
   folderId: string,
-  file: File
+  file: File,
+  uploaderEmail: string,
+  uploaderName?: string
 ): Promise<Job> {
   const form = new FormData();
   form.append("file", file);
+  form.append("uploader_email", uploaderEmail);
+  form.append("uploader_name", uploaderName ?? "");
   return (await api.post(`/folders/${folderId}/upload`, form)).data;
 }
 
 export async function monthUpload(
   folderId: string,
   file: File,
-  category?: string
+  category: string | undefined,
+  uploaderEmail: string,
+  uploaderName?: string
 ): Promise<Job> {
   const form = new FormData();
   form.append("file", file);
   if (category) form.append("category", category);
+  form.append("uploader_email", uploaderEmail);
+  form.append("uploader_name", uploaderName ?? "");
   return (await api.post(`/folders/${folderId}/month-upload`, form)).data;
 }
 
@@ -116,4 +124,78 @@ export async function deleteFile(fileId: string): Promise<void> {
 
 export function fileContentUrl(fileId: string): string {
   return `/api/files/${fileId}/content`;
+}
+
+// --------------------------------------------------------------- approvals
+export type ApprovalStatus = "pending" | "approved" | "rejected";
+
+export interface ApprovalRequest {
+  id: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  uploaded_by_email: string;
+  uploaded_by_name: string;
+  uploaded_at: string;
+  destination_folder_id: string;
+  destination_path: string;
+  is_month_upload: boolean;
+  category: string | null;
+  detected_month: string | null;
+  status: ApprovalStatus;
+  decided_by_email: string | null;
+  decided_at: string | null;
+  rejection_reason: string | null;
+  final_path: string | null;
+}
+
+function adminHeaders(actingEmail: string) {
+  return { headers: { "X-User-Email": actingEmail } };
+}
+
+export async function listApprovals(
+  actingEmail: string,
+  status?: ApprovalStatus | "all",
+  q?: string
+): Promise<ApprovalRequest[]> {
+  return (
+    await api.get("/approvals", {
+      ...adminHeaders(actingEmail),
+      params: { status, q },
+    })
+  ).data;
+}
+
+export async function getApproval(
+  actingEmail: string,
+  requestId: string
+): Promise<ApprovalRequest> {
+  return (await api.get(`/approvals/${requestId}`, adminHeaders(actingEmail))).data;
+}
+
+export function approvalPreviewUrl(requestId: string, actingEmail: string): string {
+  return `/api/approvals/${requestId}/preview?admin_email=${encodeURIComponent(actingEmail)}`;
+}
+
+export async function approveRequest(
+  actingEmail: string,
+  requestId: string
+): Promise<ApprovalRequest> {
+  return (
+    await api.post(`/approvals/${requestId}/approve`, {}, adminHeaders(actingEmail))
+  ).data;
+}
+
+export async function rejectRequest(
+  actingEmail: string,
+  requestId: string,
+  reason?: string
+): Promise<ApprovalRequest> {
+  return (
+    await api.post(
+      `/approvals/${requestId}/reject`,
+      { reason: reason || null },
+      adminHeaders(actingEmail)
+    )
+  ).data;
 }

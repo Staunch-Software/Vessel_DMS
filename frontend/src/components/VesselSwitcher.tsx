@@ -11,12 +11,12 @@ export function VesselSwitcher({
   onSelect: (name: string | null) => void;
 }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white pl-2.5 pr-1">
-      <Ship className="h-4 w-4 text-brand-500" />
+    <div className="flex items-center gap-2 rounded-lg border border-border bg-surface pl-2.5 pr-1">
+      <Ship className="h-4 w-4 text-primary" />
       <select
         value={selected ?? ""}
         onChange={(e) => onSelect(e.target.value || null)}
-        className="bg-transparent py-1.5 pr-1 text-sm text-slate-700 focus:outline-none"
+        className="bg-transparent py-1.5 pr-1 text-sm text-fg focus:outline-none"
         title="Filter the explorer to one vessel"
       >
         <option value="">All vessels</option>
