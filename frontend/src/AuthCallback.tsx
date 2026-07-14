@@ -16,37 +16,20 @@ import { msalInstance } from "./authConfig";
  *      reached via the back button.
  */
 function goHomeClearingAuthHistory() {
-    const preLoginHistLen = parseInt(
-        sessionStorage.getItem("_preLoginHistLen") || "0",
-        10
-    );
-    sessionStorage.removeItem("_preLoginHistLen");
-
-    const delta = preLoginHistLen > 0 ? window.history.length - preLoginHistLen : 0;
-
-    if (delta > 0 && delta < 20) {
-        // Signal App.tsx to redirect to /homepage once MSAL accounts are ready.
-        sessionStorage.setItem("_postAuthGoHome", "1");
-        window.history.go(-delta);
-        // Fallback: if history.go cannot navigate (e.g. already at boundary)
-        // just replace directly.
-        setTimeout(() => window.location.replace("/homepage?view=dashboard"), 1500);
-    } else {
-        window.location.replace("/homepage?view=dashboard");
-    }
+    sessionStorage.setItem("justLoggedIn", "true");
+    console.log("[AuthCallback] justLoggedIn flag SET. Navigating to /homepage.");
+    window.location.replace("/homepage?view=dashboard");
 }
 
 export default function AuthCallback() {
     useEffect(() => {
         const completeLogin = async () => {
             try {
-                await msalInstance.initialize();
-
                 const response = await msalInstance.handleRedirectPromise();
-
                 if (response?.account) {
                     msalInstance.setActiveAccount(response.account);
                     goHomeClearingAuthHistory();
+                    return;
                 } else {
                     const accounts = msalInstance.getAllAccounts();
                     if (accounts.length > 0) {

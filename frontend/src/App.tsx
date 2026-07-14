@@ -63,14 +63,14 @@ function formatUploadSuccessDetail(dest: string): string {
     const mainFolder = parts[0];
     const vesselName = parts[1];
     const leafFolder = parts[parts.length - 2];
-    return `file exists in folder '${leafFolder}' under main folder '${mainFolder}' and vessel '${vesselName}'`;
+    return `file successfully uploaded in '${leafFolder}' under main folder '${mainFolder}' and vessel '${vesselName}'`;
   }
   if (parts.length >= 2) {
     const mainFolder = parts[0];
     const leafFolder = parts[parts.length - 2];
-    return `file exists in folder '${leafFolder}' under main folder '${mainFolder}'`;
+    return `file successfully uploaded in '${leafFolder}' under main folder '${mainFolder}'`;
   }
-  return `file exists: ${dest}`;
+  return `file successfully uploaded: ${dest}`;
 }
 
 function matchesType(n: FolderNode, key: TypeKey): boolean {
@@ -154,6 +154,7 @@ export default function App() {
   const [archiveSelectIds, setArchiveSelectIds] = useState<Set<string>>(new Set());
   const [selectedVessel, setSelectedVessel] = useState<string | null>(null);
   const [preview, setPreview] = useState<FolderNode | null>(null);
+  const [deleteFileNode, setDeleteFileNode] = useState<FolderNode | null>(null);
 
   // In-folder toolbar state
   const [fQuery, setFQuery] = useState("");
@@ -168,22 +169,6 @@ export default function App() {
     setStats(s);
   }, []);
 
-  // Post-auth history cleanup handshake.
-  // AuthCallback sets "_postAuthGoHome" then calls history.go(-delta) to
-  // navigate back to "/", which causes a full reload.  Once MSAL has settled
-  // (inProgress===none) we replace the current entry with /homepage — this
-  // also discards forward history (including any Microsoft auth URLs) so the
-  // back button can never land on login.microsoftonline.com again.
-  useEffect(() => {
-    if (!sessionStorage.getItem("_postAuthGoHome")) return;
-    if (inProgress !== "none") return; // Wait for MSAL to finish initialising
-    sessionStorage.removeItem("_postAuthGoHome");
-    if (accounts.length > 0) {
-      window.location.replace("/homepage?view=dashboard");
-    }
-    // If accounts is still empty after MSAL settled the auth didn't persist;
-    // just stay on the login page (flag is already removed).
-  }, [accounts, inProgress]);
 
   useEffect(() => {
     const handlePageShow = (event: PageTransitionEvent) => {
@@ -282,7 +267,7 @@ export default function App() {
 
   const signOutRef = useRef<() => void>(() => { });
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const expireSessionRef = useRef<(reason: "inactivity" | "token_expiry") => void>(() => {});
+  const expireSessionRef = useRef<(reason: "inactivity" | "token_expiry") => void>(() => { });
 
   const navigateTo = useCallback((newView: "dashboard" | "explorer" | "profile", newPath: PathEntry[]) => {
     setView(newView);
@@ -304,21 +289,29 @@ export default function App() {
     if (!user) return;
 
     const homeUrl = "/homepage?view=dashboard";
-
-    // Write the floor sentinel (replaces current entry, no extra history push)
+    console.log(`[HistoryGuard] user set — installing. historyLen(before)=${window.history.length}`);
     window.history.replaceState({ view: "dashboard", path: [], isInitial: true }, "", homeUrl);
+
+    const TOPUP_SIZE = 5;
+    const topUpBuffer = () => {
+      for (let i = 0; i < TOPUP_SIZE; i++) {
+        window.history.pushState({ view: "dashboard", path: [] }, "", homeUrl);
+      }
+      console.log(`[HistoryGuard] topped up buffer. historyLen(after)=${window.history.length}`);
+    };
+    topUpBuffer();
 
     const handlePopState = (event: PopStateEvent) => {
       const state = (event.state || {}) as { view?: string; path?: PathEntry[]; isInitial?: boolean };
+      console.log(`[HistoryGuard] popstate. state=`, state, `historyLen=${window.history.length}`);
 
-      // Floor reached — bounce the user forward so they stay on the dashboard
-      // instead of navigating away from the app entirely.
       if (state.isInitial) {
+        console.log(`[HistoryGuard] hit floor sentinel — bouncing forward + topping up`);
         window.history.forward();
+        topUpBuffer();
         return;
       }
 
-      // Sync React state with what the history entry remembers
       if (state.view === "dashboard" || state.view === "explorer" || state.view === "profile") {
         setView(state.view as "dashboard" | "explorer" | "profile");
         setPath(state.path || []);
@@ -329,7 +322,11 @@ export default function App() {
     };
 
     window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
+    console.log(`[HistoryGuard] listener attached`);
+    return () => {
+      console.log(`[HistoryGuard] cleanup — listener removed`);
+      window.removeEventListener("popstate", handlePopState);
+    };
   }, [user]);
 
   useEffect(() => {
@@ -352,6 +349,16 @@ export default function App() {
       ]);
       setCurrent(node);
       setChildren(kids);
+    } catch (e) {
+      // If the folder can't be loaded (e.g. stale ID after rename/delete),
+      // keep children empty and show a toast rather than silently doing nothing.
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Could not load folder contents.";
+      const id = Date.now();
+      setToasts((prev) => [
+        ...prev,
+        { id, status: "failed" as const, title: "Folder load error", detail },
+      ]);
+      setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 6000);
     } finally {
       setLoadingChildren(false);
     }
@@ -410,6 +417,7 @@ export default function App() {
   const dismissToast = (id: number) =>
     setToasts((prev) => prev.filter((t) => t.id !== id));
 
+
   const refreshAfterMutation = useCallback(async () => {
     await Promise.all([loadCurrent(), getStats().then(setStats)]);
   }, [loadCurrent]);
@@ -439,11 +447,28 @@ export default function App() {
           detail: final.status === "done" && final.destination ? formatUploadSuccessDetail(final.destination) : final.destination,
           detectedMonth: final.detected_month,
         });
+        // Small delay: SharePoint may take a moment to index a newly uploaded file
+        // before it appears in a list_children response.
+        if (final.status === "done") await sleep(1200);
         await refreshAfterMutation();
         setTimeout(() => dismissToast(id), 6000);
       } catch (e) {
-        upsertToast({ id, status: "failed", title: "Upload failed", detail: errDetail(e, file.name) });
-        setTimeout(() => dismissToast(id), 6000);
+        const detail = errDetail(e, file.name);
+        const isDuplicate =
+          (e as { response?: { status?: number } })?.response?.status === 409 ||
+          detail.toLowerCase().includes("already exists") ||
+          detail.toLowerCase().includes("duplicate");
+        upsertToast({
+          id,
+          status: "failed",
+          title: isDuplicate ? "Duplicate File" : "Upload failed",
+          detail,
+        });
+        // For duplicates: refresh so the existing file becomes visible in the folder
+        if (isDuplicate) {
+          await refreshAfterMutation();
+        }
+        setTimeout(() => dismissToast(id), 8000);
       }
     },
     [refreshAfterMutation]
@@ -451,7 +476,17 @@ export default function App() {
 
   const handleDelete = useCallback(
     async (node: FolderNode) => {
-      if (!window.confirm(`Delete "${node.name}"? This cannot be undone.`)) return;
+      // Show custom in-page confirmation modal instead of window.confirm
+      setDeleteFileNode(node);
+    },
+    []
+  );
+
+  const confirmDeleteFile = useCallback(
+    async () => {
+      if (!deleteFileNode) return;
+      const node = deleteFileNode;
+      setDeleteFileNode(null);
       const id = Date.now() + Math.floor(Math.random() * 1000);
       try {
         await deleteFile(node.id, user?.email);
@@ -462,7 +497,7 @@ export default function App() {
       }
       setTimeout(() => dismissToast(id), 5000);
     },
-    [refreshAfterMutation]
+    [deleteFileNode, refreshAfterMutation]
   );
 
   const handleDownload = useCallback((node: FolderNode) => {
@@ -647,7 +682,7 @@ export default function App() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: user?.email }),
-    }).catch(() => {});
+    }).catch(() => { });
     // MSAL silent cache clear
     const account = accounts[0] || instance.getActiveAccount();
     if (account) {
@@ -712,7 +747,7 @@ export default function App() {
     // ── TEST VALUES (restore for production) ──────────────────────────────────
     // Inactivity:  30 s of no mouse/keyboard → "Session Timed Out"
     // Token expiry: 2 min after login        → "Session Expired"
-    const INACTIVITY_MS  = 8  * 60 * 60 * 1000;   // TODO: restore to 8  * 60 * 60 * 1000  (8 hours)
+    const INACTIVITY_MS = 8 * 60 * 60 * 1000;   // TODO: restore to 8  * 60 * 60 * 1000  (8 hours)
     const TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // TODO: restore to 24 * 60 * 60 * 1000 (24 hours)
     // Seed timestamps on first login
     if (!sessionStorage.getItem("session_login_at")) {
@@ -726,8 +761,8 @@ export default function App() {
     events.forEach(ev => window.addEventListener(ev, onActivity, { passive: true }));
     // Periodic expiry check — 5 s during testing (restore to 60_000 for production)
     sessionTimerRef.current = setInterval(() => {
-      const now          = Date.now();
-      const loginAt      = parseInt(sessionStorage.getItem("session_login_at")      || "0", 10);
+      const now = Date.now();
+      const loginAt = parseInt(sessionStorage.getItem("session_login_at") || "0", 10);
       const lastActivity = parseInt(sessionStorage.getItem("session_last_activity") || "0", 10);
       if (loginAt > 0 && now - loginAt >= TOKEN_EXPIRY_MS) {
         expireSessionRef.current("token_expiry");
@@ -933,7 +968,7 @@ export default function App() {
                     </button>
                   </>
                 )}
-                {current?.month_driven && current.name === "Month End Reports" && (
+                {current?.month_driven && (
                   <button
                     onClick={() => { setCreateFolderName(""); setCreateFolderError(null); setShowCreateFolderModal(true); }}
                     className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-violet-700 ring-1 ring-violet-200 bg-violet-50 hover:bg-violet-100 transition shadow-sm"
@@ -969,11 +1004,9 @@ export default function App() {
                     Nothing matches your filter.
                   </p>
                 ) : current?.month_driven ? (
-                  current.name === "Month End Reports" ? (
-                    <p className="mx-auto max-w-5xl rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
-                      No month folders yet — upload a document to auto-create one, or click <strong className="text-violet-600">Create Folder</strong> to add one manually.
-                    </p>
-                  ) : null
+                  <p className="mx-auto max-w-5xl rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
+                    No month folders yet — upload a document to auto-create one, or click <strong className="text-violet-600">Create Folder</strong> to add one manually.
+                  </p>
                 ) : (
                   <EmptyFolder canUpload={canUpload} />
                 )
@@ -1216,11 +1249,12 @@ export default function App() {
               autoFocus
               type="text"
               value={createFolderName}
-              onChange={(e) => setCreateFolderName(e.target.value)}
+              onChange={(e) => { setCreateFolderName(e.target.value); setCreateFolderError(null); }}
               onKeyDown={(e) => e.key === "Enter" && void handleCreateFolder()}
               placeholder="e.g. July 2026 or 2026-07"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100"
             />
+
 
             {createFolderError && (
               <p className="mt-2 text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
@@ -1241,6 +1275,53 @@ export default function App() {
                 className="flex-1 rounded-lg bg-violet-600 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
               >
                 {createFolderLoading ? "Creating…" : "Create Folder"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete File Confirmation Modal ──────────────────────── */}
+      {deleteFileNode && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setDeleteFileNode(null)} />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-black/5">
+            {/* Header */}
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50">
+                <Trash2 className="h-5 w-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-slate-800">Delete file?</h3>
+                <p className="text-xs text-slate-500">This action cannot be undone</p>
+              </div>
+            </div>
+
+            {/* File name */}
+            <div className="rounded-lg border border-slate-100 bg-slate-50 px-4 py-3">
+              <p className="truncate text-sm font-medium text-slate-700" title={deleteFileNode.name}>
+                {deleteFileNode.name}
+              </p>
+            </div>
+
+            {/* Warning */}
+            <p className="mt-3 text-xs text-slate-500">
+              The file will be permanently removed from SharePoint and cannot be recovered.
+            </p>
+
+            {/* Actions */}
+            <div className="mt-5 flex gap-3">
+              <button
+                onClick={() => setDeleteFileNode(null)}
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void confirmDeleteFile()}
+                className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white hover:bg-rose-700 transition"
+              >
+                Delete
               </button>
             </div>
           </div>
@@ -1281,6 +1362,7 @@ export default function App() {
           </div>
         </div>
       )}
+
     </div>
   );
 }

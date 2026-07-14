@@ -84,10 +84,12 @@ def extract_text(file_bytes: bytes, filename: str, content_type: str = "") -> st
 
 
 def detect_document_month(file_bytes: bytes, filename: str, content_type: str = "") -> dict:
-    """Return {year, month, label} or {year: None} if undetectable."""
+    """Return {year, month, label, text_empty}."""
     text = extract_text(file_bytes, filename, content_type)
+    text_empty = not (text and text.strip())
     found = parse_month(text)
     if not found:
-        return {"year": None, "month": None, "label": None}
+        return {"year": None, "month": None, "label": None, "text_empty": text_empty}
     year, month = found
-    return {"year": year, "month": month, "label": month_label(year, month)}
+    return {"year": year, "month": month, "label": month_label(year, month), "text_empty": text_empty}
+

@@ -13,5 +13,10 @@ class NotFound(Exception):
     status = 404
 
 
+class InternalServerError(Exception):
+    status = 500
+
+
 class DuplicateFile(Conflict):
     pass
+

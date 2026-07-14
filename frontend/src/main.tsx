@@ -7,13 +7,6 @@ import { msalInstance } from "./authConfig";
 
 async function bootstrap() {
   await msalInstance.initialize();
-  try {
-    await msalInstance.handleRedirectPromise();
-  } catch (error) {
-    console.error("MSAL Redirect Error:", error);
-  }
-
-
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
       <MsalProvider instance={msalInstance}>

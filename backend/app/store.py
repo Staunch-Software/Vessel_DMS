@@ -10,7 +10,7 @@ from datetime import date, datetime
 
 from . import template
 
-from .services.errors import DuplicateFile  # noqa: E402  (re-exported for callers)
+from .services.errors import DuplicateFile, InternalServerError  # noqa: E402  (re-exported for callers)
 
 _ids = itertools.count(1)
 
@@ -191,6 +191,13 @@ class Store:
         if not parent["month_driven"]:
             raise BadRequest("Can only create sub-folders inside month-driven folders")
         name = name.strip()
+        
+        # Replace slashes/backslashes/colons with hyphens, and * ? " < > | with underscores
+        name = name.replace("/", "-").replace("\\", "-").replace(":", "-")
+        for c in '*?"<>|':
+            name = name.replace(c, "_")
+        name = name.strip(" .")
+
         if not name:
             raise BadRequest("Folder name is required")
         if self._has_child_named(parent_id, name):
@@ -268,6 +275,32 @@ class Store:
     ):
         """Special upload: fake OCR month detection, ensure the month folder,
         then file the doc into the chosen category (or `To be Classified`)."""
+        # 1. Check duplicate first globally before anything else
+        _, existing_path = self._find_file_globally(filename)
+        if existing_path:
+            parts = [p.strip() for p in existing_path.split(" / ") if p.strip()]
+            if len(parts) >= 2:
+                main_folder = parts[0]
+                vessel_name = parts[1]
+                leaf_folder = parts[-1]
+                msg = (
+                    f"Duplicate files upload, file already exists in folder '{leaf_folder}' "
+                    f"under main folder '{main_folder}' and vessel '{vessel_name}'"
+                )
+            else:
+                msg = f"Duplicate files upload, file already exists in folder: {existing_path}"
+            raise DuplicateFile(msg)
+
+        # 2. Check fitz (PyMuPDF) and paddleocr installations explicitly
+        try:
+            import fitz
+            from paddleocr import PaddleOCR
+        except (ImportError, ModuleNotFoundError) as ocr_err:
+            raise InternalServerError(
+                "Extraction pdf is not working and so upload not possible kindly create the manual folder and contact technical support team for installation"
+            ) from ocr_err
+
+        # 3. Detect month
         year, month = _detect_month(filename)
         md = self.nodes[month_driven_id]
         if year is None:
@@ -283,22 +316,10 @@ class Store:
                     target = self.nodes[cid]
                     break
             detected = f"{_MONTHS[month - 1]} {year}"
+
         if self._has_child_named(target["id"], filename):
             raise DuplicateFile(f"'{filename}' already exists in this folder")
-        _, existing_path = self._find_file_globally(filename, exclude_folder_id=target["id"])
-        if existing_path:
-            parts = [p.strip() for p in existing_path.split(" / ") if p.strip()]
-            if len(parts) >= 2:
-                main_folder = parts[0]
-                vessel_name = parts[1]
-                leaf_folder = parts[-1]
-                msg = (
-                    f"Duplicate files upload, file already exists in folder '{leaf_folder}' "
-                    f"under main folder '{main_folder}' and vessel '{vessel_name}'"
-                )
-            else:
-                msg = f"Duplicate files upload, file already exists in folder: {existing_path}"
-            raise DuplicateFile(msg)
+
         self._add_file(target["id"], filename, content, content_type)
         return self._make_job(
             filename, "done", self._path_of(target["id"]), detected_month=detected

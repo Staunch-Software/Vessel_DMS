@@ -19,7 +19,20 @@ from ..graph.client import GraphError
 from ..ocr.dates import month_label
 from ..ocr.extract import detect_document_month
 from .classify import classify
-from .errors import BadRequest, Conflict, NotFound
+from .errors import BadRequest, Conflict, NotFound, InternalServerError
+
+
+def sanitize_folder_name(name: str) -> str:
+    # Replace slashes and backslashes with hyphens
+    name = name.replace("/", "-").replace("\\", "-")
+    # Replace colons with hyphens
+    name = name.replace(":", "-")
+    # Remove/replace other forbidden SharePoint characters
+    for c in '*?"<>|':
+        name = name.replace(c, "_")
+    # Strip any leading/trailing spaces or dots
+    name = name.strip(" .")
+    return name
 
 
 def _next_month(year, month):
@@ -148,8 +161,12 @@ class RealBackend:
                 for v in rows
             ]
 
+    # Characters that SharePoint / OneDrive forbid in folder names.
+    _ILLEGAL_NAME_CHARS = set('/\\:*?"<>|')
+
     async def create_vessel(self, name, imo, shipyard=None, hull_number=None, vessel_type=None):
         name = (name or "").strip()
+        name = sanitize_folder_name(name)
         imo = (imo or "").strip()
         if not name:
             raise BadRequest("Vessel name is required")
@@ -195,7 +212,20 @@ class RealBackend:
                 )
             )
 
-        await asyncio.gather(*(provision_main(m) for m in template.MAIN_FOLDERS))
+        try:
+            await asyncio.gather(*(provision_main(m) for m in template.MAIN_FOLDERS))
+        except Exception as provision_err:
+            # Roll back: remove the vessel row so the user can retry.
+            with SessionLocal() as db:
+                orphan = db.query(models.Vessel).filter_by(id=vessel_id).one_or_none()
+                if orphan:
+                    db.delete(orphan)
+                    db.commit()
+            raise BadRequest(
+                f"Could not provision SharePoint folders for vessel '{name}'. "
+                f"Please try again. ({type(provision_err).__name__}: {provision_err})"
+            ) from provision_err
+
         return {
             "id": str(vessel_id),
             "name": vname,
@@ -239,7 +269,18 @@ class RealBackend:
             items = await gd.list_children(drive_id, folder_id)
         except GraphError as e:
             if e.status == 404:
-                raise NotFound("Folder not found")
+                # The drive_item_id is stale — remove it from the DB cache so it
+                # doesn't block future lookups, then tell the caller the folder is gone.
+                with SessionLocal() as db:
+                    stale = db.query(models.Folder).filter_by(drive_item_id=folder_id).one_or_none()
+                    if stale:
+                        db.delete(stale)
+                        db.commit()
+                raise NotFound(
+                    f"Folder '{parent_path.split('/')[-1] if parent_path else folder_id}' "
+                    "could not be found in SharePoint. It may have been deleted or moved. "
+                    "Please navigate back and refresh."
+                )
             raise
         parent_parts = parent_path.split("/") if parent_path else []
         out = []
@@ -297,7 +338,7 @@ class RealBackend:
         drive_id: str,
         filename: str,
         target_folder_id: str,
-        target_folder_path: str,
+        target_folder_path: str | None = None,
     ):
         """Check ALL folders in the entire container/drive for a file with the same name.
         Uses list items with webUrl to identify duplicates across all main folders and subfolders.
@@ -320,7 +361,11 @@ class RealBackend:
 
         name_lc = filename.lower()
         # Normalize target folder path for comparison
-        target_norm = target_folder_path.lower().replace(" ", "").replace("\\", "/").strip("/")
+        target_norm = (
+            target_folder_path.lower().replace(" ", "").replace("\\", "/").strip("/")
+            if target_folder_path
+            else None
+        )
 
         for item in items:
             web_url = item.get("webUrl", "")
@@ -346,8 +391,8 @@ class RealBackend:
 
             # Check if this item matches our duplicate filename
             if found_filename.lower() == name_lc:
-                # If it's in a different folder, raise Conflict
-                if found_folder_norm != target_norm:
+                # If it's in a different folder (or checking all folders), raise Conflict
+                if target_norm is None or found_folder_norm != target_norm:
                     parts_folder = [p.strip() for p in found_folder_path.split("/") if p.strip()]
                     if len(parts_folder) >= 2:
                         main_folder = parts_folder[0]
@@ -373,7 +418,21 @@ class RealBackend:
             raise BadRequest("This folder does not accept direct uploads")
         existing = await gd.find_child(drive_id, folder_id, filename)
         if existing and "file" in existing:
-            raise Conflict(f"'{filename}' already exists in this folder")
+            # Build a descriptive message showing where the file lives
+            parts = [p.strip() for p in path.split("/") if p.strip()]
+            if len(parts) >= 2:
+                main_folder = parts[0]
+                vessel_name = parts[1]
+                leaf_folder = parts[-1]
+                msg = (
+                    f"Duplicate files upload, file already exists in folder '{leaf_folder}' "
+                    f"under main folder '{main_folder}' and vessel '{vessel_name}'"
+                )
+            elif parts:
+                msg = f"Duplicate files upload, file already exists in folder '{parts[-1]}'"
+            else:
+                msg = f"Duplicate files upload, '{filename}' already exists in this folder"
+            raise Conflict(msg)
         # Pass the folder's own path so _check_global_duplicate can scope by vessel
         await self._check_global_duplicate(drive_id, filename, folder_id, path)
         await gd.upload_file(drive_id, folder_id, filename, content, content_type)
@@ -401,6 +460,7 @@ class RealBackend:
         """Manually create a named sub-folder inside a month_driven folder,
         then provision its category children from the template."""
         name = (name or "").strip()
+        name = sanitize_folder_name(name)
         if not name:
             raise BadRequest("Folder name is required")
         drive_id = await self._drive()
@@ -440,9 +500,63 @@ class RealBackend:
         categories = flags.get("categories", [])
         md_spec = {"month_children": [{"name": c, "kind": "leaf"} for c in categories]}
 
-        detected = await asyncio.to_thread(
-            detect_document_month, content, filename, content_type or ""
-        )
+        # Check duplicate first globally before anything else
+        await self._check_global_duplicate(drive_id, filename, "")
+
+        # Check fitz (PyMuPDF) and paddleocr installations explicitly
+        try:
+            import fitz
+            from paddleocr import PaddleOCR
+        except (ImportError, ModuleNotFoundError) as ocr_err:
+            raise InternalServerError(
+                "Extraction pdf is not working and so upload not possible kindly create the manual folder and contact technical support team for installation"
+            ) from ocr_err
+
+        try:
+            detected = await asyncio.to_thread(
+                detect_document_month, content, filename, content_type or ""
+            )
+        except Exception as ocr_err:
+            # If any other error occurs (corrupt file, paddleocr missing, etc.), treat as empty page / no text
+            raise InternalServerError("text is empty and no content so there is no effective date") from ocr_err
+
+        # Check the detection results
+        if detected.get("text_empty"):
+            raise InternalServerError("text is empty and no content so there is no effective date")
+        if detected.get("year") is None:
+            raise InternalServerError("effective or issue date is not there in the file")
+
+        # 1. Determine target folder path and dest_path beforehand
+        y, m = detected["year"], detected["month"]
+        detected_label = detected["label"]
+        cat_name = category if category in categories else "To be Classified"
+        target_folder_path = f"{md_path}/{detected_label}/{cat_name}"
+        dest_path = f"{md_path}/{detected_label}/{cat_name}/{filename}"
+
+
+        # 2. Check duplicate in the specific target folder if it exists
+        # Check target folder directly if it already exists in the DB cache
+        with SessionLocal() as db:
+            existing_folder = db.query(models.Folder).filter_by(path=target_folder_path).one_or_none()
+            if existing_folder:
+                existing_file = await gd.find_child(drive_id, existing_folder.drive_item_id, filename)
+                if existing_file and "file" in existing_file:
+                    parts = [p.strip() for p in target_folder_path.split("/") if p.strip()]
+                    if len(parts) >= 2:
+                        main_folder = parts[0]
+                        vessel_name = parts[1]
+                        leaf_folder = parts[-1]
+                        msg = (
+                            f"Duplicate files upload, file already exists in folder '{leaf_folder}' "
+                            f"under main folder '{main_folder}' and vessel '{vessel_name}'"
+                        )
+                    elif parts:
+                        msg = f"Duplicate files upload, file already exists in folder '{parts[-1]}'"
+                    else:
+                        msg = f"Duplicate files upload, '{filename}' already exists in this folder"
+                    raise Conflict(msg)
+
+        # 3. Create/provision folders only when there is no duplicate conflict
         with SessionLocal() as db:
             if detected["year"] is None:
                 target = await gd.ensure_folder(drive_id, folder_id, "To be Classified")
@@ -450,8 +564,7 @@ class RealBackend:
                     db, f"{md_path}/To be Classified", "To be Classified", "leaf",
                     target["id"], False, None,
                 )
-                target_id, detected_label = target["id"], None
-                dest_path = f"{md_path}/To be Classified/{filename}"
+                target_id = target["id"]
             else:
                 y, m = detected["year"], detected["month"]
                 month_item = await self._ensure_month(
@@ -459,16 +572,9 @@ class RealBackend:
                 )
                 cat_name = category if category in categories else "To be Classified"
                 cat_item = await gd.ensure_folder(drive_id, month_item["id"], cat_name)
-                target_id, detected_label = cat_item["id"], detected["label"]
-                dest_path = f"{md_path}/{detected['label']}/{cat_name}/{filename}"
+                target_id = cat_item["id"]
             db.commit()
 
-        existing = await gd.find_child(drive_id, target_id, filename)
-        if existing and "file" in existing:
-            raise Conflict(f"'{filename}' already exists in the target folder")
-        # Derive target folder path by stripping the filename from dest_path
-        target_folder_path = dest_path[: -len(filename)].rstrip("/ ") if dest_path.endswith(filename) else dest_path
-        await self._check_global_duplicate(drive_id, filename, target_id, target_folder_path)
         await gd.upload_file(drive_id, target_id, filename, content, content_type)
         return self._make_job(filename, dest_path, detected_label)
 

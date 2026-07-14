@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from .config import settings
 from .services import backend_mode, get_backend
-from .services.errors import BadRequest, Conflict, NotFound
+from .services.errors import BadRequest, Conflict, NotFound, InternalServerError
 
 # In-memory profile cache for stub / no-DB mode (populated on each login).
 _profile_cache: dict[str, dict] = {}
@@ -34,6 +34,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_no_cache_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 def _raise(e: Exception):
@@ -760,8 +768,12 @@ async def month_upload(folder_id: str, file: UploadFile, category: str = Form(No
         )
         _log_activity(email, "file_upload", detail)
         return result
-    except (NotFound, BadRequest, Conflict) as e:
+    except (NotFound, BadRequest, Conflict, InternalServerError) as e:
         _raise(e)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception("Unexpected error in month_upload for folder %s", folder_id)
+        raise HTTPException(status_code=500, detail=f"Upload failed: {type(e).__name__}: {e}")
 
 
 @app.get("/api/files/{file_id}/content")

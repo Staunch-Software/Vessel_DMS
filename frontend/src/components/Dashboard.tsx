@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import {
   CalendarClock,
   FileText,
@@ -18,7 +19,18 @@ interface Props {
 }
 
 export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Props) {
+
+  // --- ADD THIS BLOCK START ---
+
+
+  useEffect(() => {
+    // This just ensures the URL in the address bar is clean.
+    // We don't need a "Guard" anymore because we use a Login Popup.
+    window.history.replaceState({ view: 'dashboard' }, '', window.location.href);
+  }, []);
+
   const months = stats?.months ?? 0;
+  // ... rest of code
   const fmt = (v: number | null | undefined) =>
     v === null || v === undefined ? "—" : v;
 

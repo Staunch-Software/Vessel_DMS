@@ -428,9 +428,8 @@ function LoginView() {
         }
 
         setLoading(true);
+        // Inside handleContinue function in LoginPage.tsx
         try {
-            sessionStorage.setItem("_preLoginHistLen", String(window.history.length));
-            sessionStorage.removeItem("_historyClean");
             await instance.loginRedirect({
                 ...loginRequest,
                 loginHint: hasEmail ? trimmed : undefined,

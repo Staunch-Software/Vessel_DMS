@@ -14,7 +14,7 @@ const msalConfig: Configuration = {
         clientId,
         authority: `https://login.microsoftonline.com/${tenantId}`,
         redirectUri,
-        postLogoutRedirectUri: redirectUri,
+        postLogoutRedirectUri: redirectUri
     },
     cache: {
         cacheLocation: "localStorage",
