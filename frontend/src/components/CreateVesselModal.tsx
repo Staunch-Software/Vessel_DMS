@@ -23,6 +23,7 @@ export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
   const [shipyard, setShipyard] = useState("");
   const [hull, setHull] = useState("");
   const [vesselType, setVesselType] = useState("");
+  const [showTypeDropdown, setShowTypeDropdown] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [backendNameError, setBackendNameError] = useState<string | null>(null);
@@ -153,18 +154,55 @@ export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
         />
 
         <label className="mb-1.5 mt-4 block text-sm font-medium text-slate-700">Vessel type</label>
-        <select
-          value={vesselType}
-          onChange={(e) => setVesselType(e.target.value)}
-          className={inputCls + " bg-white"}
-        >
-          <option value="">Select a type…</option>
-          {VESSEL_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setShowTypeDropdown(!showTypeDropdown)}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-left bg-white focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 flex items-center justify-between"
+          >
+            <span className={vesselType ? "text-slate-800" : "text-slate-400"}>
+              {vesselType || "Select a type…"}
+            </span>
+            <span className="pointer-events-none flex items-center pr-1 text-slate-500">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </span>
+          </button>
+
+          {showTypeDropdown && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setShowTypeDropdown(false)} />
+              <div className="absolute left-0 right-0 mt-1 max-h-60 overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg z-20">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVesselType("");
+                    setShowTypeDropdown(false);
+                  }}
+                  className="w-full px-3 py-2 text-left text-sm text-slate-400 hover:bg-slate-50"
+                >
+                  Select a type…
+                </button>
+                {VESSEL_TYPES.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => {
+                      setVesselType(t);
+                      setShowTypeDropdown(false);
+                    }}
+                    className={`w-full px-3 py-2 text-left text-sm transition-colors hover:bg-slate-50 ${
+                      vesselType === t ? "bg-slate-50 font-medium text-brand-600" : "text-slate-700"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
 
         {error && <p className="mt-3 text-sm text-rose-600">{error}</p>}
 
