@@ -90,6 +90,8 @@ class RealBackend:
         if item.get("name", "").strip().lower() == "to be classified":
             return destination_folder_id
         parent_id = (item.get("parentReference") or {}).get("id")
+        if not parent_id:
+            return destination_folder_id  # fallback: reuse destination
         tbc = await gd.ensure_folder(drive_id, parent_id, "To be Classified")
         parent_path = await self._folder_path(drive_id, parent_id)
         with SessionLocal() as db:
