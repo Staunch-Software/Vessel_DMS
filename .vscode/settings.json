@@ -1,4 +1,12 @@
 {
   "python.defaultInterpreterPath": "c:/Vesseldms06072026/Vessel_DMS/.venv/Scripts/python.exe",
-  "python.pythonPath": "c:/Vesseldms06072026/Vessel_DMS/.venv/Scripts/python.exe"
+  "python.pythonPath": "c:/Vesseldms06072026/Vessel_DMS/.venv/Scripts/python.exe",
+  "pyrefly.pythonInterpreter": "c:/Vesseldms06072026/Vessel_DMS/.venv/Scripts/python.exe",
+  "python.analysis.extraPaths": [
+    "c:/Vesseldms06072026/Vessel_DMS/.venv/Lib/site-packages",
+    "c:/Vesseldms06072026/Vessel_DMS/backend"
+  ],
+  "python.analysis.venvPath": "c:/Vesseldms06072026/Vessel_DMS",
+  "python.analysis.venv": ".venv"
 }
+
