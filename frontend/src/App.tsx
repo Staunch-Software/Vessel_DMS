@@ -278,7 +278,7 @@ export default function App() {
   const [restoreConfirmNode, setRestoreConfirmNode] = useState<FolderNode | null>(null);
   const [deleteFolderIds, setDeleteFolderIds] = useState<Set<string>>(new Set());
   const [archiveSelectIds, setArchiveSelectIds] = useState<Set<string>>(new Set());
-  const [selectedVessel, setSelectedVessel] = useState<string | null>(null);
+  const [_selectedVessel, _setSelectedVessel] = useState<string | null>(null);
   const [deleteFileNode, setDeleteFileNode] = useState<FolderNode | null>(null);
   const [preview, setPreview] = useState<FolderNode | null>(null);
   const [showDeleteFilesModal, setShowDeleteFilesModal] = useState(false);
@@ -864,8 +864,8 @@ export default function App() {
       upsertToast({ id, status: "processing", title: `Renewing ${node.name}`, detail: "Uploading new version…" });
       try {
         const job = current.month_driven
-          ? await monthUpload(current.id, newFile, undefined, user?.email)
-          : await uploadFile(current.id, newFile, user?.email);
+          ? await monthUpload(current.id, newFile, undefined)
+          : await uploadFile(current.id, newFile);
         let final = job;
         for (let i = 0; i < 10 && final.status === "processing"; i++) {
           await sleep(500);

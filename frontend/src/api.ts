@@ -208,3 +208,169 @@ export async function logActivity(email: string, action: string, detail?: string
 export function fileContentUrl(fileId: string): string {
   return `/api/files/${fileId}/content`;
 }
+
+// ────────────────────────── Approvals ──────────────────────────
+
+export type ApprovalStatus = "pending" | "approved" | "rejected";
+
+export interface ApprovalRequest {
+  id: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  uploaded_by_email: string;
+  uploaded_by_name: string;
+  uploaded_at: string;
+  destination_folder_id: string;
+  destination_path: string;
+  is_month_upload: boolean;
+  category: string | null;
+  detected_month: string | null;
+  drive_item_id: string;
+  status: ApprovalStatus;
+  decided_by_email: string | null;
+  decided_at: string | null;
+  rejection_reason: string | null;
+  final_path: string | null;
+  created_at: string;
+}
+
+export async function listApprovals(
+  adminEmail: string,
+  status?: ApprovalStatus | "all",
+  q?: string
+): Promise<ApprovalRequest[]> {
+  const params: Record<string, string> = { admin: adminEmail };
+  if (status && status !== "all") params.status = status;
+  if (q) params.q = q;
+  return (await api.get("/approvals", { params })).data;
+}
+
+export async function approveRequest(adminEmail: string, requestId: string): Promise<void> {
+  await api.post(`/approvals/${requestId}/approve`, null, { params: { admin: adminEmail } });
+}
+
+export async function rejectRequest(
+  adminEmail: string,
+  requestId: string,
+  reason?: string
+): Promise<void> {
+  await api.post(`/approvals/${requestId}/reject`, { reason }, { params: { admin: adminEmail } });
+}
+
+export function approvalPreviewUrl(requestId: string, adminEmail: string): string {
+  return `/api/approvals/${requestId}/preview?admin=${encodeURIComponent(adminEmail)}`;
+}
+
+// ────────────────────────── Profile ──────────────────────────
+
+export async function getProfile(email: string): Promise<UserProfile> {
+  return (await api.get(`/profile`, { params: { email } })).data;
+}
+
+
+// ────────────────────────── Full Profile Types ──────────────────────────
+
+export interface EmergencyContact {
+  name: string | null;
+  relationship_type: string | null;
+  phone: string | null;
+  email: string | null;
+}
+
+export interface UserProfile {
+  email: string;
+  display_name: string;
+  first_name: string | null;
+  last_name: string | null;
+  azure_oid: string | null;
+  job_title: string | null;
+  department: string | null;
+  phone: string | null;
+  office_location: string | null;
+  office_name: string | null;
+  office_address_line1: string | null;
+  office_address_line2: string | null;
+  office_area_locality: string | null;
+  office_landmark: string | null;
+  office_city: string | null;
+  office_state: string | null;
+  office_province: string | null;
+  office_postal_code: string | null;
+  office_country: string | null;
+  office_tel: string | null;
+  office_fax: string | null;
+  office_phone: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  area_locality: string | null;
+  landmark: string | null;
+  city: string | null;
+  state: string | null;
+  province: string | null;
+  postal_code: string | null;
+  country: string | null;
+  company_name: string | null;
+  employee_id: string | null;
+  manager_name: string | null;
+  manager_email: string | null;
+  tenant_id: string | null;
+  two_factor_enabled: boolean;
+  password_changed_at: string | null;
+  last_login: string | null;
+  created_at: string;
+  photo_base64: string | null;
+  date_of_joining: string | null;
+  emergency_contact: EmergencyContact | null;
+  folder_permissions: { folder_name: string; permission_level: string }[];
+  recent_activity: { action: string; detail: string | null; created_at: string }[];
+}
+
+export interface ProfileUpdatePayload {
+  employee_id?: string;
+  first_name?: string;
+  last_name?: string;
+  phone?: string;
+  office_location?: string;
+  office_name?: string;
+  address_line1?: string;
+  address_line2?: string;
+  area_locality?: string;
+  landmark?: string;
+  city?: string;
+  state?: string;
+  province?: string;
+  postal_code?: string;
+  country?: string;
+  department?: string;
+  manager_name?: string;
+  manager_email?: string;
+  two_factor_enabled?: boolean;
+  emergency_contact_name?: string;
+  emergency_contact_relationship?: string;
+  emergency_contact_phone?: string;
+  emergency_contact_email?: string;
+  photo_base64?: string;
+  date_of_joining?: string;
+  office_address_line1?: string;
+  office_address_line2?: string;
+  office_area_locality?: string;
+  office_landmark?: string;
+  office_city?: string;
+  office_state?: string;
+  office_province?: string;
+  office_postal_code?: string;
+  office_country?: string;
+  office_tel?: string;
+  office_fax?: string;
+  office_phone?: string;
+}
+
+export async function updateProfile(
+  email: string,
+  payload: ProfileUpdatePayload
+): Promise<UserProfile> {
+  return (await api.patch(`/profile`, payload, { params: { email } })).data;
+}
+
+

@@ -103,7 +103,6 @@ export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
               ? "border-rose-300 focus:border-rose-400 focus:ring-rose-100"
               : "border-slate-300 focus:border-brand-400 focus:ring-brand-100")
           }
-          className="dms-input w-full px-3 py-2 text-sm"
         />
         {nameError && (
           <p className="mt-1 text-xs text-rose-600">{nameError}</p>

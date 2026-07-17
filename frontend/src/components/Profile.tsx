@@ -605,7 +605,7 @@ export default function ProfilePage({
   }
 
   const displayName = profile?.display_name ?? userEmail;
-  const initials = displayName.split(" ").map((n) => n[0]).filter(Boolean).join("").toUpperCase().slice(0, 2);
+  const initials = displayName.split(" ").map((n: string) => n[0]).filter(Boolean).join("").toUpperCase().slice(0, 2);
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: slate100 }}>
@@ -924,7 +924,7 @@ export default function ProfilePage({
                     ) : (
                       <div className="relative pl-6 pt-2">
                         <div className="pointer-events-none absolute bottom-2 left-[9px] top-4" style={{ width: 1.5, background: `repeating-linear-gradient(to bottom, ${slate200} 0 4px, transparent 4px 8px)` }} />
-                        {profile!.recent_activity.map((entry, i) => {
+                        {profile!.recent_activity.map((entry: { action: string; detail: string | null; created_at: string }, i: number) => {
                           const actionLabel: Record<string, string> = {
                             login: "Logged in",
                             logout: "Signed out",
