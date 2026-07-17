@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { LayoutDashboard, ClipboardCheck, Layers, Plus, User, LogOut, ShieldOff, Archive, Trash2 } from "lucide-react";
+import { LayoutDashboard, ClipboardCheck, Layers, Palette, Plus, User, LogOut, ShieldOff, Archive, Trash2 } from "lucide-react";
 import type { FolderNode } from "../api";
 import { MAIN_ACCENTS } from "./nodeStyle";
 
 interface Props {
   mains: FolderNode[];
-  view: "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin";
+  view: "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings";
   selectedMainId: string | null;
   userDisplayName?: string;
   userPhotoBase64?: string | null;
