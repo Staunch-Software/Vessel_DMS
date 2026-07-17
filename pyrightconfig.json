@@ -1,0 +1,15 @@
+{
+  "venvPath": "c:/Vesseldms06072026/Vessel_DMS",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Windows",
+  "include": [
+    "backend"
+  ],
+  "extraPaths": [
+    "backend",
+    ".venv/Lib/site-packages"
+  ],
+  "typeCheckingMode": "basic",
+  "reportMissingModuleSource": "none"
+}
