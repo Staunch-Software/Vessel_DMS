@@ -8,8 +8,9 @@
   via `classify`, so the UI renders identically to stub mode.
 """
 import asyncio
-from datetime import date
-from sqlalchemy import func
+import uuid
+from datetime import date, datetime
+from sqlalchemy import func, or_ as sa_or
 
 from .. import template
 from ..config import settings
@@ -18,10 +19,14 @@ from ..db import models
 from ..graph import drive as gd
 from ..graph.client import GraphError, graph
 from ..ocr.dates import month_label
-from ..ocr.extract import detect_document_month
+from ..ocr.drawing_category import classify_drawing_category
+from ..ocr.extract import detect_document_month, extract_text
 from .classify import classify
 from .errors import BadRequest, Conflict, NotFound, InternalServerError
 from .normalize import normalize_vessel_name
+from .notify import notify_email
+
+STAGING_FOLDER_NAME = "Pending Approvals"
 
 
 def sanitize_folder_name(name: str) -> str:
@@ -46,6 +51,7 @@ class RealBackend:
         self._drive_id = None
         self._base_ready = False
         self._sem = None
+        self._staging_id = None
 
     def _semaphore(self):
         # Bound concurrent Graph folder creation to speed up provisioning
@@ -59,6 +65,54 @@ class RealBackend:
         if not self._drive_id:
             self._drive_id = await gd.get_container_drive_id(settings.container_id)
         return self._drive_id
+
+    async def _staging_folder(self, drive_id: str) -> str:
+        """Idempotent "Pending Approvals" holding area, outside the ship/main
+        folder hierarchy — not tracked in the `folders` cache since it isn't
+        part of the document template and shouldn't appear in the explorer."""
+        if not self._staging_id:
+            root = await gd.get_root_item_id(drive_id)
+            item = await gd.ensure_folder(drive_id, root, STAGING_FOLDER_NAME)
+            self._staging_id = item["id"]
+        return self._staging_id
+
+    async def _stage_file(self, drive_id, filename, content, content_type) -> str:
+        staging_id = await self._staging_folder(drive_id)
+        staged_name = f"{uuid.uuid4().hex[:12]}__{filename}"
+        item = await gd.upload_file(drive_id, staging_id, staged_name, content, content_type)
+        return item["id"]
+
+    async def _resolve_reject_target(self, drive_id, destination_folder_id) -> str:
+        """The sibling "To be Classified" folder for a rejected upload — found
+        inside the same parent as the originally-selected destination. If the
+        destination already IS a "To be Classified" folder, reuse it as-is."""
+        item = await gd.get_item(drive_id, destination_folder_id)
+        if item.get("name", "").strip().lower() == "to be classified":
+            return destination_folder_id
+        parent_id = (item.get("parentReference") or {}).get("id")
+        tbc = await gd.ensure_folder(drive_id, parent_id, "To be Classified")
+        parent_path = await self._folder_path(drive_id, parent_id)
+        with SessionLocal() as db:
+            self._upsert(
+                db, f"{parent_path}/To be Classified", "To be Classified", "leaf",
+                tbc["id"], False, None,
+            )
+            db.commit()
+        return tbc["id"]
+
+    async def _resolve_drawing_target(self, drive_id, folder_id, path, filename, content, content_type):
+        """OCR the document and match it against the Drawings sub-categories;
+        fall back to "Other Drawings" (never "To be Classified") when nothing
+        matches. See ocr/drawing_category.py."""
+        text = await asyncio.to_thread(extract_text, content, filename, content_type or "")
+        category = classify_drawing_category(text)
+        target_name = category or "Other Drawings"
+        target = await gd.ensure_folder(drive_id, folder_id, target_name)
+        target_path = f"{path}/{target_name}"
+        with SessionLocal() as db:
+            self._upsert(db, target_path, target_name, "leaf", target["id"], False, None)
+            db.commit()
+        return target["id"], target_path
 
     def _upsert(self, db, path, name, kind, item_id, month_driven, vessel_id):
         row = db.query(models.Folder).filter_by(path=path).one_or_none()
@@ -461,7 +515,11 @@ class RealBackend:
                         msg = f"Duplicate files upload, file already exists in another folder"
                     raise Conflict(msg)
 
-    async def upload(self, folder_id, filename, content, content_type):
+    async def upload(self, folder_id, filename, content, content_type, uploaded_by_email, uploaded_by_name):
+        """Uploads no longer land directly — this stages the file and creates a
+        pending approval request for the admin. Returns the same Job shape the
+        frontend already polls (status "pending" is terminal, so no polling
+        occurs)."""
         drive_id = await self._drive()
         path = await self._folder_path(drive_id, folder_id)
         flags = classify(path.split("/"))
@@ -469,7 +527,12 @@ class RealBackend:
             raise BadRequest("Use the month upload for this folder")
         if not flags.get("upload"):
             raise BadRequest("This folder does not accept direct uploads")
-        existing = await gd.find_child(drive_id, folder_id, filename)
+        target_id, dest_path = folder_id, path
+        if flags.get("kind") == "drawing_classifier":
+            target_id, dest_path = await self._resolve_drawing_target(
+                drive_id, folder_id, path, filename, content, content_type
+            )
+        existing = await gd.find_child(drive_id, target_id, filename)
         if existing and "file" in existing:
             # Build a descriptive message showing where the file lives
             parts = [p.strip() for p in path.split("/") if p.strip()]
@@ -488,8 +551,11 @@ class RealBackend:
             raise Conflict(msg)
         # Pass the folder's own path so _check_global_duplicate can scope by vessel
         await self._check_global_duplicate(drive_id, filename, folder_id, path)
-        await gd.upload_file(drive_id, folder_id, filename, content, content_type)
-        return self._make_job(filename, f"{path}/{filename}", None)
+        approval = await self._create_approval(
+            drive_id, target_id, dest_path, filename, content, content_type,
+            uploaded_by_email, uploaded_by_name,
+        )
+        return _approval_as_job(approval)
 
 
     async def delete_folder(self, folder_id: str) -> bool:
@@ -570,7 +636,7 @@ class RealBackend:
             "has_children": bool(cats),
         }
 
-    async def month_upload(self, folder_id, filename, category, content, content_type):
+    async def month_upload(self, folder_id, filename, category, content, content_type, uploaded_by_email, uploaded_by_name):
         drive_id = await self._drive()
         md_path = await self._folder_path(drive_id, folder_id)
         md_parts = md_path.split("/")
@@ -644,7 +710,8 @@ class RealBackend:
                     db, f"{md_path}/To be Classified", "To be Classified", "leaf",
                     target["id"], False, None,
                 )
-                target_id = target["id"]
+                target_id, detected_label = target["id"], None
+                dest_path = f"{md_path}/To be Classified"
             else:
                 y, m = detected["year"], detected["month"]
                 month_item = await self._ensure_month(
@@ -652,11 +719,33 @@ class RealBackend:
                 )
                 cat_name = category if category in categories else "To be Classified"
                 cat_item = await gd.ensure_folder(drive_id, month_item["id"], cat_name)
-                target_id = cat_item["id"]
+                target_id, detected_label = cat_item["id"], detected["label"]
+                dest_path = f"{md_path}/{detected['label']}/{cat_name}"
             db.commit()
 
-        await gd.upload_file(drive_id, target_id, filename, content, content_type)
-        return self._make_job(filename, dest_path, detected_label)
+        existing = await gd.find_child(drive_id, target_id, filename)
+        if existing and "file" in existing:
+            # Build a descriptive message showing where the file lives
+            parts = [p.strip() for p in dest_path.split("/") if p.strip()]
+            if len(parts) >= 2:
+                main_folder = parts[0]
+                vessel_name = parts[1]
+                leaf_folder = parts[-1]
+                msg = (
+                    f"Duplicate files upload, file already exists in folder '{leaf_folder}' "
+                    f"under main folder '{main_folder}' and vessel '{vessel_name}'"
+                )
+            elif parts:
+                msg = f"Duplicate files upload, file already exists in folder '{parts[-1]}'"
+            else:
+                msg = f"Duplicate files upload, '{filename}' already exists in this folder"
+            raise Conflict(msg)
+        approval = await self._create_approval(
+            drive_id, target_id, dest_path, filename, content, content_type,
+            uploaded_by_email, uploaded_by_name,
+            is_month_upload=True, category=category, detected_month=detected_label,
+        )
+        return _approval_as_job(approval)
 
     # ------------------------------------------------------------ files
     async def get_file(self, file_id):
@@ -688,19 +777,25 @@ class RealBackend:
                 trail.append({"id": row.drive_item_id if row else "", "name": parts[i]})
         return trail
 
-    async def search(self, q):
+    async def search(self, q, vessel_id=None):
+        """Search folders + files by name. When `vessel_id` is given, results
+        are restricted to that vessel's own ship folders (one per main
+        folder) — never other vessels' folders, and never the shared "Common
+        for all ships" areas.
+        """
         ql = q.strip()
         if not ql:
             return []
+        vid = int(vessel_id) if vessel_id and str(vessel_id).isdigit() else None
         out, seen = [], set()
         # 1) Folders from our DB cache — always available, no index lag.
+        #    vessel_id is an indexed FK, so scoping here is a cheap filter,
+        #    not a scan of every vessel's folders.
         with SessionLocal() as db:
-            rows = (
-                db.query(models.Folder)
-                .filter(models.Folder.name.ilike(f"%{ql}%"))
-                .limit(50)
-                .all()
-            )
+            query = db.query(models.Folder).filter(models.Folder.name.ilike(f"%{ql}%"))
+            if vid is not None:
+                query = query.filter(models.Folder.vessel_id == vid)
+            rows = query.limit(50).all()
             for r in rows:
                 parts = r.path.split("/")
                 out.append(
@@ -713,10 +808,30 @@ class RealBackend:
                     }
                 )
                 seen.add(r.drive_item_id)
+
+            # A vessel has no single root — it has one ship folder under each
+            # of the 3 main folders — so file search below is scoped to all
+            # of them rather than one shared "vessel root".
+            ship_root_ids = []
+            if vid is not None:
+                ship_root_ids = [
+                    r.drive_item_id
+                    for r in db.query(models.Folder).filter_by(vessel_id=vid, kind="ship").all()
+                ]
+
         # 2) Files via Graph search (best-effort; may lag or be unavailable).
         try:
             drive_id = await self._drive()
-            items = await gd.search_items(drive_id, ql)
+            if vid is not None:
+                # Scoped, recursive search inside just this vessel's ship
+                # folders — Graph does the subtree walk server-side, so other
+                # vessels' documents are never scanned or returned.
+                per_root = await asyncio.gather(
+                    *(gd.search_items_in(drive_id, root_id, ql) for root_id in ship_root_ids)
+                )
+                items = [it for lst in per_root for it in lst]
+            else:
+                items = await gd.search_items(drive_id, ql)
             with SessionLocal() as db:
                 for it in items:
                     if "file" not in it or it["id"] in seen:
@@ -893,3 +1008,213 @@ class RealBackend:
             logging.getLogger(__name__).error(f"Failed to permanently delete item {item_id}: {e}")
             return False
 
+    # -------------------------------------------------------------- approvals
+    async def _create_approval(
+        self, drive_id, destination_folder_id, destination_path, filename, content,
+        content_type, uploaded_by_email, uploaded_by_name, *,
+        is_month_upload=False, category=None, detected_month=None,
+    ):
+        staged_item_id = await self._stage_file(drive_id, filename, content, content_type)
+        try:
+            with SessionLocal() as db:
+                row = models.ApprovalRequest(
+                    filename=filename,
+                    content_type=content_type or "application/octet-stream",
+                    size=len(content),
+                    uploaded_by_email=uploaded_by_email,
+                    uploaded_by_name=uploaded_by_name or "",
+                    destination_folder_id=destination_folder_id,
+                    destination_path=destination_path,
+                    is_month_upload=is_month_upload,
+                    category=category,
+                    detected_month=detected_month,
+                    drive_item_id=staged_item_id,
+                )
+                db.add(row)
+                db.commit()
+                db.refresh(row)
+                public = self._approval_public(row)
+        except Exception:
+            # Don't leave an orphaned staged file if the DB write failed.
+            try:
+                await gd.delete_item(drive_id, staged_item_id)
+            except GraphError:
+                pass
+            raise
+        await notify_email(
+            settings.admin_emails,
+            f"New document pending approval: {filename}",
+            f"{uploaded_by_name or uploaded_by_email} uploaded '{filename}' to "
+            f"{destination_path}. Review it in the DMS approvals page.",
+        )
+        return public
+
+    async def list_approvals(self, status=None, q=None):
+        with SessionLocal() as db:
+            query = db.query(models.ApprovalRequest)
+            if status and status != "all":
+                query = query.filter_by(status=status)
+            if q:
+                ql = f"%{q.strip()}%"
+                query = query.filter(
+                    sa_or(
+                        models.ApprovalRequest.filename.ilike(ql),
+                        models.ApprovalRequest.uploaded_by_email.ilike(ql),
+                        models.ApprovalRequest.destination_path.ilike(ql),
+                    )
+                )
+            rows = query.order_by(models.ApprovalRequest.uploaded_at.desc()).all()
+            return [self._approval_public(r) for r in rows]
+
+    async def get_approval(self, request_id):
+        with SessionLocal() as db:
+            row = db.get(models.ApprovalRequest, int(request_id)) if request_id.isdigit() else None
+            if row is None:
+                raise NotFound("Approval request not found")
+            return self._approval_public(row)
+
+    async def get_approval_file(self, request_id):
+        if not request_id.isdigit():
+            return None
+        with SessionLocal() as db:
+            row = db.get(models.ApprovalRequest, int(request_id))
+            if row is None:
+                return None
+            item_id, content_type, filename = row.drive_item_id, row.content_type, row.filename
+        drive_id = await self._drive()
+        try:
+            content, _, _ = await gd.download_file(drive_id, item_id)
+        except GraphError:
+            return None
+        return content, content_type, filename
+
+    def _claim_pending(self, request_id: str, new_status: str):
+        """Row-lock the request and flip it to `new_status` iff still pending —
+        this is what makes concurrent approve/reject calls safe: whichever call
+        commits first wins the lock, and the loser sees a non-pending status."""
+        if not request_id.isdigit():
+            raise NotFound("Approval request not found")
+        with SessionLocal() as db:
+            row = (
+                db.query(models.ApprovalRequest)
+                .filter_by(id=int(request_id))
+                .with_for_update()
+                .one_or_none()
+            )
+            if row is None:
+                raise NotFound("Approval request not found")
+            if row.status != "pending":
+                raise Conflict(f"This request has already been {row.status}")
+            row.status = new_status
+            row.decided_at = datetime.utcnow()
+            db.commit()
+            return {
+                "filename": row.filename,
+                "content_type": row.content_type,
+                "drive_item_id": row.drive_item_id,
+                "destination_folder_id": row.destination_folder_id,
+                "uploaded_by_email": row.uploaded_by_email,
+            }
+
+    def _revert_to_pending(self, request_id: str):
+        with SessionLocal() as db:
+            row = db.get(models.ApprovalRequest, int(request_id))
+            if row is not None:
+                row.status = "pending"
+                row.decided_by_email = None
+                row.decided_at = None
+                row.rejection_reason = None
+                db.commit()
+
+    def _finalize(self, request_id: str, decided_by_email: str, final_path: str, reason=None):
+        with SessionLocal() as db:
+            row = db.get(models.ApprovalRequest, int(request_id))
+            row.decided_by_email = decided_by_email
+            row.final_path = final_path
+            if reason is not None:
+                row.rejection_reason = reason
+            db.commit()
+            db.refresh(row)
+            return self._approval_public(row)
+
+    async def approve_request(self, request_id, decided_by_email):
+        claimed = self._claim_pending(request_id, "approved")
+        drive_id = await self._drive()
+        try:
+            existing = await gd.find_child(drive_id, claimed["destination_folder_id"], claimed["filename"])
+            if existing and "file" in existing:
+                raise Conflict(f"'{claimed['filename']}' already exists in the destination folder")
+            await gd.move_item(
+                drive_id, claimed["drive_item_id"], claimed["destination_folder_id"],
+                new_name=claimed["filename"],
+            )
+        except Exception:
+            self._revert_to_pending(request_id)
+            raise
+        dest_path = await self._folder_path(drive_id, claimed["destination_folder_id"])
+        result = self._finalize(request_id, decided_by_email, f"{dest_path}/{claimed['filename']}")
+        await notify_email(
+            claimed["uploaded_by_email"],
+            f"Your document '{claimed['filename']}' was approved",
+            f"'{claimed['filename']}' has been approved and filed to {result['final_path']}.",
+        )
+        return result
+
+    async def reject_request(self, request_id, decided_by_email, reason=None):
+        claimed = self._claim_pending(request_id, "rejected")
+        drive_id = await self._drive()
+        try:
+            target_id = await self._resolve_reject_target(drive_id, claimed["destination_folder_id"])
+            existing = await gd.find_child(drive_id, target_id, claimed["filename"])
+            if existing and "file" in existing:
+                raise Conflict(f"'{claimed['filename']}' already exists in the To be Classified folder")
+            await gd.move_item(drive_id, claimed["drive_item_id"], target_id, new_name=claimed["filename"])
+        except Exception:
+            self._revert_to_pending(request_id)
+            raise
+        target_path = await self._folder_path(drive_id, target_id)
+        result = self._finalize(
+            request_id, decided_by_email, f"{target_path}/{claimed['filename']}", reason
+        )
+        await notify_email(
+            claimed["uploaded_by_email"],
+            f"Your document '{claimed['filename']}' was rejected",
+            f"'{claimed['filename']}' was rejected"
+            + (f" ({reason})" if reason else "")
+            + f" and moved to {result['final_path']}.",
+        )
+        return result
+
+    @staticmethod
+    def _approval_public(row):
+        return {
+            "id": str(row.id),
+            "filename": row.filename,
+            "content_type": row.content_type,
+            "size": row.size,
+            "uploaded_by_email": row.uploaded_by_email,
+            "uploaded_by_name": row.uploaded_by_name,
+            "uploaded_at": row.uploaded_at.isoformat() if row.uploaded_at else None,
+            "destination_folder_id": row.destination_folder_id,
+            "destination_path": row.destination_path,
+            "is_month_upload": row.is_month_upload,
+            "category": row.category,
+            "detected_month": row.detected_month,
+            "status": row.status,
+            "decided_by_email": row.decided_by_email,
+            "decided_at": row.decided_at.isoformat() if row.decided_at else None,
+            "rejection_reason": row.rejection_reason,
+            "final_path": row.final_path,
+        }
+
+
+def _approval_as_job(approval):
+    """Shape an approval request like the existing Job contract so the
+    frontend's upload-toast + polling code needs no structural changes."""
+    return {
+        "id": approval["id"],
+        "filename": approval["filename"],
+        "status": "pending",
+        "destination": approval["destination_path"],
+        "detected_month": approval["detected_month"],
+    }

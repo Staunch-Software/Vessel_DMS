@@ -4,14 +4,17 @@ import { MsalProvider } from "@azure/msal-react";
 import "./index.css";
 import App from "./App";
 import { msalInstance } from "./authConfig";
+import { ThemeProvider } from "./theme/ThemeProvider";
 
 async function bootstrap() {
   await msalInstance.initialize();
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
-      <MsalProvider instance={msalInstance}>
-        <App />
-      </MsalProvider>
+      <ThemeProvider>
+        <MsalProvider instance={msalInstance}>
+          <App />
+        </MsalProvider>
+      </ThemeProvider>
     </StrictMode>
   );
 }

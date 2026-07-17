@@ -21,6 +21,10 @@ const XLS = ["xls", "xlsx", "csv"];
 const DOC = ["doc", "docx"];
 const ZIP = ["zip", "rar", "7z"];
 
+// File-type badge colors are deliberately fixed (not theme tokens), matching
+// the universal convention of red=PDF, green=spreadsheet, blue=Word, etc.
+// (Google Drive, OneDrive, ...) — recoloring these per app theme would hurt
+// recognizability rather than help it.
 export function fileMeta(ext?: string): FileMeta {
   const e = (ext ?? "").toLowerCase();
   if (e === "pdf")
@@ -33,7 +37,7 @@ export function fileMeta(ext?: string): FileMeta {
     return { Icon: FileType2, cls: "text-blue-600", chip: "bg-blue-50 text-blue-700", label: e.toUpperCase(), previewable: false };
   if (ZIP.includes(e))
     return { Icon: FileArchive, cls: "text-amber-600", chip: "bg-amber-50 text-amber-700", label: e.toUpperCase(), previewable: false };
-  return { Icon: FileIcon, cls: "text-slate-400", chip: "bg-slate-100 text-slate-500", label: e ? e.toUpperCase() : "FILE", previewable: false };
+  return { Icon: FileIcon, cls: "text-muted", chip: "bg-surface2 text-muted", label: e ? e.toUpperCase() : "FILE", previewable: false };
 }
 
 export function formatSize(bytes?: number | null): string {

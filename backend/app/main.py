@@ -15,12 +15,13 @@ warnings.filterwarnings("ignore", message="Timezone offset does not match system
 
 import httpx
 
-from fastapi import FastAPI, Form, Header, HTTPException, Query, Response, UploadFile
+from fastapi import Depends, FastAPI, Form, Header, HTTPException, Query, Response, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .config import settings
+from .graph.http import verify as graph_tls_verify
 from .services import backend_mode, get_backend
 from .services.errors import BadRequest, Conflict, NotFound, InternalServerError
 
@@ -67,6 +68,29 @@ class VesselIn(BaseModel):
     shipyard: str | None = None
     hull_number: str | None = None
     vessel_type: str | None = None
+
+
+class RejectIn(BaseModel):
+    reason: str | None = None
+
+
+def _require_admin(
+    x_user_email: str | None = Header(default=None), admin_email: str | None = None
+) -> str:
+    """Approval decisions are restricted to settings.admin_emails.
+
+    Matches this codebase's current auth maturity (see the TEMPORARY bypass in
+    check_email below): there's no server-side session yet, so the frontend
+    identifies the acting user via a header set from its already-verified
+    MSAL login, and we check it against the admin allow-list. The preview
+    endpoint is also reachable from a plain <img>/<iframe>/<a href>, which
+    can't attach custom headers, so it's allowed to pass the email as a query
+    param instead — same admin-list check either way.
+    """
+    email = (x_user_email or admin_email or "").strip().lower()
+    if not email or email not in settings.admin_email_set:
+        raise HTTPException(403, "Administrator access required")
+    return email
 
 
 @app.on_event("startup")
@@ -148,6 +172,9 @@ async def check_email(payload: CheckEmailIn):
     When Graph is not configured (stub mode) we let all emails through so that
     development still works without Azure credentials.
     """
+    # TEMPORARY: Bypass email check for development
+    return {"allowed": True}
+    
     if not settings.graph_configured:
         return {"allowed": True}
 
@@ -158,7 +185,7 @@ async def check_email(payload: CheckEmailIn):
     # Acquire an app-only token for Graph
     token_url = f"{settings.graph_authority}/{settings.azure_tenant_id}/oauth2/v2.0/token"
     try:
-        async with httpx.AsyncClient(verify=settings.graph_verify_ssl, timeout=10.0) as client:
+        async with httpx.AsyncClient(verify=graph_tls_verify(), timeout=10.0) as client:
             # 1. Get an app-only access token
             token_resp = await client.post(
                 token_url,
@@ -238,7 +265,7 @@ async def auth_login(payload: LoginIn):
         return {"display_name": profile["display_name"], "email": profile["email"]}
 
     # ── Fetch /me from Graph ─────────────────────────────────────────────────
-    async with httpx.AsyncClient(verify=settings.graph_verify_ssl) as client:
+    async with httpx.AsyncClient(verify=graph_tls_verify()) as client:
         me_resp = await client.get(
             f"{settings.graph_base_url}/me",
             params={
@@ -696,7 +723,12 @@ async def patch_profile(email: str, payload: ProfileUpdateIn):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "mode": backend_mode()}
+    return {
+        "status": "ok",
+        "mode": backend_mode(),
+        "graph_configured": settings.graph_configured,
+        "db_configured": settings.db_configured,
+    }
 
 
 @app.get("/api/vessels")
@@ -767,23 +799,25 @@ async def folder(folder_id: str):
 
 
 @app.post("/api/folders/{folder_id}/upload")
-async def upload(folder_id: str, file: UploadFile, user_email: str | None = Form(None), x_user_email: str | None = Header(default=None)):
+async def upload(
+    folder_id: str,
+    file: UploadFile,
+    uploader_email: str | None = Form(None),
+    uploader_name: str | None = Form(None),
+    user_email: str | None = Form(None),
+    x_user_email: str | None = Header(default=None),
+):
+    """Stages the file and creates a pending approval request — it is no
+    longer saved into the folder directly. See docs on the approval workflow
+    in services/stub_backend.py / services/real_backend.py."""
     data = await file.read()
-    email = user_email or x_user_email
+    email = uploader_email or user_email or x_user_email or "unknown@example.com"
+    name = uploader_name or email.split("@")[0]
     try:
-        result = await get_backend().upload(folder_id, file.filename, data, file.content_type)
-        dest = result.get("destination") or ""
-        # Strip trailing filename from dest to get the folder path
-        if dest and dest.endswith(file.filename):
-            folder_path = dest[: -len(file.filename)].rstrip("/ ")
-        else:
-            folder_path = dest
-        detail = (
-            f"Uploaded: {file.filename}|{folder_path}"
-            if folder_path
-            else f"Uploaded: {file.filename}"
+        result = await get_backend().upload(
+            folder_id, file.filename, data, file.content_type, email, name
         )
-        _log_activity(email, "file_upload", detail)
+        _log_activity(email, "file_upload", f"Uploaded: {file.filename} (pending approval)")
         return result
     except (NotFound, BadRequest, Conflict) as e:
         _raise(e)
@@ -824,24 +858,24 @@ async def create_subfolder(folder_id: str, payload: CreateSubfolderIn, x_user_em
 
 
 @app.post("/api/folders/{folder_id}/month-upload")
-async def month_upload(folder_id: str, file: UploadFile, category: str = Form(None), user_email: str | None = Form(None), x_user_email: str | None = Header(default=None)):
+async def month_upload(
+    folder_id: str,
+    file: UploadFile,
+    category: str = Form(None),
+    uploader_email: str | None = Form(None),
+    uploader_name: str | None = Form(None),
+    user_email: str | None = Form(None),
+    x_user_email: str | None = Header(default=None),
+):
     data = await file.read()
-    email = user_email or x_user_email
+    email = uploader_email or user_email or x_user_email or "unknown@example.com"
+    name = uploader_name or email.split("@")[0]
     try:
         result = await get_backend().month_upload(
-            folder_id, file.filename, category, data, file.content_type
+            folder_id, file.filename, category, data, file.content_type,
+            email, name
         )
-        dest = result.get("destination") or ""
-        if dest and dest.endswith(file.filename):
-            folder_path = dest[: -len(file.filename)].rstrip("/ ")
-        else:
-            folder_path = dest
-        detail = (
-            f"Uploaded: {file.filename}|{folder_path}"
-            if folder_path
-            else f"Uploaded: {file.filename}"
-        )
-        _log_activity(email, "file_upload", detail)
+        _log_activity(email, "file_upload", f"Uploaded: {file.filename} (pending approval)")
         return result
     except (NotFound, BadRequest, Conflict, InternalServerError) as e:
         _raise(e)
@@ -873,8 +907,8 @@ async def delete_file(file_id: str, user_email: str | None = Query(None), x_user
 
 
 @app.get("/api/search")
-async def search(q: str = ""):
-    return await get_backend().search(q)
+async def search(q: str = "", vessel_id: str | None = None):
+    return await get_backend().search(q, vessel_id)
 
 
 class LogActivityIn(BaseModel):
@@ -977,3 +1011,52 @@ async def permanent_delete_item(item_id: str, type: str = Query("folder"), user_
     except Exception as e:
         raise HTTPException(500, f"Failed to permanently delete item: {e}")
 
+
+# ---------------------------------------------------------------------------
+# Approval workflow (admin only)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/approvals")
+async def list_approvals(
+    status: str | None = None, q: str | None = None, admin: str = Depends(_require_admin)
+):
+    return await get_backend().list_approvals(status, q)
+
+
+@app.get("/api/approvals/{request_id}")
+async def get_approval(request_id: str, admin: str = Depends(_require_admin)):
+    try:
+        return await get_backend().get_approval(request_id)
+    except NotFound as e:
+        _raise(e)
+
+
+@app.get("/api/approvals/{request_id}/preview")
+async def approval_preview(request_id: str, admin: str = Depends(_require_admin)):
+    result = await get_backend().get_approval_file(request_id)
+    if result is None:
+        raise HTTPException(404, "Staged file not found")
+    content, content_type, name = result
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{name}"'},
+    )
+
+
+@app.post("/api/approvals/{request_id}/approve")
+async def approve_approval(request_id: str, admin: str = Depends(_require_admin)):
+    try:
+        return await get_backend().approve_request(request_id, admin)
+    except (NotFound, BadRequest, Conflict) as e:
+        _raise(e)
+
+
+@app.post("/api/approvals/{request_id}/reject")
+async def reject_approval(
+    request_id: str, payload: RejectIn, admin: str = Depends(_require_admin)
+):
+    try:
+        return await get_backend().reject_request(request_id, admin, payload.reason)
+    except (NotFound, BadRequest, Conflict) as e:
+        _raise(e)

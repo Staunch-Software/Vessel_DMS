@@ -29,15 +29,15 @@ export function UploadControl({ node, onUpload, variant = "inline" }: Props) {
   const base =
     "inline-flex items-center gap-2 font-medium transition " +
     (primary
-      ? "rounded-lg px-4 py-2 text-sm text-white shadow-sm "
+      ? `rounded-lg px-4 py-2 text-sm shadow-sm ${isMonth ? "text-accent-fg" : "text-primary-fg"} `
       : "rounded-md px-2.5 py-1 text-xs ");
   const color = isMonth
     ? primary
-      ? "bg-violet-600 hover:bg-violet-700"
-      : "bg-violet-50 text-violet-700 ring-1 ring-violet-200 hover:bg-violet-100"
+      ? "bg-accent hover:bg-accent-hover"
+      : "bg-accent/10 text-accent ring-1 ring-accent/30 hover:bg-accent/15"
     : primary
-      ? "bg-brand-600 hover:bg-brand-500"
-      : "bg-brand-50 text-brand-700 ring-1 ring-brand-200 hover:bg-brand-100";
+      ? "bg-primary hover:bg-primary-hover"
+      : "bg-primary/10 text-primary ring-1 ring-primary/30 hover:bg-primary/15";
 
   return (
     <div className="relative">
@@ -57,23 +57,23 @@ export function UploadControl({ node, onUpload, variant = "inline" }: Props) {
 
       {isMonth && open && (
         <div
-          className="absolute right-0 z-30 mt-2 w-72 rounded-xl border border-slate-200 bg-white p-3 text-left shadow-xl"
+          className="dms-card absolute right-0 z-30 mt-2 w-72 border border-border p-3 text-left shadow-xl"
           onClick={(e) => e.stopPropagation()}
         >
-          <p className="mb-1 text-xs font-semibold text-slate-700">
+          <p className="mb-1 text-xs font-semibold text-fg">
             Auto-filed by month
           </p>
-          <p className="mb-3 text-[11px] leading-snug text-slate-500">
+          <p className="mb-3 text-[11px] leading-snug text-muted">
             The month folder is detected from the document and created if needed.
             Optionally pick a category.
           </p>
-          <label className="mb-1 block text-[11px] font-medium text-slate-600">
+          <label className="mb-1 block text-[11px] font-medium text-muted">
             Category (optional)
           </label>
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value)}
-            className="mb-3 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100"
+            className="dms-input mb-3 w-full rounded-md px-2 py-1.5 text-xs text-fg"
           >
             <option value="">To be Classified</option>
             {node.categories?.map((c) => (
@@ -84,7 +84,7 @@ export function UploadControl({ node, onUpload, variant = "inline" }: Props) {
           </select>
           <button
             onClick={pick}
-            className="w-full rounded-md bg-violet-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-violet-700"
+            className="dms-btn-primary w-full rounded-md px-3 py-1.5 text-xs font-medium"
           >
             Choose file & upload
           </button>

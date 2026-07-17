@@ -19,6 +19,11 @@ export interface MainAccent {
   icon: string; // icon colour
 }
 
+// Deliberately fixed, theme-independent per-category colors (like GitHub
+// labels) — these let a user visually recognize "Technical & Crewing" vs.
+// "Commercial & Chartering" vs. "Insurance" at a glance regardless of which
+// of the 20 app color themes is active. Unlike the rest of the app, these
+// intentionally do NOT come from theme tokens.
 export const MAIN_ACCENTS: Record<string, MainAccent> = {
   "Technical & Crewing": {
     bar: "border-l-orange-400",
@@ -43,23 +48,23 @@ export const MAIN_ACCENTS: Record<string, MainAccent> = {
 export function iconFor(node: FolderNode): { Icon: LucideIcon; cls: string } {
   switch (node.kind) {
     case "main":
-      return { Icon: Layers, cls: "text-brand-600" };
+      return { Icon: Layers, cls: "text-primary" };
     case "ship":
-      return { Icon: Ship, cls: "text-brand-500" };
+      return { Icon: Ship, cls: "text-primary" };
     case "month_driven":
-      return { Icon: CalendarDays, cls: "text-violet-500" };
+      return { Icon: CalendarDays, cls: "text-accent" };
     case "month":
-      return { Icon: CalendarDays, cls: "text-violet-400" };
+      return { Icon: CalendarDays, cls: "text-accent" };
     case "file":
-      return { Icon: FileText, cls: "text-slate-400" };
+      return { Icon: FileText, cls: "text-muted" };
     case "leaf":
-      return { Icon: FileBox, cls: "text-slate-400" };
+      return { Icon: FileBox, cls: "text-muted" };
     case "folder":
       return node.name.toLowerCase().includes("common")
-        ? { Icon: FolderClosed, cls: "text-sky-500" }
-        : { Icon: Folder, cls: "text-slate-400" };
+        ? { Icon: FolderClosed, cls: "text-secondary" }
+        : { Icon: Folder, cls: "text-muted" };
     default:
-      return { Icon: Folder, cls: "text-slate-400" };
+      return { Icon: Folder, cls: "text-muted" };
   }
 }
 

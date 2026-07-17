@@ -59,7 +59,6 @@ import { UploadControl } from "./components/UploadControl";
 import { ToastStack, type ToastItem } from "./components/Toast";
 import { Dashboard } from "./components/Dashboard";
 import { SearchBar } from "./components/SearchBar";
-import { VesselSwitcher } from "./components/VesselSwitcher";
 import { PreviewDrawer } from "./components/PreviewDrawer";
 import { FolderGridSkeleton } from "./components/Skeleton";
 import {
@@ -72,10 +71,32 @@ import { MAIN_ACCENTS, iconFor } from "./components/nodeStyle";
 import ProfilePage from "./components/Profile";
 import AuthCallback from "./AuthCallback";
 import { fileMeta, formatDate, formatSize } from "./components/fileType";
+import { ThemeSettings } from "./components/ThemeSettings";
+import { Approvals } from "./components/Approvals";
+import { captureDiagnostics } from "./historyProbe";
 
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const ADMIN_EMAILS: string[] = (
+  (import.meta.env.VITE_ADMIN_EMAILS as string | undefined) ||
+  "spe.admin@sg-nissenkaiun.com"
+)
+  .split(",")
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
 const IMG = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff"];
+
+function hasMsalAuthResponseInUrl(): boolean {
+  const search = window.location.search.toLowerCase();
+  const hash = window.location.hash.toLowerCase();
+  const combined = `${search}&${hash}`;
+  return (
+    combined.includes("code=") ||
+    combined.includes("id_token=") ||
+    combined.includes("error=") ||
+    combined.includes("state=")
+  );
+}
 
 function errDetail(e: unknown, fallback: string): string {
   return (
@@ -211,13 +232,12 @@ export default function App() {
   const [showFullPhoto, setShowFullPhoto] = useState(false);
   const { instance, accounts, inProgress } = useMsal();
   const [stats, setStats] = useState<Stats | null>(null);
-
-  const [view, setView] = useState<"dashboard" | "explorer" | "profile" | "archive" | "recycle_bin">(() => {
+  const [view, setView] = useState<"dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings">(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const v = params.get("view");
-      if (v === "explorer" || v === "profile" || v === "dashboard" || v === "archive" || v === "recycle_bin") {
-        return v as "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin";
+      if (v === "explorer" || v === "profile" || v === "dashboard" || v === "archive" || v === "recycle_bin" || v === "approvals" || v === "settings") {
+        return v as "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings";
       }
     }
     return "dashboard";
@@ -267,7 +287,8 @@ export default function App() {
   const [showRecycleSelectModal, setShowRecycleSelectModal] = useState(false);
   const [recycleSelectIds, setRecycleSelectIds] = useState<Set<string>>(new Set());
   const [showBulkDeleteRecycleModal, setShowBulkDeleteRecycleModal] = useState(false);
-
+  const [selectedVesselByPage, setSelectedVesselByPage] = useState<Record<string, string | null>>({});
+  const [searchQueryByPage, setSearchQueryByPage] = useState<Record<string, string>>({});
 
   // In-folder toolbar state
   const [fQuery, setFQuery] = useState("");
@@ -305,13 +326,30 @@ export default function App() {
     return () => window.removeEventListener("pageshow", handlePageShow);
   }, []);
 
+  // TEMPORARY diagnostics — see src/historyProbe.ts. Captures state on every
+  // fresh mount of this app (covers: first visit, the post-Microsoft-redirect
+  // landing, and any case where the Back button returns to a full reload of
+  // our own origin) plus every popstate event. popstate only fires for
+  // same-document history changes; if Back takes the browser to a different
+  // origin (e.g. login.microsoftonline.com), this document is torn down and
+  // this listener never fires at all — that absence is itself evidence.
+  useEffect(() => {
+    captureDiagnostics("app mounted (fresh document load)");
+    const handlePopState = () => {
+      captureDiagnostics("popstate fired (same-document history navigation)");
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
   // Redirect unauthenticated users on the /homepage route back to the root path /
   useEffect(() => {
     if (
       !user &&
       inProgress === "none" &&
       accounts.length === 0 &&
-      window.location.pathname === "/homepage"
+      window.location.pathname === "/homepage" &&
+      !hasMsalAuthResponseInUrl()
     ) {
       window.history.replaceState({}, "", "/");
     }
@@ -332,9 +370,80 @@ export default function App() {
     }
   }, [user]);
 
+  // Handle the OAuth redirect coming straight back from Microsoft. We read the
+  // AuthenticationResult directly from handleRedirectPromise (rather than waiting
+  // on MsalProvider's internal accounts-array wiring + a second acquireTokenSilent
+  // round trip) so a failure here surfaces immediately instead of silently
+  // falling back to the login page with no explanation.
+  useEffect(() => {
+    let active = true;
+    // initialize() is idempotent/safe to call again here — MsalProvider also
+    // calls it, but handleRedirectPromise() throws if called before it resolves.
+    instance
+      .initialize()
+      .then(() => instance.handleRedirectPromise())
+      .then(async (result) => {
+        console.info("[auth] handleRedirectPromise resolved:", result);
+        captureDiagnostics(
+          result?.account ? "after redirect (with account)" : "after redirect (no result)"
+        );
+        if (!active) return;
+        if (!result || !result.account) {
+          console.info(
+            "[auth] No redirect result on this load (expected on a normal page load; " +
+              "unexpected right after approving Microsoft sign-in)."
+          );
+          return;
+        }
+        try {
+          const res = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              access_token: result.accessToken,
+              tenant_id: result.account.tenantId || "",
+            }),
+          });
+          if (!active) return;
+          if (res.ok) {
+            const payload = await res.json();
+            setUser({
+              display_name:
+                payload.display_name || result.account.name || result.account.username,
+              email: payload.email || result.account.username,
+            });
+          } else {
+            setAuthError(
+              "Signed in with Microsoft, but the server rejected the session. Please try again."
+            );
+          }
+        } catch (e) {
+          if (active) {
+            console.error("Backend login sync failed after redirect", e);
+            setAuthError("Could not reach the server to complete sign-in. Please try again.");
+          }
+        }
+      })
+      .catch((err) => {
+        if (active) {
+          console.error("MSAL redirect handling failed", err);
+          setAuthError(err instanceof Error ? err.message : "Sign-in failed. Please try again.");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [instance]);
+
   // Auto-authenticate from a cached MSAL session (only when MSAL is fully settled)
   useEffect(() => {
     let active = true;
+    console.info("[auth] auto-authenticate check:", {
+      inProgress,
+      accountsLength: accounts.length,
+      hasUser: !!user,
+      pathname: window.location.pathname,
+    });
     if (
       inProgress === "none" &&
       accounts.length > 0 &&
@@ -349,6 +458,7 @@ export default function App() {
           account: account,
         })
         .then(async (response) => {
+          console.info("[auth] acquireTokenSilent succeeded, calling /api/auth/login");
           if (!active) return;
           try {
             const res = await fetch("/api/auth/login", {
@@ -359,6 +469,7 @@ export default function App() {
                 tenant_id: account.tenantId || "",
               }),
             });
+            console.info("[auth] /api/auth/login responded with status:", res.status);
             if (res.ok) {
               const payload = await res.json();
               const email = payload.email || account.username;
@@ -369,13 +480,13 @@ export default function App() {
               setApiEmail(email);
               setAuthError(null);
             } else {
-              const errBody = await res.text();
-              console.error("Backend validation failed during auto-login:", errBody);
-              setAuthError(`Backend validation failed: ${res.status} ${res.statusText}. Details: ${errBody}`);
+              const body = await res.text();
+              console.error("Backend validation failed during auto-login:", res.status, body);
+              setAuthError(`Signed in with Microsoft, but the server rejected the session (Code ${res.status}). Details: ${body}`);
             }
           } catch (e) {
             console.error("Backend login sync failed during auto-login", e);
-            setAuthError(`Backend connection failed: ${e instanceof Error ? e.message : String(e)}`);
+            setAuthError(`Could not reach the server to complete sign-in. Connection failed: ${e instanceof Error ? e.message : String(e)}`);
           }
         })
         .catch((err) => {
@@ -400,11 +511,19 @@ export default function App() {
       .catch(() => {});
   }, [user]);
 
+  useEffect(() => {
+    if (user && window.location.pathname !== "/homepage") {
+      captureDiagnostics("before homepage replaceState");
+      window.history.replaceState({}, "", "/homepage");
+      captureDiagnostics("after homepage replaceState");
+    }
+  }, [user]);
+
   const signOutRef = useRef<() => void>(() => { });
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const expireSessionRef = useRef<(reason: "inactivity" | "token_expiry") => void>(() => { });
 
-  const navigateTo = useCallback((newView: "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin", newPath: PathEntry[]) => {
+  const navigateTo = useCallback((newView: "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings", newPath: PathEntry[]) => {
     setView(newView);
     setPath(newPath);
 
@@ -469,6 +588,15 @@ export default function App() {
   }, [loadTop]);
 
   const currentId = path.length ? path[path.length - 1].id : null;
+  const pageKey = view === "dashboard"
+    ? "dashboard"
+    : view === "explorer"
+      ? (path[0]?.name || "explorer")
+      : view;
+  const selectedVesselId = selectedVesselByPage[pageKey] ?? null;
+  const selectedVesselObj = vessels.find((v) => v.id === selectedVesselId) ?? null;
+  const selectedVesselName = selectedVesselObj?.name ?? null;
+  const searchQuery = searchQueryByPage[pageKey] ?? "";
 
   const loadCurrent = useCallback(async () => {
     if (!currentId) {
@@ -516,6 +644,8 @@ export default function App() {
   // ----- navigation -----
   const goDashboard = () => navigateTo("dashboard", []);
   const goProfile = () => navigateTo("profile", []);
+  const goApprovals = () => navigateTo("approvals", []);
+  const goSettings = () => navigateTo("settings", []);
   const openMain = (node: FolderNode) => navigateTo("explorer", [{ id: node.id, name: node.name }]);
   const openChild = (node: FolderNode) => {
     if (node.kind === "file") return;
@@ -557,13 +687,13 @@ export default function App() {
   // ----- displayed items (vessel scope + filter + sort) -----
   const displayed = useMemo(() => {
     let items = children.filter((c) => !archivedFolderIds.has(c.id));
-    if (current?.kind === "main" && selectedVessel)
-      items = items.filter((c) => c.kind !== "ship" || c.name === selectedVessel);
+    if (current?.kind === "main" && selectedVesselName)
+      items = items.filter((c) => c.kind !== "ship" || c.name === selectedVesselName);
     const q = fQuery.trim().toLowerCase();
     if (q) items = items.filter((c) => c.name.toLowerCase().includes(q));
     items = items.filter((c) => matchesType(c, typeKey));
     return sortItems(items, sortKey);
-  }, [children, current, selectedVessel, fQuery, typeKey, sortKey, archivedFolderIds]);
+  }, [children, current, selectedVesselName, fQuery, typeKey, sortKey, archivedFolderIds]);
 
   // ----- toasts -----
   const upsertToast = (t: ToastItem) =>
@@ -598,17 +728,23 @@ export default function App() {
       });
       try {
         const job = node.month_driven
-          ? await monthUpload(node.id, file, category, user?.email)
-          : await uploadFile(node.id, file, user?.email);
+          ? await monthUpload(node.id, file, category)
+          : await uploadFile(node.id, file);
         let final = job;
         for (let i = 0; i < 10 && final.status === "processing"; i++) {
           await sleep(500);
           final = await getJob(job.id);
         }
+        const title =
+          final.status === "done"
+            ? "Uploaded & filed"
+            : final.status === "pending"
+              ? "Awaiting admin approval"
+              : "Upload failed";
         upsertToast({
           id,
           status: final.status,
-          title: final.status === "done" ? "Uploaded & filed" : "Upload failed",
+          title,
           detail: final.status === "done" && final.destination ? formatUploadSuccessDetail(final.destination) : final.destination,
           detectedMonth: final.detected_month,
         });
@@ -636,7 +772,7 @@ export default function App() {
         setTimeout(() => dismissToast(id), 8000);
       }
     },
-    [refreshAfterMutation]
+    [refreshAfterMutation, user]
   );
 
   const handleDelete = useCallback(
@@ -1032,7 +1168,6 @@ export default function App() {
 
     sessionStorage.clear();
     localStorage.clear();
-
     // Clear MSAL cache silently — onRedirectNavigate returning false stops
     // the browser from navigating to Microsoft's logout page while still
     // removing the account from the local token cache.
@@ -1040,7 +1175,7 @@ export default function App() {
       instance.setActiveAccount(null);
     }
 
-    window.location.href = "/signout";
+    window.location.replace("/signout");
   };
 
   // ── Session timeout: 8-hour inactivity + 24-hour absolute token limit ──────
@@ -1091,11 +1226,13 @@ export default function App() {
   const accent = (mainName && MAIN_ACCENTS[mainName]) || MAIN_ACCENTS["Insurance"];
   const canUpload = !!current && (current.upload || current.month_driven);
   const showToolbar = view === "explorer" && !!current && children.length > 0;
-
   // Show a neutral loading screen while MSAL is handling any interaction
   // or when we are in the process of auto-authenticating a cached account.
   // This prevents the login page from briefly flashing before moving to the home page.
-  const isMsalActive = accounts.length > 0 && !user && window.location.pathname !== "/signout";
+  // Once an auth/backend error is known, stop spinning and fall through to the
+  // login page so the error banner is actually visible instead of spinning forever.
+  const isMsalActive =
+    accounts.length > 0 && !user && !authError && window.location.pathname !== "/signout";
 
   if (authError) {
     return (
@@ -1130,10 +1267,10 @@ export default function App() {
 
   if (inProgress !== "none" || isMsalActive) {
     return (
-      <div className="flex h-screen items-center justify-center bg-[#fbf5ee]">
+      <div className="flex h-screen items-center justify-center bg-bg">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 rounded-full border-2 border-violet-300 border-t-violet-600 animate-spin" />
-          <p className="text-sm text-slate-500 tracking-wide font-semibold">Signing in…</p>
+          <div className="w-8 h-8 rounded-full border-2 border-accent/40 border-t-accent animate-spin" />
+          <p className="text-sm text-muted tracking-wide font-semibold">Signing in…</p>
         </div>
       </div>
     );
@@ -1154,7 +1291,6 @@ export default function App() {
       />
     );
   }
-
   // Session expired — show inline without a URL redirect
   if (sessionExpiredReason) {
     return (
@@ -1167,7 +1303,15 @@ export default function App() {
   }
 
   if (!user) {
-    return <LoginPage onAuthenticated={(u) => { setUser(u); setApiEmail(u.email); }} />;
+    return (
+      <LoginPage
+        onAuthenticated={(u) => {
+          setUser(u);
+          setApiEmail(u.email);
+        }}
+        authError={authError}
+      />
+    );
   }
 
   // Profile page takes the full screen (no sidebar)
@@ -1185,7 +1329,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="dms-app-bg flex h-screen overflow-hidden">
       <Sidebar
         mains={mains}
         view={view}
@@ -1201,26 +1345,43 @@ export default function App() {
         onViewFullPhoto={() => setShowFullPhoto(true)}
         onArchive={() => navigateTo("archive", [])}
         onRecycleBin={() => navigateTo("recycle_bin", [])}
+        isAdmin={ADMIN_EMAILS.includes(user.email.toLowerCase())}
+        onApprovals={goApprovals}
+        onSettings={goSettings}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
         {/* Top bar: vessel switcher + global search */}
-        <div className="flex items-center gap-3 border-b border-slate-200 bg-white px-8 py-2.5">
-          <VesselSwitcher vessels={vessels} selected={selectedVessel} onSelect={setSelectedVessel} />
-          <div className="ml-auto">
-            <SearchBar onNavigate={navigateToResult} vesselScope={selectedVessel} />
+        {view !== "settings" && view !== "approvals" && (
+          <div className="dms-top-chrome relative z-30 flex items-center gap-3 border-b border-border px-8 py-2.5">
+            <SearchBar
+              onNavigate={navigateToResult}
+              vessels={vessels}
+              vesselId={selectedVesselId}
+              onVesselChange={(vesselId) =>
+                setSelectedVesselByPage((prev) => ({ ...prev, [pageKey]: vesselId }))
+              }
+              query={searchQuery}
+              onQueryChange={(query) =>
+                setSearchQueryByPage((prev) => ({ ...prev, [pageKey]: query }))
+              }
+            />
           </div>
-        </div>
+        )}
 
-        {view === "dashboard" ? (
+        {view === "settings" ? (
+          <ThemeSettings />
+        ) : view === "approvals" ? (
+          <Approvals actingEmail={user.email} />
+        ) : view === "dashboard" ? (
           <>
-            <header className="border-b border-slate-100 bg-white px-8 py-5">
-              <h2 className="text-xl font-semibold text-slate-800">Dashboard</h2>
-              <p className="mt-0.5 text-sm text-slate-500">
+            <header className="dms-top-chrome border-b border-border px-8 py-5">
+              <h2 className="text-xl font-semibold text-fg">Dashboard</h2>
+              <p className="mt-0.5 text-sm text-muted">
                 Fleet overview · shared SharePoint Embedded container
               </p>
             </header>
-            <div className="flex-1 overflow-y-auto bg-slate-50 px-8 py-6">
+            <div className="dms-page-bg flex-1 overflow-y-auto px-8 py-6">
               <Dashboard
                 vessels={vessels}
                 mains={mains}
@@ -1474,13 +1635,13 @@ export default function App() {
           })()
         ) : (
           <>
-            <div className="border-b border-slate-200 bg-white px-8 py-3">
+            <div className="dms-top-chrome border-b border-border px-8 py-3">
               <Breadcrumb crumbs={crumbs} onNavigate={crumbTo} />
             </div>
 
-            <header className="flex items-center justify-between gap-4 border-b border-slate-100 bg-white px-8 py-5">
+            <header className="dms-top-chrome flex items-center justify-between gap-4 border-b border-border px-8 py-5">
               <div className="min-w-0">
-                <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-slate-800">
+                <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-fg">
                   {current ? (
                     <>
                       {(() => {
@@ -1491,12 +1652,12 @@ export default function App() {
                     </>
                   ) : (
                     <>
-                      <FolderOpen className="h-5 w-5 text-brand-600" />
+                      <FolderOpen className="h-5 w-5 text-primary" />
                       All Main Folders
                     </>
                   )}
                 </h2>
-                <p className="mt-0.5 text-sm text-slate-500">
+                <p className="mt-0.5 text-sm text-muted">
                   {current
                     ? current.month_driven
                       ? `Upload here — documents are auto-filed into monthly folders · ${displayed.filter((c) => c.kind !== "file").length} folders · ${displayed.filter((c) => c.kind === "file").length} files`
@@ -1556,7 +1717,7 @@ export default function App() {
               </div>
             </header>
 
-            <div className="flex-1 overflow-y-auto bg-slate-50 px-8 py-6">
+            <div className="dms-page-bg flex-1 overflow-y-auto px-8 py-6">
               {showToolbar && (
                 <FolderToolbar
                   query={fQuery}
@@ -1573,12 +1734,12 @@ export default function App() {
                 <FolderGridSkeleton />
               ) : displayed.length === 0 ? (
                 children.length > 0 ? (
-                  <p className="mx-auto max-w-5xl rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
+                  <p className="dms-card mx-auto max-w-5xl rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
                     Nothing matches your filter.
                   </p>
                 ) : current?.month_driven ? (
-                  <p className="mx-auto max-w-5xl rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
-                    No month folders yet — upload a document to auto-create one, or click <strong className="text-violet-600">Create Folder</strong> to add one manually.
+                  <p className="dms-card mx-auto max-w-5xl rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
+                    No month folders yet — upload a document to auto-create one, or click <strong className="text-primary">Create Folder</strong> to add one manually.
                   </p>
                 ) : (
                   <EmptyFolder canUpload={canUpload} />
@@ -2420,7 +2581,7 @@ function FolderGrid({
             ))}
           </div>
         ) : (
-          <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface">
             {folders.map((n) => (
               <FolderRow key={n.id} node={n} accent={accent} onOpen={onOpen} />
             ))}
@@ -2430,7 +2591,7 @@ function FolderGrid({
 
       {files.length > 0 && (
         <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-subtle">
             Files
           </p>
           {layout === "grid" ? (
@@ -2440,7 +2601,7 @@ function FolderGrid({
               ))}
             </div>
           ) : (
-            <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface">
               {files.map((f) => (
                 <FileRow key={f.id} file={f} onPreview={onPreview} onDelete={onDelete} onDownload={onDownload} onRenew={onRenew} />
               ))}
@@ -2479,21 +2640,21 @@ function FolderCard({
   return (
     <button
       onClick={() => onOpen(node)}
-      className={`group flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md ${isBig ? "p-5" : "p-4"}`}
+      className={`dms-card dms-card-hover group flex w-full items-center gap-3 rounded-xl text-left ${isBig ? "p-5" : "p-4"}`}
     >
       <span className={`flex shrink-0 items-center justify-center rounded-xl transition ${isBig ? "h-14 w-14" : "h-11 w-11"} ${accent.chip}`}>
         <Icon className={`${isBig ? "h-6 w-6" : "h-5 w-5"} ${cls}`} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className={`block truncate font-semibold text-slate-800 ${isBig ? "text-base" : "text-sm"}`}>{node.name}</span>
-        <span className="mt-0.5 block text-xs text-slate-500">{folderSubtitle(node)}</span>
+        <span className={`block truncate font-semibold text-fg ${isBig ? "text-base" : "text-sm"}`}>{node.name}</span>
+        <span className="mt-0.5 block text-xs text-muted">{folderSubtitle(node)}</span>
       </span>
       {node.month_driven && (
-        <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-600 ring-1 ring-violet-100">
+        <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent ring-1 ring-accent/20">
           auto-month
         </span>
       )}
-      <ChevronRight className="h-4 w-4 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-brand-500" />
+      <ChevronRight className="h-4 w-4 shrink-0 text-subtle transition group-hover:translate-x-0.5 group-hover:text-primary" />
     </button>
   );
 }
@@ -2510,14 +2671,14 @@ function FolderRow({
   return (
     <button
       onClick={() => onOpen(node)}
-      className="group flex w-full items-center gap-3 px-4 py-2.5 text-left transition hover:bg-slate-50"
+      className="group flex w-full items-center gap-3 px-4 py-2.5 text-left transition hover:bg-bg"
     >
       <span className={"flex h-8 w-8 shrink-0 items-center justify-center rounded-lg " + accent.chip}>
         <Icon className={"h-4 w-4 " + cls} />
       </span>
-      <span className="flex-1 truncate text-sm font-medium text-slate-800">{node.name}</span>
-      <span className="text-xs text-slate-400">{folderSubtitle(node)}</span>
-      <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-brand-500" />
+      <span className="flex-1 truncate text-sm font-medium text-fg">{node.name}</span>
+      <span className="text-xs text-subtle">{folderSubtitle(node)}</span>
+      <ChevronRight className="h-4 w-4 text-subtle group-hover:text-primary" />
     </button>
   );
 }
@@ -2651,14 +2812,14 @@ function FileCard({
   return (
     <div
       onClick={() => onPreview(file)}
-      className="group flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md"
+      className="dms-card dms-card-hover group flex cursor-pointer items-center gap-3 rounded-xl p-4"
     >
       <span className={"flex h-11 w-11 shrink-0 items-center justify-center rounded-xl " + meta.chip}>
         <meta.Icon className={"h-5 w-5 " + meta.cls} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold text-slate-800">{file.name}</span>
-        <span className="mt-0.5 block truncate text-xs text-slate-400">{sub || meta.label}</span>
+        <span className="block truncate text-sm font-semibold text-fg">{file.name}</span>
+        <span className="mt-0.5 block truncate text-xs text-subtle">{sub || meta.label}</span>
       </span>
       <div className="opacity-0 transition group-hover:opacity-100">
         <FileActions file={file} onPreview={onPreview} onDelete={onDelete} onDownload={onDownload} onRenew={onRenew} />
@@ -2684,13 +2845,13 @@ function FileRow({
   return (
     <div
       onClick={() => onPreview(file)}
-      className="group flex cursor-pointer items-center gap-3 px-4 py-2.5 transition hover:bg-slate-50"
+      className="group flex cursor-pointer items-center gap-3 px-4 py-2.5 transition hover:bg-bg"
     >
       <meta.Icon className={"h-4 w-4 shrink-0 " + meta.cls} />
-      <span className="flex-1 truncate text-sm text-slate-700">{file.name}</span>
+      <span className="flex-1 truncate text-sm text-fg">{file.name}</span>
       <span className={"rounded px-1.5 py-0.5 text-[10px] font-medium " + meta.chip}>{meta.label}</span>
-      <span className="hidden w-16 text-right text-xs text-slate-400 sm:block">{formatSize(file.size)}</span>
-      <span className="hidden w-24 text-right text-xs text-slate-400 md:block">{formatDate(file.modified)}</span>
+      <span className="hidden w-16 text-right text-xs text-subtle sm:block">{formatSize(file.size)}</span>
+      <span className="hidden w-24 text-right text-xs text-subtle md:block">{formatDate(file.modified)}</span>
       <div className="opacity-0 transition group-hover:opacity-100">
         <FileActions file={file} onPreview={onPreview} onDelete={onDelete} onDownload={onDownload} onRenew={onRenew} />
       </div>
@@ -2700,12 +2861,12 @@ function FileRow({
 
 function EmptyFolder({ canUpload }: { canUpload: boolean }) {
   return (
-    <div className="mx-auto mt-10 max-w-md rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
-      <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50">
-        <FolderOpen className="h-7 w-7 text-brand-600" />
+    <div className="dms-card mx-auto mt-10 max-w-md rounded-2xl border border-dashed border-border-strong p-10 text-center">
+      <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
+        <FolderOpen className="h-7 w-7 text-primary" />
       </div>
-      <h3 className="text-base font-semibold text-slate-800">This folder is empty</h3>
-      <p className="mt-1 text-sm text-slate-500">
+      <h3 className="text-base font-semibold text-fg">This folder is empty</h3>
+      <p className="mt-1 text-sm text-muted">
         {canUpload
           ? "Use the Upload button in the top-right to add a document."
           : "Open a sub-folder to continue."}

@@ -21,13 +21,13 @@ export function TreeNode({ node, depth, defaultOpen, onUpload }: Props) {
     <div>
       <div
         className={
-          "group flex items-center gap-2 rounded-lg py-1.5 pr-2 transition hover:bg-slate-50 " +
+          "group flex items-center gap-2 rounded-lg py-1.5 pr-2 transition hover:bg-bg " +
           (isFile ? "" : "cursor-pointer")
         }
         style={{ paddingLeft: depth * 18 + 4 }}
         onClick={() => hasChildren && setOpen((v) => !v)}
       >
-        <span className="flex h-4 w-4 items-center justify-center text-slate-400">
+        <span className="flex h-4 w-4 items-center justify-center text-subtle">
           {hasChildren ? (
             <ChevronRight
               className={
@@ -43,19 +43,19 @@ export function TreeNode({ node, depth, defaultOpen, onUpload }: Props) {
           className={
             "flex-1 truncate text-sm " +
             (node.kind === "ship"
-              ? "font-semibold text-slate-800"
+              ? "font-semibold text-fg"
               : node.kind === "month"
-                ? "font-medium text-violet-700"
+                ? "font-medium text-accent"
                 : isFile
-                  ? "text-slate-500"
-                  : "text-slate-700")
+                  ? "text-muted"
+                  : "text-fg")
           }
         >
           {node.name}
         </span>
 
         {node.month_driven && (
-          <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-600 ring-1 ring-violet-100">
+          <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent ring-1 ring-accent/20">
             auto-month
           </span>
         )}

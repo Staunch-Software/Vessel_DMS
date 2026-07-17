@@ -100,6 +100,10 @@ class GraphClient:
         r = await self.request("POST", path, **kw)
         return r.json() if r.content else {}
 
+    async def patch(self, path: str, **kw) -> dict:
+        r = await self.request("PATCH", path, **kw)
+        return r.json() if r.content else {}
+
     async def delete(self, path: str, **kw) -> None:
         await self.request("DELETE", path, **kw)
 

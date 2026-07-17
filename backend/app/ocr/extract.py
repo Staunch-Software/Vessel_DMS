@@ -79,6 +79,18 @@ def extract_text(file_bytes: bytes, filename: str, content_type: str = "") -> st
         content_type.startswith("image/")
     ):
         return ocr_image_bytes(file_bytes)
+    if name.endswith(".docx"):
+        from .office import docx_text
+
+        return docx_text(file_bytes)
+    if name.endswith(".xlsx"):
+        from .office import xlsx_text
+
+        return xlsx_text(file_bytes)
+    # Legacy .doc/.xls and other unsupported formats: no extraction, which
+    # correctly routes the item to manual review rather than a guess.
+    if name.endswith((".doc", ".xls", ".ppt", ".pptx", ".msg")):
+        return ""
     # Fallback: try decoding as text.
     try:
         return file_bytes.decode("utf-8", errors="ignore")

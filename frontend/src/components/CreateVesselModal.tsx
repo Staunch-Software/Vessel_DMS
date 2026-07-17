@@ -61,7 +61,7 @@ export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-fg/50 p-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
@@ -70,8 +70,8 @@ export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
       >
         <div className="mb-4 flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 ring-1 ring-brand-100">
-              <Ship className="h-5 w-5 text-brand-600" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/20">
+              <Ship className="h-5 w-5 text-primary" />
             </div>
             <div>
               <h2 className="text-base font-semibold text-slate-800">New Vessel</h2>
@@ -103,6 +103,7 @@ export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
               ? "border-rose-300 focus:border-rose-400 focus:ring-rose-100"
               : "border-slate-300 focus:border-brand-400 focus:ring-brand-100")
           }
+          className="dms-input w-full px-3 py-2 text-sm"
         />
         {nameError && (
           <p className="mt-1 text-xs text-rose-600">{nameError}</p>
@@ -117,8 +118,8 @@ export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
           className={
             "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 " +
             (imoValid
-              ? "border-slate-300 focus:border-brand-400 focus:ring-brand-100"
-              : "border-rose-300 focus:border-rose-400 focus:ring-rose-100")
+              ? "dms-input border-border"
+              : "border-error/50 focus:border-error focus:ring-error/20")
           }
         />
         {!imoValid && (
@@ -162,7 +163,7 @@ export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
         <div className="mt-6 flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+            className="rounded-lg px-4 py-2 text-sm font-medium text-muted hover:bg-surface2"
           >
             Cancel
           </button>

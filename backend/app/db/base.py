@@ -14,7 +14,7 @@ class Base(DeclarativeBase):
 # Engine is created only when a DATABASE_URL is configured. In stub mode this
 # stays None and the app uses the in-memory store instead.
 engine = (
-    create_engine(settings.database_url, pool_pre_ping=True, future=True)
+    create_engine(settings.database_url_resolved, pool_pre_ping=True, future=True)
     if settings.db_configured
     else None
 )

@@ -11,13 +11,15 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
+# Alembic uses configparser interpolation, so '%' in URL-encoded passwords
+# (e.g. '%40' for '@') must be escaped as '%%'.
+config.set_main_option("sqlalchemy.url", settings.database_url_resolved.replace("%", "%%"))
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=settings.database_url,
+        url=settings.database_url_resolved,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
