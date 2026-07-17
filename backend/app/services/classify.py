@@ -25,6 +25,13 @@ def _flags(node):
         }
     if k == "leaf":
         return {"kind": "leaf", "upload": True, "month_driven": False}
+    if k == "drawing_classifier":
+        return {
+            "kind": "drawing_classifier",
+            "upload": True,
+            "month_driven": False,
+            "categories": [c["name"] for c in node.get("children", [])],
+        }
     return {"kind": "folder", "upload": False, "month_driven": False}
 
 
@@ -39,7 +46,7 @@ def _descend(nodes, rest):
         if len(rest) == 2:
             return {"kind": "month", "upload": False, "month_driven": False}
         return {"kind": "leaf", "upload": True, "month_driven": False}
-    if node["kind"] == "folder":
+    if node["kind"] in ("folder", "drawing_classifier"):
         return _descend(node.get("children", []), rest[1:])
     return {"kind": "folder", "upload": False, "month_driven": False}
 

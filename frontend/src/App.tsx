@@ -25,7 +25,6 @@ import { UploadControl } from "./components/UploadControl";
 import { ToastStack, type ToastItem } from "./components/Toast";
 import { Dashboard } from "./components/Dashboard";
 import { SearchBar } from "./components/SearchBar";
-import { VesselSwitcher } from "./components/VesselSwitcher";
 import { PreviewDrawer } from "./components/PreviewDrawer";
 import { FolderGridSkeleton } from "./components/Skeleton";
 import {
@@ -49,6 +48,18 @@ const ADMIN_EMAILS: string[] = (
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
 const IMG = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff"];
+
+function hasMsalAuthResponseInUrl(): boolean {
+  const search = window.location.search.toLowerCase();
+  const hash = window.location.hash.toLowerCase();
+  const combined = `${search}&${hash}`;
+  return (
+    combined.includes("code=") ||
+    combined.includes("id_token=") ||
+    combined.includes("error=") ||
+    combined.includes("state=")
+  );
+}
 
 function errDetail(e: unknown, fallback: string): string {
   return (
@@ -98,7 +109,8 @@ export default function App() {
   const [loadingChildren, setLoadingChildren] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const [selectedVessel, setSelectedVessel] = useState<string | null>(null);
+  const [selectedVesselByPage, setSelectedVesselByPage] = useState<Record<string, string | null>>({});
+  const [searchQueryByPage, setSearchQueryByPage] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<FolderNode | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -147,7 +159,8 @@ export default function App() {
       !user &&
       inProgress === "none" &&
       accounts.length === 0 &&
-      window.location.pathname === "/homepage"
+      window.location.pathname === "/homepage" &&
+      !hasMsalAuthResponseInUrl()
     ) {
       window.history.replaceState({}, "", "/");
     }
@@ -291,6 +304,15 @@ export default function App() {
   }, [loadTop]);
 
   const currentId = path.length ? path[path.length - 1].id : null;
+  const pageKey = view === "dashboard"
+    ? "dashboard"
+    : view === "explorer"
+      ? (path[0]?.name || "explorer")
+      : view;
+  const selectedVesselId = selectedVesselByPage[pageKey] ?? null;
+  const selectedVesselObj = vessels.find((v) => v.id === selectedVesselId) ?? null;
+  const selectedVesselName = selectedVesselObj?.name ?? null;
+  const searchQuery = searchQueryByPage[pageKey] ?? "";
 
   const loadCurrent = useCallback(async () => {
     if (!currentId) {
@@ -348,13 +370,13 @@ export default function App() {
   // ----- displayed items (vessel scope + filter + sort) -----
   const displayed = useMemo(() => {
     let items = children;
-    if (current?.kind === "main" && selectedVessel)
-      items = items.filter((c) => c.kind !== "ship" || c.name === selectedVessel);
+    if (current?.kind === "main" && selectedVesselName)
+      items = items.filter((c) => c.kind !== "ship" || c.name === selectedVesselName);
     const q = fQuery.trim().toLowerCase();
     if (q) items = items.filter((c) => c.name.toLowerCase().includes(q));
     items = items.filter((c) => matchesType(c, typeKey));
     return sortItems(items, sortKey);
-  }, [children, current, selectedVessel, fQuery, typeKey, sortKey]);
+  }, [children, current, selectedVesselName, fQuery, typeKey, sortKey]);
 
   // ----- toasts -----
   const upsertToast = (t: ToastItem) =>
@@ -551,7 +573,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="dms-app-bg flex h-screen overflow-hidden">
       <Sidebar
         mains={mains}
         view={view}
@@ -569,11 +591,19 @@ export default function App() {
       <main className="flex flex-1 flex-col overflow-hidden">
         {/* Top bar: vessel switcher + global search */}
         {view !== "settings" && view !== "approvals" && (
-          <div className="flex items-center gap-3 border-b border-border bg-surface px-8 py-2.5">
-            <VesselSwitcher vessels={vessels} selected={selectedVessel} onSelect={setSelectedVessel} />
-            <div className="ml-auto">
-              <SearchBar onNavigate={navigateToResult} vesselScope={selectedVessel} />
-            </div>
+          <div className="dms-top-chrome relative z-30 flex items-center gap-3 border-b border-border px-8 py-2.5">
+            <SearchBar
+              onNavigate={navigateToResult}
+              vessels={vessels}
+              vesselId={selectedVesselId}
+              onVesselChange={(vesselId) =>
+                setSelectedVesselByPage((prev) => ({ ...prev, [pageKey]: vesselId }))
+              }
+              query={searchQuery}
+              onQueryChange={(query) =>
+                setSearchQueryByPage((prev) => ({ ...prev, [pageKey]: query }))
+              }
+            />
           </div>
         )}
 
@@ -583,13 +613,13 @@ export default function App() {
           <Approvals actingEmail={user.email} />
         ) : view === "dashboard" ? (
           <>
-            <header className="border-b border-border bg-surface px-8 py-5">
+            <header className="dms-top-chrome border-b border-border px-8 py-5">
               <h2 className="text-xl font-semibold text-fg">Dashboard</h2>
               <p className="mt-0.5 text-sm text-muted">
                 Fleet overview · shared SharePoint Embedded container
               </p>
             </header>
-            <div className="flex-1 overflow-y-auto bg-bg px-8 py-6">
+            <div className="dms-page-bg flex-1 overflow-y-auto px-8 py-6">
               <Dashboard
                 vessels={vessels}
                 mains={mains}
@@ -601,11 +631,11 @@ export default function App() {
           </>
         ) : (
           <>
-            <div className="border-b border-border bg-surface px-8 py-3">
+            <div className="dms-top-chrome border-b border-border px-8 py-3">
               <Breadcrumb crumbs={crumbs} onNavigate={crumbTo} />
             </div>
 
-            <header className="flex items-center justify-between gap-4 border-b border-border bg-surface px-8 py-5">
+            <header className="dms-top-chrome flex items-center justify-between gap-4 border-b border-border px-8 py-5">
               <div className="min-w-0">
                 <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-fg">
                   {current ? (
@@ -636,7 +666,7 @@ export default function App() {
               )}
             </header>
 
-            <div className="flex-1 overflow-y-auto bg-bg px-8 py-6">
+            <div className="dms-page-bg flex-1 overflow-y-auto px-8 py-6">
               {showToolbar && (
                 <FolderToolbar
                   query={fQuery}
@@ -653,11 +683,11 @@ export default function App() {
                 <FolderGridSkeleton />
               ) : displayed.length === 0 ? (
                 children.length > 0 ? (
-                  <p className="mx-auto max-w-5xl rounded-xl border border-dashed border-border-strong bg-surface p-8 text-center text-sm text-muted">
+                  <p className="dms-card mx-auto max-w-5xl rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
                     Nothing matches your filter.
                   </p>
                 ) : current?.month_driven ? (
-                  <p className="mx-auto max-w-5xl rounded-xl border border-dashed border-border-strong bg-surface p-8 text-center text-sm text-muted">
+                  <p className="dms-card mx-auto max-w-5xl rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
                     No month folders yet — upload a document to create one.
                   </p>
                 ) : (
@@ -771,7 +801,7 @@ function FolderCard({
   return (
     <button
       onClick={() => onOpen(node)}
-      className="group flex items-center gap-3 rounded-xl border border-border bg-surface p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
+      className="dms-card dms-card-hover group flex items-center gap-3 rounded-xl p-4 text-left"
     >
       <span className={"flex h-11 w-11 shrink-0 items-center justify-center rounded-xl " + accent.chip}>
         <Icon className={"h-5 w-5 " + cls} />
@@ -860,7 +890,7 @@ function FileCard({
   return (
     <div
       onClick={() => onPreview(file)}
-      className="group flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-surface p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
+      className="dms-card dms-card-hover group flex cursor-pointer items-center gap-3 rounded-xl p-4"
     >
       <span className={"flex h-11 w-11 shrink-0 items-center justify-center rounded-xl " + meta.chip}>
         <meta.Icon className={"h-5 w-5 " + meta.cls} />
@@ -905,7 +935,7 @@ function FileRow({
 
 function EmptyFolder({ canUpload }: { canUpload: boolean }) {
   return (
-    <div className="mx-auto mt-10 max-w-md rounded-2xl border border-dashed border-border-strong bg-surface p-10 text-center">
+    <div className="dms-card mx-auto mt-10 max-w-md rounded-2xl border border-dashed border-border-strong p-10 text-center">
       <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
         <FolderOpen className="h-7 w-7 text-primary" />
       </div>

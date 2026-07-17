@@ -57,7 +57,7 @@ export function UploadControl({ node, onUpload, variant = "inline" }: Props) {
 
       {isMonth && open && (
         <div
-          className="absolute right-0 z-30 mt-2 w-72 rounded-xl border border-border bg-surface p-3 text-left shadow-xl"
+          className="dms-card absolute right-0 z-30 mt-2 w-72 border border-border p-3 text-left shadow-xl"
           onClick={(e) => e.stopPropagation()}
         >
           <p className="mb-1 text-xs font-semibold text-fg">
@@ -73,7 +73,7 @@ export function UploadControl({ node, onUpload, variant = "inline" }: Props) {
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value)}
-            className="mb-3 w-full rounded-md border border-border-strong bg-surface px-2 py-1.5 text-xs text-fg focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            className="dms-input mb-3 w-full rounded-md px-2 py-1.5 text-xs text-fg"
           >
             <option value="">To be Classified</option>
             {node.categories?.map((c) => (
@@ -84,7 +84,7 @@ export function UploadControl({ node, onUpload, variant = "inline" }: Props) {
           </select>
           <button
             onClick={pick}
-            className="w-full rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg transition hover:bg-accent-hover"
+            className="dms-btn-primary w-full rounded-md px-3 py-1.5 text-xs font-medium"
           >
             Choose file & upload
           </button>

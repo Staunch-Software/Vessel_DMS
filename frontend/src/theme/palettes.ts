@@ -20,6 +20,8 @@ export interface ThemeSeed {
   secondary?: string;
   /** Accent hue for highlights/badges. Defaults to primary shifted -36°. */
   accent?: string;
+  /** Optional fine-grained token overrides per mode for special themes. */
+  overrides?: Partial<Record<ThemeMode, Partial<ThemeTokens>>>;
 }
 
 // Fixed, theme-independent semantic colors. Status colors deliberately do
@@ -103,6 +105,8 @@ export function buildThemeTokens(seed: ThemeSeed, mode: ThemeMode): ThemeTokens 
         sidebarFg: tint(hue, 94, 8),
         sidebarMuted: tint(hue, 62, 12),
         sidebarActive: tint(hue, 16, 32),
+        sidebarHover: tint(hue, 20, 24),
+        sidebarIcon: tint(hue, 22, 30),
         sidebarBorder: tint(hue, 16, 30),
 
         topnavBg: tint(hue, 13, 16),
@@ -126,6 +130,10 @@ export function buildThemeTokens(seed: ThemeSeed, mode: ThemeMode): ThemeTokens 
         focusRing: primary,
         scrollbar: tint(hue, 30, 15),
         scrollbarHover: tint(hue, 38, 15),
+        statVessels: primary,
+        statMainFolders: secondaryAdj,
+        statDocuments: accentAdj,
+        statMonthly: infoPair.bg,
       }
     : {
         bg: tint(hue, 98, 25),
@@ -153,6 +161,8 @@ export function buildThemeTokens(seed: ThemeSeed, mode: ThemeMode): ThemeTokens 
         sidebarFg: tint(hue, 95, 6),
         sidebarMuted: tint(hue, 66, 10),
         sidebarActive: tint(hue, 20, 34),
+        sidebarHover: tint(hue, 22, 30),
+        sidebarIcon: tint(hue, 24, 26),
         sidebarBorder: tint(hue, 20, 32),
 
         topnavBg: "#ffffff",
@@ -176,9 +186,16 @@ export function buildThemeTokens(seed: ThemeSeed, mode: ThemeMode): ThemeTokens 
         focusRing: primary,
         scrollbar: tint(hue, 82, 16),
         scrollbarHover: tint(hue, 72, 14),
+        statVessels: primary,
+        statMainFolders: secondaryAdj,
+        statDocuments: accentAdj,
+        statMonthly: infoPair.bg,
       };
 
-  return tokens;
+  return {
+    ...tokens,
+    ...(seed.overrides?.[mode] ?? {}),
+  };
 }
 
 /**
@@ -207,4 +224,43 @@ export const THEME_SEEDS: ThemeSeed[] = [
   { id: "pearl-white", name: "Pearl White", primary: "#64748b", accent: "#0ea5e9" },
   { id: "steel-blue", name: "Steel Blue", primary: "#3b6f9c" },
   { id: "marine-blue", name: "Marine Blue", primary: "#155e75", accent: "#0d9488" },
+  {
+    id: "pastel-delight",
+    name: "Pastel Delight",
+    primary: "#8b5cf6",
+    secondary: "#a78bfa",
+    accent: "#fb7185",
+    overrides: {
+      light: {
+        bg: "#fcfcff",
+        surface: "#ffffff",
+        surface2: "#f8faff",
+        surfaceHover: "#f3f6ff",
+        border: "#e9ebff",
+        borderStrong: "#d6dcff",
+        fg: "#2f2553",
+        muted: "#695f91",
+        subtle: "#8d85b4",
+        sidebarBg: "#ede9fe",
+        sidebarFg: "#322359",
+        sidebarMuted: "#6f63a2",
+        sidebarActive: "#d8cfff",
+        sidebarHover: "#e2dbff",
+        sidebarIcon: "#ddd6fe",
+        topnavBg: "#ffffff",
+        topnavFg: "#2f2553",
+        topnavBorder: "#e9ebff",
+        primary: "#8b5cf6",
+        primaryHover: "#7c3aed",
+        secondary: "#a78bfa",
+        secondaryHover: "#8b5cf6",
+        accent: "#fb7185",
+        accentHover: "#f43f5e",
+        statVessels: "#c4b5fd",
+        statMainFolders: "#6ee7b7",
+        statDocuments: "#fdba74",
+        statMonthly: "#7dd3fc",
+      },
+    },
+  },
 ];

@@ -123,7 +123,7 @@ export function Approvals({ actingEmail }: { actingEmail: string }) {
         </p>
       </header>
 
-      <div className="flex-1 overflow-y-auto bg-bg px-8 py-6">
+      <div className="dms-page-bg flex-1 overflow-y-auto px-8 py-6">
         <div className="mx-auto max-w-5xl space-y-4">
           {/* Tabs + search */}
           <div className="flex flex-wrap items-center gap-3">

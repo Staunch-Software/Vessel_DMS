@@ -20,7 +20,7 @@ export function ToastStack({
       {toasts.map((t) => (
         <div
           key={t.id}
-          className="flex items-start gap-3 rounded-xl border border-border bg-surface p-4 shadow-lg shadow-black/10 ring-1 ring-black/5"
+          className="dms-card flex items-start gap-3 rounded-xl border border-border p-4"
         >
           <div className="mt-0.5">
             {t.status === "processing" && (

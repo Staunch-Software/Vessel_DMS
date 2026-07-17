@@ -163,6 +163,21 @@ async def search_items(drive_id: str, query: str) -> list[dict]:
     return data.get("value", [])
 
 
+async def search_items_in(drive_id: str, folder_item_id: str, query: str) -> list[dict]:
+    """Same as search_items, but scoped to one folder's subtree (recursive).
+
+    Used to restrict search to a single vessel's ship folder instead of the
+    whole container — Graph does the recursive scoping server-side, so this
+    is cheaper than fetching a container-wide search and filtering locally.
+    """
+    q = query.replace("'", "''")
+    data = await graph().get(
+        f"/drives/{drive_id}/items/{folder_item_id}/search(q='{q}')"
+        "?$select=id,name,file,folder,parentReference&$top=50"
+    )
+    return data.get("value", [])
+
+
 async def delete_item(drive_id: str, item_id: str) -> None:
     await graph().delete(f"/drives/{drive_id}/items/{item_id}")
 

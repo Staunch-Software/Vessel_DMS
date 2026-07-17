@@ -16,7 +16,7 @@ interface Props {
 }
 
 const selCls =
-  "rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs text-muted focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
+  "dms-input rounded-lg px-2.5 py-1.5 text-xs text-muted";
 
 export function FolderToolbar({
   query, setQuery, typeKey, setTypeKey, sort, setSort, view, setView,
@@ -29,7 +29,7 @@ export function FolderToolbar({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Filter in this folder…"
-          className="w-full rounded-lg border border-border bg-surface py-1.5 pl-9 pr-3 text-sm text-fg focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+          className="dms-input w-full py-1.5 pl-9 pr-3 text-sm text-fg"
         />
       </div>
 
@@ -48,7 +48,7 @@ export function FolderToolbar({
         <option value="size">Size</option>
       </select>
 
-      <div className="flex overflow-hidden rounded-lg border border-border">
+      <div className="flex overflow-hidden rounded-lg border border-border bg-surface">
         <button
           onClick={() => setView("grid")}
           className={"p-1.5 " + (view === "grid" ? "bg-primary/10 text-primary" : "bg-surface text-subtle hover:bg-bg")}

@@ -175,7 +175,12 @@ async def auth_logout(payload: LogoutIn):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "mode": backend_mode()}
+    return {
+        "status": "ok",
+        "mode": backend_mode(),
+        "graph_configured": settings.graph_configured,
+        "db_configured": settings.db_configured,
+    }
 
 
 @app.get("/api/vessels")
@@ -275,8 +280,8 @@ async def delete_file(file_id: str):
 
 
 @app.get("/api/search")
-async def search(q: str = ""):
-    return await get_backend().search(q)
+async def search(q: str = "", vessel_id: str | None = None):
+    return await get_backend().search(q, vessel_id)
 
 
 @app.get("/api/jobs/{job_id}")

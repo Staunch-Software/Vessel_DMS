@@ -6,13 +6,18 @@ during development. Once the real values are provided it switches to the live
 SharePoint Embedded + PostgreSQL backend.
 """
 from functools import lru_cache
+from pathlib import Path
+from urllib.parse import quote_plus
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=str(ENV_FILE), env_file_encoding="utf-8", extra="ignore"
     )
 
     # --- Microsoft Entra / Graph (backend app, app-only) ---
@@ -30,6 +35,11 @@ class Settings(BaseSettings):
 
     # --- Database ---
     database_url: str = ""  # e.g. postgresql+psycopg2://user:pass@host:5432/dms
+    db_host: str = ""
+    db_port: int = 5432
+    db_name: str = ""
+    db_user: str = ""
+    db_password: str = ""
 
     # --- Behaviour ---
     month_folder_format: str = "%B %Y"  # e.g. "June 2026"
@@ -55,7 +65,26 @@ class Settings(BaseSettings):
 
     @property
     def db_configured(self) -> bool:
-        return bool(self.database_url)
+        return bool(self.database_url_resolved)
+
+    @property
+    def database_url_resolved(self) -> str:
+        """Resolved DB URL.
+
+        Priority:
+        1) DATABASE_URL (existing behavior)
+        2) DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD
+        """
+        if self.database_url:
+            return self.database_url
+        if all([self.db_host, self.db_name, self.db_user, self.db_password]):
+            user = quote_plus(self.db_user)
+            password = quote_plus(self.db_password)
+            return (
+                f"postgresql+psycopg2://{user}:{password}"
+                f"@{self.db_host}:{self.db_port}/{self.db_name}"
+            )
+        return ""
 
     @property
     def authority_url(self) -> str:

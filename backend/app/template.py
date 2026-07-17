@@ -25,6 +25,14 @@ def month_driven(name, month_children):
     return {"name": name, "kind": "month_driven", "month_children": month_children}
 
 
+def drawing_classifier(name, categories):
+    """Like `leaf` — a single upload button, no dropdown — but the upload is
+    auto-routed: document text is matched against `categories` and filed into
+    the corresponding child leaf, falling back to "Other Drawings" (never
+    "To be Classified") when nothing matches. See ocr/drawing_category.py."""
+    return {"name": name, "kind": "drawing_classifier", "children": [leaf(c) for c in categories]}
+
+
 # The three top-level main folders.
 MAIN_FOLDERS = [
     "Technical & Crewing",
@@ -71,7 +79,14 @@ SHIP_TEMPLATE = {
         ),
         folder(
             "Drawings and Manuals",
-            [leaf("Drawing"), leaf("Manual"), leaf("To be Classified")],
+            [
+                drawing_classifier(
+                    "Drawings",
+                    ["Archive", "Basic", "Electrical", "Engine", "Hull", "Safety", "Other Drawings"],
+                ),
+                leaf("Manual"),
+                leaf("To be Classified"),
+            ],
         ),
         folder("PO & Invoice", [leaf("Purchase Order"), leaf("Vendor Invoice")]),
         leaf("Incidents"),

@@ -9,6 +9,7 @@ import re
 from datetime import date, datetime
 
 from . import template
+from .ocr.drawing_category import classify_drawing_category
 
 from .services.errors import Conflict, DuplicateFile  # noqa: E402  (re-exported for callers)
 
@@ -41,7 +42,7 @@ class Store:
             "kind": kind,
             "parent_id": parent_id,
             "children": [],
-            "upload": kind in ("leaf", "month_driven"),
+            "upload": kind in ("leaf", "month_driven", "drawing_classifier"),
             "month_driven": kind == "month_driven",
         }
         if month_children is not None:
@@ -238,6 +239,20 @@ class Store:
             detected = f"{_MONTHS[month - 1]} {year}"
         return target, detected
 
+    def resolve_drawing_target(self, node_id, filename):
+        """Fake OCR drawing-category detection by keyword-matching the
+        filename (stub has no real OCR); route to the matched category leaf,
+        or "Other Drawings" if nothing matches. Never routes automatically to
+        "To be Classified" — that's reserved for documents that aren't even
+        identified as belonging to the Drawings category."""
+        node = self.nodes[node_id]
+        category = classify_drawing_category(filename)
+        target_name = category or "Other Drawings"
+        for cid in node["children"]:
+            if self.nodes[cid]["name"].lower() == target_name.lower():
+                return self.nodes[cid], category
+        return node, category
+
     def reject_target_for(self, destination_folder_id):
         """The sibling "To be Classified" folder for a rejected upload — found
         inside the same parent as the originally-selected destination. If the
@@ -270,10 +285,19 @@ class Store:
         self.nodes.pop(node_id, None)
         return True
 
-    def search(self, query):
+    def search(self, query, vessel_id=None):
+        """Search folders + files by name. When `vessel_id` is given, walk
+        only that vessel's own ship folders (one per main folder) instead of
+        the full tree — other vessels' folders, and the shared "Common for
+        all ships" areas, are never visited."""
         ql = query.lower().strip()
         if not ql:
             return []
+        roots = self.roots
+        if vessel_id is not None:
+            vessel = next((v for v in self.vessels if v["id"] == vessel_id), None)
+            if vessel is not None:
+                roots = list(vessel["ship_folders"].values())
         results = []
 
         def walk(nid, trail):
@@ -292,7 +316,7 @@ class Store:
             for c in node["children"]:
                 walk(c, t2)
 
-        for r in self.roots:
+        for r in roots:
             walk(r, [])
         return results[:50]
 

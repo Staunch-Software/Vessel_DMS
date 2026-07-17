@@ -20,7 +20,8 @@ from ..db import models
 from ..graph import drive as gd
 from ..graph.client import GraphError
 from ..ocr.dates import month_label
-from ..ocr.extract import detect_document_month
+from ..ocr.drawing_category import classify_drawing_category
+from ..ocr.extract import detect_document_month, extract_text
 from .classify import classify
 from .errors import BadRequest, Conflict, NotFound
 from .notify import notify_email
@@ -85,6 +86,20 @@ class RealBackend:
             )
             db.commit()
         return tbc["id"]
+
+    async def _resolve_drawing_target(self, drive_id, folder_id, path, filename, content, content_type):
+        """OCR the document and match it against the Drawings sub-categories;
+        fall back to "Other Drawings" (never "To be Classified") when nothing
+        matches. See ocr/drawing_category.py."""
+        text = await asyncio.to_thread(extract_text, content, filename, content_type or "")
+        category = classify_drawing_category(text)
+        target_name = category or "Other Drawings"
+        target = await gd.ensure_folder(drive_id, folder_id, target_name)
+        target_path = f"{path}/{target_name}"
+        with SessionLocal() as db:
+            self._upsert(db, target_path, target_name, "leaf", target["id"], False, None)
+            db.commit()
+        return target["id"], target_path
 
     def _upsert(self, db, path, name, kind, item_id, month_driven, vessel_id):
         row = db.query(models.Folder).filter_by(path=path).one_or_none()
@@ -321,11 +336,16 @@ class RealBackend:
             raise BadRequest("Use the month upload for this folder")
         if not flags.get("upload"):
             raise BadRequest("This folder does not accept direct uploads")
-        existing = await gd.find_child(drive_id, folder_id, filename)
+        target_id, dest_path = folder_id, path
+        if flags.get("kind") == "drawing_classifier":
+            target_id, dest_path = await self._resolve_drawing_target(
+                drive_id, folder_id, path, filename, content, content_type
+            )
+        existing = await gd.find_child(drive_id, target_id, filename)
         if existing and "file" in existing:
             raise Conflict(f"'{filename}' already exists in this folder")
         approval = await self._create_approval(
-            drive_id, folder_id, path, filename, content, content_type,
+            drive_id, target_id, dest_path, filename, content, content_type,
             uploaded_by_email, uploaded_by_name,
         )
         return _approval_as_job(approval)
@@ -403,19 +423,25 @@ class RealBackend:
                 trail.append({"id": row.drive_item_id if row else "", "name": parts[i]})
         return trail
 
-    async def search(self, q):
+    async def search(self, q, vessel_id=None):
+        """Search folders + files by name. When `vessel_id` is given, results
+        are restricted to that vessel's own ship folders (one per main
+        folder) — never other vessels' folders, and never the shared "Common
+        for all ships" areas.
+        """
         ql = q.strip()
         if not ql:
             return []
+        vid = int(vessel_id) if vessel_id and str(vessel_id).isdigit() else None
         out, seen = [], set()
         # 1) Folders from our DB cache — always available, no index lag.
+        #    vessel_id is an indexed FK, so scoping here is a cheap filter,
+        #    not a scan of every vessel's folders.
         with SessionLocal() as db:
-            rows = (
-                db.query(models.Folder)
-                .filter(models.Folder.name.ilike(f"%{ql}%"))
-                .limit(50)
-                .all()
-            )
+            query = db.query(models.Folder).filter(models.Folder.name.ilike(f"%{ql}%"))
+            if vid is not None:
+                query = query.filter(models.Folder.vessel_id == vid)
+            rows = query.limit(50).all()
             for r in rows:
                 parts = r.path.split("/")
                 out.append(
@@ -428,10 +454,30 @@ class RealBackend:
                     }
                 )
                 seen.add(r.drive_item_id)
+
+            # A vessel has no single root — it has one ship folder under each
+            # of the 3 main folders — so file search below is scoped to all
+            # of them rather than one shared "vessel root".
+            ship_root_ids = []
+            if vid is not None:
+                ship_root_ids = [
+                    r.drive_item_id
+                    for r in db.query(models.Folder).filter_by(vessel_id=vid, kind="ship").all()
+                ]
+
         # 2) Files via Graph search (best-effort; may lag or be unavailable).
         try:
             drive_id = await self._drive()
-            items = await gd.search_items(drive_id, ql)
+            if vid is not None:
+                # Scoped, recursive search inside just this vessel's ship
+                # folders — Graph does the subtree walk server-side, so other
+                # vessels' documents are never scanned or returned.
+                per_root = await asyncio.gather(
+                    *(gd.search_items_in(drive_id, root_id, ql) for root_id in ship_root_ids)
+                )
+                items = [it for lst in per_root for it in lst]
+            else:
+                items = await gd.search_items(drive_id, ql)
             with SessionLocal() as db:
                 for it in items:
                     if "file" not in it or it["id"] in seen:

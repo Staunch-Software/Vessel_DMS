@@ -51,9 +51,13 @@ class StubBackend:
             raise NotFound("Folder not found")
         if not node["upload"] or node["month_driven"]:
             raise BadRequest("This folder does not accept direct uploads")
+        if node["kind"] == "drawing_classifier":
+            target, _ = store.resolve_drawing_target(folder_id, filename)
+        else:
+            target = node
         approval = store.create_approval(
-            folder_id,
-            store.path_of(folder_id),
+            target["id"],
+            store.path_of(target["id"]),
             filename,
             content,
             content_type,
@@ -101,8 +105,8 @@ class StubBackend:
     async def delete_file(self, file_id):
         return store.delete_file(file_id)
 
-    async def search(self, q):
-        return store.search(q)
+    async def search(self, q, vessel_id=None):
+        return store.search(q, vessel_id)
 
     async def get_job(self, job_id):
         return store.get_job(job_id)

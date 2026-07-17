@@ -36,7 +36,7 @@ export function CreateVesselModal({ onClose, onCreate }: Props) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl"
+        className="dms-card w-full max-w-md p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-start justify-between">
@@ -70,7 +70,7 @@ export function CreateVesselModal({ onClose, onCreate }: Props) {
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
           placeholder="e.g. MV Pacific Trader"
-          className="w-full rounded-lg border border-border-strong px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+          className="dms-input w-full px-3 py-2 text-sm"
         />
 
         <label className="mb-1.5 mt-4 block text-sm font-medium text-fg">
@@ -87,7 +87,7 @@ export function CreateVesselModal({ onClose, onCreate }: Props) {
           className={
             "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 " +
             (imoValid
-              ? "border-border-strong focus:border-primary focus:ring-primary/20"
+              ? "dms-input border-border"
               : "border-error/50 focus:border-error focus:ring-error/20")
           }
         />
@@ -111,7 +111,7 @@ export function CreateVesselModal({ onClose, onCreate }: Props) {
           <button
             onClick={submit}
             disabled={busy || !name.trim() || !imoValid}
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-fg transition hover:bg-primary-hover disabled:opacity-50"
+            className="dms-btn-primary inline-flex items-center gap-2 px-4 py-2 text-sm font-medium disabled:opacity-50"
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             Create Vessel

@@ -39,9 +39,9 @@ interface LoginPageProps {
 
 function PageShell({ children }: { children: React.ReactNode }) {
     return (
-        <div className="min-h-screen w-full relative bg-sidebar-bg">
+        <div className="dms-app-bg min-h-screen w-full relative bg-bg text-fg">
             {/* Ambient gradient wash — tinted with the active theme's primary/accent */}
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_color-mix(in_oklab,var(--dms-primary)_15%,transparent),_transparent_55%),radial-gradient(ellipse_at_bottom_right,_color-mix(in_oklab,var(--dms-accent)_12%,transparent),_transparent_50%)]" />
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,color-mix(in_oklab,var(--dms-primary)_15%,transparent),transparent_55%),radial-gradient(ellipse_at_bottom_right,color-mix(in_oklab,var(--dms-accent)_12%,transparent),transparent_50%)]" />
 
             {/* Nautical chart lines */}
             <svg
@@ -73,7 +73,7 @@ function PageShell({ children }: { children: React.ReactNode }) {
             </svg>
 
             {/* Top bar */}
-            <header className="sticky top-0 z-20 backdrop-blur-sm flex items-center justify-between px-8 md:px-14 py-5 border-b border-white/10 bg-sidebar-bg/90">
+            <header className="sticky top-0 z-20 backdrop-blur-sm flex items-center justify-between px-8 md:px-14 py-5 border-b border-border bg-topnav-bg/90">
                 <div className="flex items-center gap-3">
                     <img
                         src={NISSEN_LOGO}
@@ -81,7 +81,7 @@ function PageShell({ children }: { children: React.ReactNode }) {
                         className="h-12 w-auto drop-shadow-md"
                     />
                     <div>
-                        <div className="text-sidebar-fg font-bold tracking-[0.22em] text-sm">
+                        <div className="text-fg font-bold tracking-[0.22em] text-sm">
                             NISSEN DMS
                         </div>
                         <div className="text-primary text-[10px] tracking-[0.2em] font-medium">
@@ -90,7 +90,7 @@ function PageShell({ children }: { children: React.ReactNode }) {
                     </div>
                 </div>
 
-                <div className="hidden sm:flex items-center gap-2 text-[11px] tracking-[0.15em] text-sidebar-muted font-medium">
+                <div className="hidden sm:flex items-center gap-2 text-[11px] tracking-[0.15em] text-muted font-medium">
                     <span className="relative flex h-2 w-2">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-60" />
                         <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
@@ -118,12 +118,12 @@ function FeatureCard({
     copy: string;
 }) {
     return (
-        <div className="bg-white/5 backdrop-blur-sm rounded-xl border border-white/10 shadow-sm px-4 py-4 hover:bg-white/10 hover:border-primary/30 transition">
+        <div className="dms-card dms-card-hover rounded-xl px-4 py-4 transition">
             <div className="w-8 h-8 rounded-md bg-primary/20 text-primary flex items-center justify-center mb-3">
                 {icon}
             </div>
             <div className="text-sm font-semibold text-primary mb-1">{title}</div>
-            <div className="text-xs text-sidebar-muted leading-relaxed">{copy}</div>
+            <div className="text-xs text-muted leading-relaxed">{copy}</div>
         </div>
     );
 }
@@ -145,14 +145,14 @@ function StatusRow({
 }) {
     return (
         <div
-            className={`flex items-center justify-between px-5 py-4 ${!last ? "border-b border-white/10" : ""
+            className={`flex items-center justify-between px-5 py-4 ${!last ? "border-b border-border" : ""
                 }`}
         >
             <div className="flex items-start gap-3">
                 <span className={`w-2 h-2 rounded-full mt-1.5 inline-block ${dotColor}`} />
                 <div>
                     <div className="text-sm font-semibold text-primary">{title}</div>
-                    <div className="text-xs text-sidebar-muted">{subtitle}</div>
+                    <div className="text-xs text-muted">{subtitle}</div>
                 </div>
             </div>
             <div className={`text-xs font-bold tracking-wide ${statusColor}`}>
@@ -165,12 +165,12 @@ function StatusRow({
 function CardFooter() {
     return (
         <>
-            <div className="flex items-center justify-center gap-1.5 mt-6 text-[10px] tracking-[0.1em] text-sidebar-muted">
+            <div className="flex items-center justify-center gap-1.5 mt-6 text-[10px] tracking-[0.1em] text-muted">
                 <ShieldCheck className="w-3.5 h-3.5 text-primary" />
                 256-BIT TLS ENCRYPTED CONNECTION
             </div>
 
-            <div className="text-center mt-3 text-[10px] tracking-[0.1em] text-sidebar-muted">
+            <div className="text-center mt-3 text-[10px] tracking-[0.1em] text-muted">
                 REGISTRY SYNCED · 25 VESSELS · © 2026 VESSEL DMS
             </div>
         </>
@@ -203,13 +203,13 @@ function SignedOutView({ onSignBackIn }: { onSignBackIn: () => void }) {
                         NISSEN KAIUN SINGAPORE FLEET
                     </div>
 
-                    <h1 className="font-serif text-5xl md:text-[3.75rem] leading-[1.05] text-sidebar-fg mb-6">
+                    <h1 className="font-serif text-5xl md:text-[3.75rem] leading-[1.05] text-fg mb-6">
                         Premium global shipping,
                         <br />
                         <span className="italic text-primary">managed locally.</span>
                     </h1>
 
-                    <p className="text-sidebar-muted text-base leading-relaxed max-w-lg mb-10">
+                    <p className="text-muted text-base leading-relaxed max-w-lg mb-10">
                         Nissen Kaiun Singapore oversees the technical management, crewing,
                         and compliance of a high-specification global fleet. Operating
                         state-of-the-art bulkers, eco-friendly container ships, and advanced
@@ -237,13 +237,13 @@ function SignedOutView({ onSignBackIn }: { onSignBackIn: () => void }) {
                     </div>
 
                     {/* Status panel */}
-                    <div className="bg-white/5 backdrop-blur-sm rounded-xl border border-white/10 shadow-sm max-w-xl overflow-hidden">
-                        <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
-                            <div className="flex items-center gap-2 text-[11px] tracking-[0.15em] font-semibold text-sidebar-muted">
+                    <div className="dms-card max-w-xl overflow-hidden">
+                        <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+                            <div className="flex items-center gap-2 text-[11px] tracking-[0.15em] font-semibold text-muted">
                                 <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" />
                                 SINGAPORE MANAGED VESSELS
                             </div>
-                            <div className="text-[11px] tracking-[0.1em] text-sidebar-muted">
+                            <div className="text-[11px] tracking-[0.1em] text-muted">
                                 ACTIVE STATUS
                             </div>
                         </div>
@@ -273,23 +273,23 @@ function SignedOutView({ onSignBackIn }: { onSignBackIn: () => void }) {
                         strokeWidth={1}
                     />
 
-                    <div className="bg-white/5 backdrop-blur-md rounded-2xl shadow-xl shadow-black/30 border border-white/10 p-8 md:p-9">
-                        <h2 className="font-serif text-3xl text-sidebar-fg mb-2 font-semibold">
+                    <div className="dms-card rounded-2xl p-8 md:p-9">
+                        <h2 className="font-serif text-3xl text-fg mb-2 font-semibold">
                             Signed Out
                         </h2>
-                        <p className="text-[11px] tracking-[0.12em] text-sidebar-muted font-medium mb-7">
+                        <p className="text-[11px] tracking-[0.12em] text-muted font-medium mb-7">
                             YOUR SESSION WAS SECURELY CLOSED
                         </p>
 
                         <div className="space-y-4">
-                            <p className="text-sm text-sidebar-muted leading-relaxed">
+                            <p className="text-sm text-muted leading-relaxed">
                                 Thank you for using the Vessel Document Management System.
                                 You have been successfully signed out of your account.
                             </p>
 
                             <button
                                 onClick={onSignBackIn}
-                                className="w-full py-3.5 rounded-lg bg-primary hover:bg-primary-hover text-primary-fg text-sm font-semibold flex items-center justify-center gap-2 shadow-md shadow-primary/30 hover:shadow-lg active:scale-[0.99] transition cursor-pointer"
+                                className="dms-btn-primary w-full py-3.5 text-sm font-semibold flex items-center justify-center gap-2 active:scale-[0.99] transition cursor-pointer"
                             >
                                 <LogIn className="w-4 h-4" />
                                 Back to Login
@@ -370,7 +370,7 @@ function LoginView({ authError }: { authError?: string | null }) {
                         VESSEL DOCUMENT MANAGEMENT SYSTEM
                     </div>
 
-                    <h1 className="font-serif text-5xl md:text-[3.75rem] leading-[1.05] text-sidebar-fg mb-6">
+                    <h1 className="font-serif text-5xl md:text-[3.75rem] leading-[1.05] text-fg mb-6">
                         Every certificate,
                         <br />
                         <span className="italic text-primary">every vessel,</span> in one
@@ -378,7 +378,7 @@ function LoginView({ authError }: { authError?: string | null }) {
                         place.
                     </h1>
 
-                    <p className="text-sidebar-muted text-base leading-relaxed max-w-lg mb-10">
+                    <p className="text-muted text-base leading-relaxed max-w-lg mb-10">
                         Centralize certificates, survey reports, and compliance records
                         across the fleet — with automatic renewal alerts and a full audit
                         trail for every document, on every hull.
@@ -404,13 +404,13 @@ function LoginView({ authError }: { authError?: string | null }) {
                     </div>
 
                     {/* Status panel */}
-                    <div className="bg-white/5 backdrop-blur-sm rounded-xl border border-white/10 shadow-sm max-w-xl overflow-hidden">
-                        <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
-                            <div className="flex items-center gap-2 text-[11px] tracking-[0.15em] font-semibold text-sidebar-muted">
+                    <div className="dms-card max-w-xl overflow-hidden">
+                        <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+                            <div className="flex items-center gap-2 text-[11px] tracking-[0.15em] font-semibold text-muted">
                                 <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" />
                                 DOCUMENT &amp; COMPLIANCE STATUS
                             </div>
-                            <div className="text-[11px] tracking-[0.1em] text-sidebar-muted">
+                            <div className="text-[11px] tracking-[0.1em] text-muted">
                                 REGISTRY SYNCED · 12S AGO
                             </div>
                         </div>
@@ -440,11 +440,11 @@ function LoginView({ authError }: { authError?: string | null }) {
                         strokeWidth={1}
                     />
 
-                    <div className="bg-white/5 backdrop-blur-md rounded-2xl shadow-xl shadow-black/30 border border-white/10 p-8 md:p-9">
-                        <h2 className="font-serif text-3xl text-sidebar-fg mb-2">
+                    <div className="dms-card rounded-2xl p-8 md:p-9">
+                        <h2 className="font-serif text-3xl text-fg mb-2">
                             Welcome Back
                         </h2>
-                        <p className="text-[11px] tracking-[0.12em] text-sidebar-muted font-medium mb-7">
+                        <p className="text-[11px] tracking-[0.12em] text-muted font-medium mb-7">
                             SIGN IN TO ACCESS THE DOCUMENT REGISTRY
                         </p>
 
@@ -452,12 +452,12 @@ function LoginView({ authError }: { authError?: string | null }) {
                         <div className="mb-1">
                             <label
                                 htmlFor="work-email"
-                                className="block text-[10px] tracking-[0.15em] font-semibold text-sidebar-muted mb-2"
+                                className="block text-[10px] tracking-[0.15em] font-semibold text-muted mb-2"
                             >
                                 WORK EMAIL
                             </label>
                             <div className="relative">
-                                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-sidebar-muted" />
+                                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
                                 <input
                                     id="work-email"
                                     type="email"
@@ -465,7 +465,7 @@ function LoginView({ authError }: { authError?: string | null }) {
                                     onChange={(e) => setEmail(e.target.value)}
                                     onKeyDown={(e) => e.key === "Enter" && void handleContinue()}
                                     placeholder="name@company.com"
-                                    className="w-full pl-10 pr-4 py-3 rounded-lg border border-white/10 bg-white/5 text-sidebar-fg placeholder-sidebar-muted text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition"
+                                    className="dms-input w-full pl-10 pr-4 py-3 text-fg placeholder-subtle text-sm"
                                 />
                             </div>
                         </div>
@@ -480,7 +480,7 @@ function LoginView({ authError }: { authError?: string | null }) {
                             type="button"
                             onClick={() => void handleContinue()}
                             disabled={loading || (inProgress as string) === "login"}
-                            className="w-full mt-6 flex items-center gap-3 px-5 py-3.5 rounded-lg bg-primary hover:bg-primary-hover shadow-md shadow-primary/30 hover:shadow-lg active:scale-[0.99] transition disabled:opacity-60 disabled:cursor-not-allowed"
+                            className="dms-btn-primary w-full mt-6 flex items-center gap-3 px-5 py-3.5 active:scale-[0.99] transition disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                             <MicrosoftIcon />
                             <span className="flex-1">

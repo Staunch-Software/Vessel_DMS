@@ -34,6 +34,8 @@ export const TOKEN_KEYS = [
   "sidebarFg",
   "sidebarMuted",
   "sidebarActive",
+  "sidebarHover",
+  "sidebarIcon",
   "sidebarBorder",
   // Top navigation
   "topnavBg",
@@ -57,6 +59,11 @@ export const TOKEN_KEYS = [
   "focusRing",
   "scrollbar",
   "scrollbarHover",
+  // Dashboard accents
+  "statVessels",
+  "statMainFolders",
+  "statDocuments",
+  "statMonthly",
 ] as const;
 
 export type TokenKey = (typeof TOKEN_KEYS)[number];

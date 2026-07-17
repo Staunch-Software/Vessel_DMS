@@ -22,7 +22,7 @@ export function ThemeSettings() {
         </p>
       </header>
 
-      <div className="flex-1 overflow-y-auto bg-bg px-8 py-6">
+      <div className="dms-page-bg flex-1 overflow-y-auto px-8 py-6">
         <div className="mx-auto max-w-5xl space-y-8">
           {/* ---------------------------------------------------------- Mode */}
           <section>

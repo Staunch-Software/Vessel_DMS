@@ -114,8 +114,13 @@ export interface SearchResult {
   path: string;
 }
 
-export async function search(q: string): Promise<SearchResult[]> {
-  return (await api.get("/search", { params: { q } })).data;
+export async function search(
+  q: string,
+  vesselId?: string | null
+): Promise<SearchResult[]> {
+  return (
+    await api.get("/search", { params: { q, vessel_id: vesselId || undefined } })
+  ).data;
 }
 
 export async function deleteFile(fileId: string): Promise<void> {

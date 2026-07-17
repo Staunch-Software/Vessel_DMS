@@ -11,7 +11,7 @@ export function VesselSwitcher({
   onSelect: (name: string | null) => void;
 }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-border bg-surface pl-2.5 pr-1">
+    <div className="dms-input flex items-center gap-2 rounded-lg pl-2.5 pr-1">
       <Ship className="h-4 w-4 text-primary" />
       <select
         value={selected ?? ""}

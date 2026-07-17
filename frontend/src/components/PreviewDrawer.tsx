@@ -16,7 +16,7 @@ export function PreviewDrawer({
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-fg/40" onClick={onClose}>
       <div
-        className="flex h-full w-full max-w-3xl flex-col bg-surface shadow-2xl"
+        className="dms-card flex h-full w-full max-w-3xl flex-col rounded-none border-l border-border bg-surface shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center gap-3 border-b border-border px-5 py-3.5">
@@ -76,7 +76,7 @@ export function PreviewDrawer({
               <a
                 href={url}
                 download={file.name}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-fg transition hover:bg-primary-hover"
+                className="dms-btn-primary inline-flex items-center gap-2 px-4 py-2 text-sm font-medium"
               >
                 <Download className="h-4 w-4" />
                 Download to view

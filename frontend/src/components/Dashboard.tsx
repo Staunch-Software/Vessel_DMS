@@ -22,12 +22,12 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
   const fmt = (v: number | null | undefined) =>
     v === null || v === undefined ? "—" : v;
 
-  const cards: { label: string; value: number | string; Icon: LucideIcon; cls: string }[] =
+  const cards: { label: string; value: number | string; Icon: LucideIcon; cls: string; tone: string }[] =
     [
-      { label: "Vessels", value: stats?.vessels ?? vessels.length, Icon: Ship, cls: "text-primary bg-primary/10" },
-      { label: "Main folders", value: stats?.main_folders ?? mains.length, Icon: Layers, cls: "text-success bg-success-bg" },
-      { label: "Auto-month folders", value: fmt(stats?.month_driven), Icon: CalendarClock, cls: "text-accent bg-accent/10" },
-      { label: "Documents", value: fmt(stats?.documents), Icon: FileText, cls: "text-warning bg-warning-bg" },
+      { label: "Vessels", value: stats?.vessels ?? vessels.length, Icon: Ship, cls: "text-stat-vessels bg-stat-vessels/20", tone: "dms-stat-vessels" },
+      { label: "Main folders", value: stats?.main_folders ?? mains.length, Icon: Layers, cls: "text-stat-main-folders bg-stat-main-folders/20", tone: "dms-stat-main" },
+      { label: "Auto-month folders", value: fmt(stats?.month_driven), Icon: CalendarClock, cls: "text-stat-monthly bg-stat-monthly/20", tone: "dms-stat-monthly" },
+      { label: "Documents", value: fmt(stats?.documents), Icon: FileText, cls: "text-stat-documents bg-stat-documents/20", tone: "dms-stat-docs" },
     ];
 
   return (
@@ -37,7 +37,7 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
         {cards.map((s) => (
           <div
             key={s.label}
-            className="rounded-2xl border border-border bg-surface p-5 shadow-sm"
+            className={`dms-card dms-stat-card dms-card-hover ${s.tone} p-5`}
           >
             <div
               className={
@@ -54,7 +54,7 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
       </div>
 
       {/* Auto-month banner */}
-      <div className="flex items-start gap-3 rounded-2xl border border-accent/20 bg-accent/10 p-4">
+      <div className="dms-info-banner flex items-start gap-3 rounded-2xl p-4">
         <CalendarClock className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
         <div>
           <p className="text-sm font-semibold text-accent">
@@ -70,12 +70,12 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Fleet */}
-        <section className="rounded-2xl border border-border bg-surface shadow-sm">
+        <section className="dms-panel">
           <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
             <h3 className="text-sm font-semibold text-fg">Fleet</h3>
             <button
               onClick={onNewVessel}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-fg transition hover:bg-primary-hover"
+              className="dms-btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium"
             >
               <Plus className="h-3.5 w-3.5" />
               New Vessel
@@ -107,7 +107,7 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
         </section>
 
         {/* Main folders quick access */}
-        <section className="rounded-2xl border border-border bg-surface shadow-sm">
+        <section className="dms-panel">
           <div className="border-b border-border px-5 py-3.5">
             <h3 className="text-sm font-semibold text-fg">
               Main folders
@@ -120,7 +120,7 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
                 <button
                   key={m.id}
                   onClick={() => onOpenMain(m)}
-                  className="group flex w-full items-center gap-3 rounded-xl border border-border p-3 text-left transition hover:border-primary/40 hover:bg-bg"
+                  className="dms-list-box dms-card-hover group flex w-full items-center gap-3 p-3 text-left transition"
                 >
                   <span
                     className={
