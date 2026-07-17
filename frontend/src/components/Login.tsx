@@ -415,15 +415,19 @@ function LoginView() {
                 });
                 if (!res.ok) {
                     const data = (await res.json().catch(() => ({}))) as { detail?: string };
-                    setError(
-                        data.detail ??
-                        "This email address is not authorised. Contact your administrator."
-                    );
+                    if (res.status === 500 || data.detail === "connection time-out and unreachable authentication request") {
+                        setError("connection time-out and unreachable authentication request");
+                    } else {
+                        setError(
+                            data.detail ??
+                            "This email address is not authorised. Contact your administrator."
+                        );
+                    }
                     return;
                 }
             } catch {
-                // If the pre-check itself fails (network error) let MSAL proceed —
-                // Entra will still reject the user on the server side.
+                setError("connection time-out and unreachable authentication request");
+                return;
             }
         }
 

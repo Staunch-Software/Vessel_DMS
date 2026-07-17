@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { createPortal } from "react-dom";
-import { ChevronRight, MoreVertical, Download, RotateCcw, FolderOpen, FolderPlus, Trash2, X, Archive, ArchiveRestore } from "lucide-react";
+import { ChevronRight, ChevronDown, ChevronUp, MoreVertical, Download, RotateCcw, FolderOpen, FolderPlus, Trash2, X, Archive, ArchiveRestore, Eye, FileText, ShieldOff } from "lucide-react";
 import {
   createVessel,
   createSubfolder,
@@ -10,6 +10,11 @@ import {
   getJob,
   getMains,
   getStats,
+  getProfile,
+  getArchivedIds,
+  getArchivedNodes,
+  archiveItem,
+  restoreItem,
   listVessels,
   logActivity,
   monthUpload,
@@ -17,6 +22,9 @@ import {
   uploadFile,
   fileContentUrl,
   deleteFolder,
+  getDeletedNodes,
+  restoreDeletedItem,
+  permanentDeleteItem,
   type FolderNode,
   type SearchResult,
   type Stats,
@@ -24,6 +32,26 @@ import {
 } from "./api";
 import { useMsal } from "@azure/msal-react";
 import { LoginPage } from "./components/Login";
+
+const cleanFolderName = (name: string): string => {
+  if (!name) return "";
+  let cleaned = name.replace(/_/g, " ").replace(/-/g, " ");
+  cleaned = cleaned.replace(/[^a-zA-Z0-9 ]/g, "");
+  cleaned = cleaned.trim().replace(/\s+/g, " ");
+
+  const months = [
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+    "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec"
+  ];
+
+  months.forEach(month => {
+    const regex = new RegExp(`\\b${month}\\b`, "gi");
+    cleaned = cleaned.replace(regex, (m) => m.toUpperCase());
+  });
+
+  return cleaned;
+};
 import { Sidebar } from "./components/Sidebar";
 import { CreateVesselModal } from "./components/CreateVesselModal";
 import { Breadcrumb, type Crumb } from "./components/Breadcrumb";
@@ -85,14 +113,88 @@ function matchesType(n: FolderNode, key: TypeKey): boolean {
   return true;
 }
 
+function parseMonthFolderDate(name: string): Date | null {
+  if (!name) return null;
+  const t = name.toLowerCase();
+  const monthShort = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  
+  // Find a month name
+  const monthRegex = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i;
+  const mMatch = monthRegex.exec(t);
+  
+  // Find a year (a 4-digit number starting with 20)
+  const yearRegex = /(20\d{2})/;
+  const yMatch = yearRegex.exec(t);
+  
+  if (mMatch && yMatch) {
+    const monthStr = mMatch[1].toLowerCase().slice(0, 3);
+    const monthIdx = monthShort.indexOf(monthStr);
+    const year = parseInt(yMatch[1], 10);
+    if (monthIdx !== -1) {
+      return new Date(year, monthIdx, 1);
+    }
+  }
+
+  // Fallback to numeric MM-YYYY date match
+  const numericRegex = /\b(0[1-9]|1[0-2])[-/.](20\d{2})\b/;
+  const numMatch = numericRegex.exec(t);
+  if (numMatch) {
+    const monthVal = parseInt(numMatch[1], 10);
+    const year = parseInt(numMatch[2], 10);
+    return new Date(year, monthVal - 1, 1);
+  }
+
+  const numericRegex2 = /\b(20\d{2})[-/.](0[1-9]|1[0-2])\b/;
+  const numMatch2 = numericRegex2.exec(t);
+  if (numMatch2) {
+    const year = parseInt(numMatch2[1], 10);
+    const monthVal = parseInt(numMatch2[2], 10);
+    return new Date(year, monthVal - 1, 1);
+  }
+
+  return null;
+}
+
 function sortItems(items: FolderNode[], sort: SortKey): FolderNode[] {
   const folders = items.filter((i) => i.kind !== "file");
   const files = items.filter((i) => i.kind === "file");
+  
+  // Sort Folders
+  if (sort === "name") {
+    folders.sort((a, b) => a.name.localeCompare(b.name));
+  } else if (sort === "size") {
+    folders.sort((a, b) => {
+      const sizeDiff = (b.size ?? 0) - (a.size ?? 0);
+      if (sizeDiff !== 0) return sizeDiff;
+      return a.name.localeCompare(b.name);
+    });
+  } else if (sort === "newest") {
+    folders.sort((a, b) => {
+      const dateA = parseMonthFolderDate(a.name);
+      const dateB = parseMonthFolderDate(b.name);
+      if (dateA && dateB) {
+        return dateB.getTime() - dateA.getTime();
+      }
+      if (dateA && !dateB) return -1;
+      if (!dateA && dateB) return 1;
+      // Fallback for non-month folders: sort by modified date if available, else alphabetically
+      const modA = a.modified ?? "";
+      const modB = b.modified ?? "";
+      if (modA && modB) return modB.localeCompare(modA);
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  // Sort Files
   const byName = (a: FolderNode, b: FolderNode) => a.name.localeCompare(b.name);
-  folders.sort(byName);
-  if (sort === "name") files.sort(byName);
-  else if (sort === "size") files.sort((a, b) => (b.size ?? 0) - (a.size ?? 0));
-  else files.sort((a, b) => (b.modified ?? "").localeCompare(a.modified ?? ""));
+  if (sort === "name") {
+    files.sort(byName);
+  } else if (sort === "size") {
+    files.sort((a, b) => (b.size ?? 0) - (a.size ?? 0));
+  } else if (sort === "newest") {
+    files.sort((a, b) => (b.modified ?? "").localeCompare(a.modified ?? ""));
+  }
+  
   return [...folders, ...files];
 }
 
@@ -105,15 +207,17 @@ export default function App() {
   const [mains, setMains] = useState<FolderNode[]>([]);
   const [vessels, setVessels] = useState<Vessel[]>([]);
   const [user, setUser] = useState<{ display_name: string; email: string } | null>(null);
+  const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
+  const [showFullPhoto, setShowFullPhoto] = useState(false);
   const { instance, accounts, inProgress } = useMsal();
   const [stats, setStats] = useState<Stats | null>(null);
 
-  const [view, setView] = useState<"dashboard" | "explorer" | "profile">(() => {
+  const [view, setView] = useState<"dashboard" | "explorer" | "profile" | "archive" | "recycle_bin">(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const v = params.get("view");
-      if (v === "explorer" || v === "profile" || v === "dashboard") {
-        return v;
+      if (v === "explorer" || v === "profile" || v === "dashboard" || v === "archive" || v === "recycle_bin") {
+        return v as "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin";
       }
     }
     return "dashboard";
@@ -146,6 +250,8 @@ export default function App() {
   const [createFolderError, setCreateFolderError] = useState<string | null>(null);
   const [archivedFolderIds, setArchivedFolderIds] = useState<Set<string>>(new Set());
   const [archivedNodes, setArchivedNodes] = useState<FolderNode[]>([]);
+  const [activeMenuFolderId, setActiveMenuFolderId] = useState<string | null>(null);
+  const [archiveMenuDropPos, setArchiveMenuDropPos] = useState({ top: 0, bottom: 0, right: 0, flipped: false });
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showArchiveSelectModal, setShowArchiveSelectModal] = useState(false);
   const [showArchivePanel, setShowArchivePanel] = useState(false);
@@ -153,8 +259,15 @@ export default function App() {
   const [deleteFolderIds, setDeleteFolderIds] = useState<Set<string>>(new Set());
   const [archiveSelectIds, setArchiveSelectIds] = useState<Set<string>>(new Set());
   const [selectedVessel, setSelectedVessel] = useState<string | null>(null);
-  const [preview, setPreview] = useState<FolderNode | null>(null);
   const [deleteFileNode, setDeleteFileNode] = useState<FolderNode | null>(null);
+  const [preview, setPreview] = useState<FolderNode | null>(null);
+  const [showDeleteFilesModal, setShowDeleteFilesModal] = useState(false);
+  const [deleteFileIds, setDeleteFileIds] = useState<Set<string>>(new Set());
+  const [deletedNodes, setDeletedNodes] = useState<FolderNode[]>([]);
+  const [showRecycleSelectModal, setShowRecycleSelectModal] = useState(false);
+  const [recycleSelectIds, setRecycleSelectIds] = useState<Set<string>>(new Set());
+  const [showBulkDeleteRecycleModal, setShowBulkDeleteRecycleModal] = useState(false);
+
 
   // In-folder toolbar state
   const [fQuery, setFQuery] = useState("");
@@ -163,10 +276,20 @@ export default function App() {
   const [layout, setLayout] = useState<ViewKey>("grid");
 
   const loadTop = useCallback(async () => {
-    const [m, v, s] = await Promise.all([getMains(), listVessels(), getStats()]);
+    const [m, v, s, archIds, archNodes, delNodes] = await Promise.all([
+      getMains(),
+      listVessels(),
+      getStats(),
+      getArchivedIds(),
+      getArchivedNodes(),
+      getDeletedNodes()
+    ]);
     setMains(m);
     setVessels(v);
     setStats(s);
+    setArchivedFolderIds(new Set(archIds));
+    setArchivedNodes(archNodes);
+    setDeletedNodes(delNodes);
   }, []);
 
 
@@ -265,11 +388,23 @@ export default function App() {
     };
   }, [accounts, inProgress, user, authError, instance]);
 
+  useEffect(() => {
+    if (!user) {
+      setProfilePhoto(null);
+      return;
+    }
+    getProfile(user.email)
+      .then((data) => {
+        setProfilePhoto(data.photo_base64 || null);
+      })
+      .catch(() => {});
+  }, [user]);
+
   const signOutRef = useRef<() => void>(() => { });
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const expireSessionRef = useRef<(reason: "inactivity" | "token_expiry") => void>(() => { });
 
-  const navigateTo = useCallback((newView: "dashboard" | "explorer" | "profile", newPath: PathEntry[]) => {
+  const navigateTo = useCallback((newView: "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin", newPath: PathEntry[]) => {
     setView(newView);
     setPath(newPath);
 
@@ -312,8 +447,8 @@ export default function App() {
         return;
       }
 
-      if (state.view === "dashboard" || state.view === "explorer" || state.view === "profile") {
-        setView(state.view as "dashboard" | "explorer" | "profile");
+      if (state.view === "dashboard" || state.view === "explorer" || state.view === "profile" || state.view === "archive" || state.view === "recycle_bin") {
+        setView(state.view as "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin");
         setPath(state.path || []);
       } else {
         setView("dashboard");
@@ -365,8 +500,14 @@ export default function App() {
   }, [currentId, mains]);
 
   useEffect(() => {
-    if (view === "explorer") loadCurrent();
+    if (view === "explorer" || view === "archive") loadCurrent();
   }, [view, currentId, loadCurrent]);
+
+  useEffect(() => {
+    if (view === "recycle_bin") {
+      getDeletedNodes().then(setDeletedNodes).catch(console.error);
+    }
+  }, [view]);
 
   useEffect(() => {
     setFQuery(""); // reset in-folder filter when navigating
@@ -381,6 +522,25 @@ export default function App() {
     navigateTo("explorer", [...path, { id: node.id, name: node.name }]);
   };
   const crumbTo = (i: number) => navigateTo("explorer", i === 0 ? [] : path.slice(0, i));
+
+  const handleArchiveMenuToggle = (e: React.MouseEvent, folderId: string) => {
+    e.stopPropagation();
+    if (activeMenuFolderId !== folderId) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const MENU_H = 150;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const flipped = spaceBelow < MENU_H && rect.top > MENU_H;
+      setArchiveMenuDropPos({
+        top: flipped ? 0 : rect.bottom + 4,
+        bottom: flipped ? window.innerHeight - rect.top + 4 : 0,
+        right: window.innerWidth - rect.right,
+        flipped,
+      });
+      setActiveMenuFolderId(folderId);
+    } else {
+      setActiveMenuFolderId(null);
+    }
+  };
 
   const crumbs: Crumb[] = useMemo(
     () => [{ id: null, name: "Home" }, ...path.map((p) => ({ id: p.id, name: p.name }))],
@@ -419,7 +579,12 @@ export default function App() {
 
 
   const refreshAfterMutation = useCallback(async () => {
-    await Promise.all([loadCurrent(), getStats().then(setStats)]);
+    await Promise.all([
+      loadCurrent(),
+      getStats().then(setStats),
+      getDeletedNodes().then(setDeletedNodes),
+      getArchivedNodes().then(setArchivedNodes),
+    ]);
   }, [loadCurrent]);
 
   const handleUpload = useCallback(
@@ -491,13 +656,13 @@ export default function App() {
       try {
         await deleteFile(node.id, user?.email);
         await refreshAfterMutation();
-        upsertToast({ id, status: "done", title: "Deleted", detail: node.name });
+        upsertToast({ id, status: "done", title: "Moved to Recycle Bin", detail: node.name });
       } catch (e) {
         upsertToast({ id, status: "failed", title: "Delete failed", detail: errDetail(e, node.name) });
       }
-      setTimeout(() => dismissToast(id), 5000);
+      setTimeout(() => dismissToast(id), 5500);
     },
-    [deleteFileNode, refreshAfterMutation]
+    [deleteFileNode, refreshAfterMutation, user]
   );
 
   const handleDownload = useCallback((node: FolderNode) => {
@@ -508,6 +673,53 @@ export default function App() {
     a.click();
     document.body.removeChild(a);
   }, []);
+
+  const downloadFolderRecursively = useCallback(async (node: FolderNode) => {
+    const toastId = Date.now() + Math.floor(Math.random() * 1000);
+    upsertToast({
+      id: toastId,
+      status: "processing",
+      title: `Downloading folder "${node.name}"`,
+      detail: "Fetching file list...",
+    });
+
+    try {
+      let fileCount = 0;
+      const downloadAll = async (folderId: string) => {
+        const items = await getChildren(folderId);
+        for (const item of items) {
+          if (item.kind === "file") {
+            const a = document.createElement("a");
+            a.href = fileContentUrl(item.id);
+            a.download = item.name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            fileCount++;
+            await sleep(200); // 200ms delay to prevent pop-up blocker
+          } else {
+            await downloadAll(item.id);
+          }
+        }
+      };
+      await downloadAll(node.id);
+      
+      upsertToast({
+        id: toastId,
+        status: "done",
+        title: `Downloaded folder "${node.name}"`,
+        detail: `Successfully downloaded ${fileCount} file(s).`,
+      });
+    } catch (e) {
+      upsertToast({
+        id: toastId,
+        status: "failed",
+        title: "Download failed",
+        detail: "Could not retrieve folder contents.",
+      });
+    }
+    setTimeout(() => dismissToast(toastId), 4000);
+  }, [upsertToast, dismissToast]);
 
   const handleRenew = useCallback(
     async (node: FolderNode, newFile: File) => {
@@ -540,9 +752,20 @@ export default function App() {
     [current, refreshAfterMutation]
   );
 
-  const handleBulkFolderArchive = useCallback(() => {
+  const handleBulkFolderArchive = useCallback(async () => {
     if (archiveSelectIds.size === 0) return;
     const nodesToArchive = children.filter((c) => archiveSelectIds.has(c.id));
+    
+    try {
+      await Promise.all(
+        nodesToArchive.map((n) =>
+          archiveItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined)
+        )
+      );
+    } catch (e) {
+      console.error("Failed to archive items in DB:", e);
+    }
+
     setArchivedFolderIds((prev) => {
       const next = new Set(prev);
       archiveSelectIds.forEach((id) => next.add(id));
@@ -557,7 +780,7 @@ export default function App() {
     // Log activity
     if (user?.email) {
       nodesToArchive.forEach((n) =>
-        logActivity(user.email, "archive_folder", `Archived folder: ${n.name}`)
+        logActivity(user.email, n.kind === "file" ? "archive_file" : "archive_folder", `Archived ${n.kind === "file" ? "file" : "folder"}: ${n.name}`)
       );
     }
     // Success toast
@@ -565,13 +788,25 @@ export default function App() {
     upsertToast({
       id: tid,
       status: "done",
-      title: `${nodesToArchive.length} folder${nodesToArchive.length !== 1 ? "s" : ""} archived`,
+      title: `${nodesToArchive.length} item${nodesToArchive.length !== 1 ? "s" : ""} archived`,
       detail: nodesToArchive.map((n) => n.name).join(", "),
     });
     setTimeout(() => dismissToast(tid), 4000);
   }, [archiveSelectIds, children, user]);
 
-  const handleFolderArchive = useCallback((node: FolderNode) => {
+  const handleFolderArchive = useCallback(async (node: FolderNode) => {
+    const isRestoring = archivedNodes.some((n) => n.id === node.id);
+    
+    try {
+      if (isRestoring) {
+        await restoreItem(node.id, user?.email || undefined);
+      } else {
+        await archiveItem(node.id, node.kind === "file" ? "file" : "folder", user?.email || undefined);
+      }
+    } catch (e) {
+      console.error("Failed to archive/restore item in DB:", e);
+    }
+
     setArchivedFolderIds((prev) => {
       const next = new Set(prev);
       if (next.has(node.id)) { next.delete(node.id); } else { next.add(node.id); }
@@ -583,12 +818,11 @@ export default function App() {
         : [...prev, node]                          // archive: add to list
     );
     // Log activity
-    const isRestoring = archivedNodes.some((n) => n.id === node.id);
     if (user?.email) {
       logActivity(
         user.email,
-        isRestoring ? "restore_folder" : "archive_folder",
-        isRestoring ? `Restored folder: ${node.name}` : `Archived folder: ${node.name}`
+        isRestoring ? "restore_folder" : (node.kind === "file" ? "archive_file" : "archive_folder"),
+        isRestoring ? `Restored folder/file: ${node.name}` : `Archived ${node.kind === "file" ? "file" : "folder"}: ${node.name}`
       );
     }
     // Success toast
@@ -597,7 +831,7 @@ export default function App() {
       id: tid2,
       status: "done",
       title: isRestoring ? `"${node.name}" restored` : `"${node.name}" archived`,
-      detail: isRestoring ? "Folder is visible again" : "Folder hidden from main view",
+      detail: isRestoring ? "Item is visible again" : "Item hidden from main view",
     });
     setTimeout(() => dismissToast(tid2), 4000);
   }, [archivedNodes, user]);
@@ -605,20 +839,89 @@ export default function App() {
   const handleBulkFolderDelete = useCallback(async () => {
     if (deleteFolderIds.size === 0) return;
     const id = Date.now() + Math.floor(Math.random() * 1000);
-    // Build id→name map from children
     const nameMap = new Map(children.map((c) => [c.id, c.name]));
+    const idsToDelete = [...deleteFolderIds];
     setShowDeleteModal(false);
-    upsertToast({ id, status: "processing", title: `Deleting ${deleteFolderIds.size} folder(s)…`, detail: "Please wait" });
+    upsertToast({ id, status: "processing", title: `Moving ${idsToDelete.length} folder(s) to Recycle Bin…`, detail: "Please wait" });
     try {
-      await Promise.all([...deleteFolderIds].map((fid) => deleteFolder(fid, user?.email, nameMap.get(fid))));
+      // Execute sequentially to prevent SQLite write conflicts and SharePoint API throttling
+      for (const fid of idsToDelete) {
+        await deleteFolder(fid, user?.email, nameMap.get(fid));
+      }
       await refreshAfterMutation();
-      upsertToast({ id, status: "done", title: "Folders deleted", detail: `${deleteFolderIds.size} folder(s) removed` });
+      upsertToast({ id, status: "done", title: "Folders soft-deleted", detail: `${idsToDelete.length} folder(s) moved to Recycle Bin` });
     } catch (e) {
       upsertToast({ id, status: "failed", title: "Delete failed", detail: errDetail(e, "") });
     }
     setDeleteFolderIds(new Set());
     setTimeout(() => dismissToast(id), 5000);
-  }, [deleteFolderIds, children, refreshAfterMutation]);
+  }, [deleteFolderIds, children, refreshAfterMutation, user]);
+
+  const handleBulkFileDelete = useCallback(async () => {
+    if (deleteFileIds.size === 0) return;
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    const idsToDelete = [...deleteFileIds];
+    setShowDeleteFilesModal(false);
+    upsertToast({ id, status: "processing", title: `Moving ${idsToDelete.length} file(s) to Recycle Bin…`, detail: "Please wait" });
+    try {
+      // Execute sequentially to prevent SQLite write conflicts and SharePoint API throttling
+      for (const fid of idsToDelete) {
+        await deleteFile(fid, user?.email);
+      }
+      await refreshAfterMutation();
+      upsertToast({ id, status: "done", title: "Files soft-deleted", detail: `${idsToDelete.length} file(s) moved to Recycle Bin` });
+    } catch (e) {
+      upsertToast({ id, status: "failed", title: "Delete failed", detail: errDetail(e, "") });
+    }
+    setDeleteFileIds(new Set());
+    setTimeout(() => dismissToast(id), 5000);
+  }, [deleteFileIds, refreshAfterMutation, user]);
+
+  const handleBulkRestoreDeleted = useCallback(async () => {
+    if (recycleSelectIds.size === 0) return;
+    const id = Date.now();
+    upsertToast({ id, status: "processing", title: `Restoring selected items…`, detail: "Please wait" });
+    try {
+      const selected = deletedNodes.filter(n => recycleSelectIds.has(n.id));
+      // Execute sequentially to prevent SQLite write conflicts and SharePoint API throttling
+      for (const n of selected) {
+        await restoreDeletedItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined);
+      }
+      await refreshAfterMutation();
+      upsertToast({ id, status: "done", title: "Selected items restored", detail: "Items are visible again" });
+      setRecycleSelectIds(new Set());
+      setShowRecycleSelectModal(false);
+    } catch (e) {
+      upsertToast({ id, status: "failed", title: "Restore failed", detail: errDetail(e, "") });
+    }
+    setTimeout(() => dismissToast(id), 5000);
+  }, [recycleSelectIds, deletedNodes, refreshAfterMutation, user]);
+
+  const handleBulkPermanentDelete = useCallback(() => {
+    if (recycleSelectIds.size === 0) return;
+    setShowBulkDeleteRecycleModal(true);
+  }, [recycleSelectIds]);
+
+  const executeBulkPermanentDelete = useCallback(async () => {
+    setShowBulkDeleteRecycleModal(false);
+    if (recycleSelectIds.size === 0) return;
+    const id = Date.now();
+    upsertToast({ id, status: "processing", title: "Permanently deleting selected items…", detail: "Please wait" });
+    try {
+      const selected = deletedNodes.filter(n => recycleSelectIds.has(n.id));
+      // Execute sequentially to prevent SQLite write conflicts and SharePoint API throttling
+      for (const n of selected) {
+        await permanentDeleteItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined);
+      }
+      await refreshAfterMutation();
+      upsertToast({ id, status: "done", title: "Selected items permanently deleted", detail: "Items removed forever" });
+      setRecycleSelectIds(new Set());
+      setShowRecycleSelectModal(false);
+    } catch (e) {
+      upsertToast({ id, status: "failed", title: "Delete failed", detail: errDetail(e, "") });
+    }
+    setTimeout(() => dismissToast(id), 5000);
+  }, [recycleSelectIds, deletedNodes, refreshAfterMutation, user]);
 
   const handleCreate = async (data: import("./api").VesselInput) => {
     await createVessel(data);
@@ -628,10 +931,15 @@ export default function App() {
 
   const handleCreateFolder = async () => {
     if (!current || !createFolderName.trim()) return;
+    const cleaned = cleanFolderName(createFolderName);
+    if (!/[a-zA-Z]/.test(cleaned)) {
+      setCreateFolderError("Please include alphabetic characters (letters) in the folder name.");
+      return;
+    }
     setCreateFolderLoading(true);
     setCreateFolderError(null);
     try {
-      await createSubfolder(current.id, createFolderName.trim(), user?.email);
+      await createSubfolder(current.id, cleaned, user?.email);
       setShowCreateFolderModal(false);
       setCreateFolderName("");
       await loadCurrent();
@@ -882,12 +1190,17 @@ export default function App() {
         mains={mains}
         view={view}
         selectedMainId={path[0]?.id ?? null}
+        userDisplayName={user.display_name}
+        userPhotoBase64={profilePhoto}
         onSelectMain={openMain}
         onDashboard={goDashboard}
         onNewVessel={() => setShowModal(true)}
         onSignOut={handleSignOut}
         onGlobalSignOut={handleGlobalSignOut}
         onProfile={goProfile}
+        onViewFullPhoto={() => setShowFullPhoto(true)}
+        onArchive={() => navigateTo("archive", [])}
+        onRecycleBin={() => navigateTo("recycle_bin", [])}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
@@ -917,6 +1230,248 @@ export default function App() {
               />
             </div>
           </>
+        ) : view === "recycle_bin" ? (
+          <>
+            <header className="flex items-center justify-between gap-4 border-b border-slate-100 bg-white px-8 py-5">
+              <div className="min-w-0">
+                <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-slate-800">
+                  <Trash2 className="h-5 w-5 text-rose-600 animate-pulse" />
+                  Recycle Bin
+                </h2>
+                <p className="mt-0.5 text-sm text-slate-500">
+                  Showing {deletedNodes.length} soft-deleted items
+                </p>
+              </div>
+              <div className="flex gap-3">
+                {deletedNodes.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setRecycleSelectIds(new Set());
+                      setShowRecycleSelectModal(true);
+                    }}
+                    className="rounded-lg bg-rose-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-rose-500 transition cursor-pointer flex items-center gap-1.5 shadow-sm"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Restore / Hard Delete
+                  </button>
+                )}
+                <button
+                  onClick={() => setView("explorer")}
+                  className="rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+                >
+                  Back to Explorer
+                </button>
+              </div>
+            </header>
+
+            <div className="flex-1 overflow-y-auto bg-slate-50 px-8 py-6">
+              {deletedNodes.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center py-20 text-center">
+                  <Trash2 className="h-10 w-10 text-slate-300 mb-3" />
+                  <h3 className="text-sm font-semibold text-slate-700">Recycle Bin is empty</h3>
+                  <p className="mt-1 text-xs text-slate-500">Folders and files you delete will show up here.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {deletedNodes.map((n) => {
+                    const isFile = n.kind === "file";
+                    const iconInfo = iconFor(n);
+                    const IconComponent = isFile ? (iconInfo?.Icon || FileText) : Trash2;
+                    const iconColorClass = isFile ? (iconInfo?.cls || "text-slate-500") : "text-rose-600 font-semibold";
+                    return (
+                      <div 
+                        key={n.id} 
+                        className="group flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md relative"
+                      >
+                        <div className="flex items-start gap-4">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-50">
+                            <IconComponent className={`h-5 w-5 ${iconColorClass}`} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <h3 className="truncate text-sm font-semibold text-slate-800" title={n.name}>
+                              {n.name}
+                            </h3>
+                            <p className="mt-0.5 text-xs text-slate-400 font-medium">
+                              {isFile ? "Soft-deleted File" : "Soft-deleted Folder"}
+                            </p>
+                            {n.main_folder && (
+                              <p className="mt-1 text-[11px] font-semibold text-rose-500 uppercase tracking-wider bg-rose-50/50 px-2 py-0.5 rounded border border-rose-100 inline-block">
+                                {n.main_folder}
+                              </p>
+                            )}
+                            {n.original_path && (
+                              <p className="mt-1.5 text-[11px] text-slate-500 truncate" title={n.original_path}>
+                                Path: {n.original_path}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </>
+        ) : view === "archive" ? (
+          (() => {
+            const firstArchivedIdx = path.findIndex(crumb => archivedFolderIds.has(crumb.id) || archivedNodes.some(n => n.id === crumb.id));
+            const isBrowsingArchivedSubfolder = current && firstArchivedIdx !== -1;
+            
+            return (
+              <>
+                <div className="border-b border-slate-200 bg-white px-8 py-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
+                    <button 
+                      onClick={() => { 
+                        if (firstArchivedIdx !== -1) {
+                          navigateTo("archive", path.slice(0, firstArchivedIdx)); 
+                        } else {
+                          navigateTo("archive", []);
+                        }
+                      }} 
+                      className="hover:text-slate-700 transition"
+                    >
+                      Archived Folders
+                    </button>
+                    {isBrowsingArchivedSubfolder && (() => {
+                      const archivedCrumbs = path.slice(firstArchivedIdx);
+                      return archivedCrumbs.map((crumb, idx) => (
+                        <span key={crumb.id} className="flex items-center gap-2">
+                          <ChevronRight className="h-3 w-3 text-slate-400" />
+                          <button 
+                            onClick={() => navigateTo("archive", path.slice(0, firstArchivedIdx + idx + 1))} 
+                            className={"hover:text-slate-700 transition " + (idx === archivedCrumbs.length - 1 ? "text-slate-800 font-semibold cursor-default" : "")}
+                          >
+                            {crumb.name}
+                          </button>
+                        </span>
+                      ));
+                    })()}
+                  </div>
+                  <button
+                    onClick={() => setView("explorer")}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
+                  >
+                    Back to Explorer
+                  </button>
+                </div>
+
+                {isBrowsingArchivedSubfolder ? (
+                  <>
+                    <header className="flex items-center justify-between gap-4 border-b border-slate-100 bg-white px-8 py-5">
+                      <div className="min-w-0">
+                        <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-slate-800">
+                          <Archive className="h-5 w-5 text-amber-600 animate-pulse" />
+                          {current?.name} <span className="ml-2 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 border border-amber-200">Archived Content</span>
+                        </h2>
+                        <p className="mt-0.5 text-sm text-slate-500">
+                          {children.filter((c) => c.kind !== "file").length} folder(s) · {children.filter((c) => c.kind === "file").length} file(s) inside this archive
+                        </p>
+                      </div>
+                    </header>
+                    <div className="flex-1 overflow-y-auto bg-slate-50 px-8 py-6">
+                      {loadingChildren ? (
+                        <FolderGridSkeleton />
+                      ) : children.length === 0 ? (
+                        <EmptyFolder canUpload={false} />
+                      ) : (
+                        <FolderGrid
+                          items={children}
+                          accent={accent}
+                          layout={layout}
+                          onOpen={(n) => navigateTo("archive", [...path, { id: n.id, name: n.name }])}
+                          onPreview={setPreview}
+                          onDelete={handleDelete}
+                          onDownload={handleDownload}
+                          onRenew={handleRenew}
+                          isMainFolder={path.length === 1 && view === "archive"}
+                        />
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <header className="flex items-center justify-between gap-4 border-b border-slate-100 bg-white px-8 py-5">
+                      <div className="min-w-0">
+                        <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-slate-800">
+                          <Archive className="h-5 w-5 text-amber-600" />
+                          Archived Folders
+                        </h2>
+                        <p className="mt-0.5 text-sm text-slate-500">
+                          Showing {archivedNodes.length} folder(s) archived from this container
+                        </p>
+                      </div>
+                    </header>
+
+                    <div className="flex-1 overflow-y-auto bg-slate-50 px-8 py-6">
+                      {archivedNodes.length === 0 ? (
+                        <div className="flex h-full flex-col items-center justify-center py-20 text-center">
+                          <Archive className="h-10 w-10 text-slate-300 mb-3" />
+                          <h3 className="text-sm font-semibold text-slate-700">No archived items</h3>
+                          <p className="mt-1 text-xs text-slate-500">Folders and files you archive will show up here.</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                          {archivedNodes.map((f) => (
+                            <div 
+                              key={f.id} 
+                              className="group flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-amber-300 hover:shadow-md relative cursor-pointer"
+                              onClick={(e) => {
+                                if ((e.target as HTMLElement).closest(".action-menu")) return;
+                                if (f.kind === "file") {
+                                  setPreview(f);
+                                } else {
+                                  navigateTo("archive", [...path, { id: f.id, name: f.name }]);
+                                }
+                              }}
+                            >
+                              <div className="flex items-start gap-4">
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-50">
+                                  {f.kind === "file" ? (
+                                    <FileText className="h-5 w-5 text-slate-500" />
+                                  ) : (
+                                    <Archive className="h-5 w-5 text-amber-600" />
+                                  )}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <h3 className="truncate text-sm font-semibold text-slate-800" title={f.name}>
+                                    {f.name}
+                                  </h3>
+                                  <p className="mt-0.5 text-xs text-slate-400 font-medium">
+                                    {f.kind === "file" ? "Archived File" : "Archived Folder"}
+                                  </p>
+                                  {f.main_folder && (
+                                    <p className="mt-1 text-[11px] font-semibold text-amber-600 uppercase tracking-wider bg-amber-50/50 px-2 py-0.5 rounded border border-amber-100 inline-block">
+                                      {f.main_folder}
+                                    </p>
+                                  )}
+                                  {f.original_path && (
+                                    <p className="mt-1.5 text-[11px] text-slate-500 truncate" title={f.original_path}>
+                                      Path: {f.original_path}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="relative action-menu" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    onClick={(e) => handleArchiveMenuToggle(e, f.id)}
+                                    className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition"
+                                    title="More actions"
+                                  >
+                                    <MoreVertical className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </>
+            );
+          })()
         ) : (
           <>
             <div className="border-b border-slate-200 bg-white px-8 py-3">
@@ -944,7 +1499,7 @@ export default function App() {
                 <p className="mt-0.5 text-sm text-slate-500">
                   {current
                     ? current.month_driven
-                      ? "Upload here — documents are auto-filed into monthly folders"
+                      ? `Upload here — documents are auto-filed into monthly folders · ${displayed.filter((c) => c.kind !== "file").length} folders · ${displayed.filter((c) => c.kind === "file").length} files`
                       : `${displayed.filter((c) => c.kind !== "file").length} folders · ${displayed.filter((c) => c.kind === "file").length} files`
                     : "Shared container · pick a main folder to browse"}
                 </p>
@@ -954,14 +1509,14 @@ export default function App() {
                   <>
                     <button
                       onClick={() => { setArchiveSelectIds(new Set()); setShowArchiveSelectModal(true); }}
-                      className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-brand-500"
+                      className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-amber-500"
                     >
                       <Archive className="h-4 w-4" />
                       Archive
                     </button>
                     <button
                       onClick={() => { setDeleteFolderIds(new Set()); setShowDeleteModal(true); }}
-                      className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-brand-500"
+                      className="inline-flex items-center gap-2 rounded-lg bg-slate-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-500"
                     >
                       <Trash2 className="h-4 w-4" />
                       Delete Folders
@@ -976,6 +1531,24 @@ export default function App() {
                     <FolderPlus className="h-4 w-4" />
                     Create Folder
                   </button>
+                )}
+                {current && current.kind !== "main" && (
+                  <>
+                    <button
+                      onClick={() => { setArchiveSelectIds(new Set()); setShowArchiveSelectModal(true); }}
+                      className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-amber-500 cursor-pointer"
+                    >
+                      <Archive className="h-4 w-4" />
+                      Archive
+                    </button>
+                    <button
+                      onClick={() => { setDeleteFileIds(new Set()); setShowDeleteFilesModal(true); }}
+                      className="inline-flex items-center gap-2 rounded-lg bg-slate-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-500 cursor-pointer"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete Files
+                    </button>
+                  </>
                 )}
                 {canUpload && (
                   <UploadControl node={current!} onUpload={handleUpload} variant="primary" />
@@ -1020,6 +1593,7 @@ export default function App() {
                   onDelete={handleDelete}
                   onDownload={handleDownload}
                   onRenew={handleRenew}
+                  isMainFolder={path.length === 1 && view === "explorer"}
                 />
               )}
             </div>
@@ -1028,7 +1602,7 @@ export default function App() {
       </main>
 
       {showModal && (
-        <CreateVesselModal onClose={() => setShowModal(false)} onCreate={handleCreate} />
+        <CreateVesselModal onClose={() => setShowModal(false)} onCreate={handleCreate} vessels={vessels} />
       )}
       <PreviewDrawer file={preview} onClose={() => setPreview(null)} />
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
@@ -1045,8 +1619,8 @@ export default function App() {
                   <Archive className="h-5 w-5 text-amber-600" />
                 </div>
                 <div>
-                  <h2 className="text-base font-semibold text-slate-800">Archive Folders</h2>
-                  <p className="text-xs text-slate-500">Hide folders — restore anytime from the archived list</p>
+                  <h2 className="text-base font-semibold text-slate-800">Archive Items</h2>
+                  <p className="text-xs text-slate-500">Hide folders and files — restore anytime from the archived list</p>
                 </div>
               </div>
               <button onClick={() => setShowArchiveSelectModal(false)}
@@ -1058,14 +1632,14 @@ export default function App() {
             {/* Two-column body */}
             <div className="flex divide-x divide-slate-100">
 
-              {/* Left: Select folders to archive */}
+              {/* Left: Select items to archive */}
               <div className="flex-1 p-4">
                 <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Select to Archive</p>
                 <div className="max-h-64 space-y-0.5 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 p-1.5">
-                  {children.filter((c) => c.kind !== "file" && !archivedFolderIds.has(c.id)).length === 0 ? (
-                    <p className="py-6 text-center text-sm text-slate-400">No folders available.</p>
+                  {children.filter((c) => !archivedFolderIds.has(c.id)).length === 0 ? (
+                    <p className="py-6 text-center text-sm text-slate-400">No items available.</p>
                   ) : (
-                    children.filter((c) => c.kind !== "file" && !archivedFolderIds.has(c.id)).map((f) => (
+                    children.filter((c) => !archivedFolderIds.has(c.id)).map((f) => (
                       <label key={f.id} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-white transition">
                         <input
                           type="checkbox"
@@ -1077,7 +1651,12 @@ export default function App() {
                             setArchiveSelectIds(next);
                           }}
                         />
-                        <span className="text-sm font-medium text-slate-700">{f.name}</span>
+                        {f.kind === "file" ? (
+                          <FileText className="h-4 w-4 text-slate-400 shrink-0" />
+                        ) : (
+                          <FolderOpen className="h-4 w-4 text-amber-500 shrink-0" />
+                        )}
+                        <span className="text-sm font-medium text-slate-700 truncate">{f.name}</span>
                       </label>
                     ))
                   )}
@@ -1085,22 +1664,44 @@ export default function App() {
               </div>
 
               {/* Right: Already archived */}
-              <div className="w-64 shrink-0 bg-amber-50/40 p-4">
-                <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-amber-700">
+              <div className="w-64 shrink-0 bg-white p-4 pr-12 min-h-[180px]">
+                <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-amber-600 px-1">
                   Archived ({archivedNodes.length})
                 </p>
-                <div className="max-h-64 space-y-0.5 overflow-y-auto">
+                <div className="max-h-64 space-y-0.5 overflow-y-auto pr-2">
                   {archivedNodes.length === 0 ? (
-                    <p className="py-6 text-center text-xs text-slate-400">No archived folders yet.</p>
+                    <p className="py-6 text-center text-xs text-slate-400">No archived items yet.</p>
                   ) : (
                     archivedNodes.map((f) => (
-                      <div key={f.id} className="flex items-center justify-between rounded-lg px-2 py-2 hover:bg-amber-50 transition">
-                        <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-700">{f.name}</span>
-                        <button
-                          onClick={() => setRestoreConfirmNode(f)}
-                          className="ml-2 shrink-0 rounded px-2 py-0.5 text-[10px] font-semibold text-brand-600 hover:bg-brand-50 transition"
+                      <div key={f.id} className="flex items-center justify-between rounded-lg px-2 py-1.5 hover:bg-amber-50/50 transition">
+                        <span 
+                          onClick={() => {
+                            if (f.kind === "file") {
+                              setPreview(f);
+                            } else {
+                              setShowArchiveSelectModal(false);
+                              setView("archive");
+                              navigateTo("archive", [...path, { id: f.id, name: f.name }]);
+                            }
+                          }}
+                          className="min-w-0 flex-1 text-xs font-semibold text-slate-700 cursor-pointer hover:text-amber-800 hover:underline transition flex items-center gap-1.5"
+                          title={f.kind === "file" ? `Click to preview file ${f.name}` : `Click to view archived folder ${f.name}`}
                         >
-                          Restore
+                          {f.kind === "file" ? (
+                            <FileText className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                          ) : (
+                            <FolderOpen className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                          )}
+                          <span className="truncate flex-1">
+                            {f.name} {f.main_folder ? `(${f.main_folder})` : ""}
+                          </span>
+                        </span>
+                        <button
+                          onClick={(e) => handleArchiveMenuToggle(e, f.id)}
+                          className="rounded-lg p-1 text-slate-600 hover:bg-white hover:text-slate-800 transition shrink-0"
+                          title="More actions"
+                        >
+                          <MoreVertical className="h-4 w-4 text-slate-600" />
                         </button>
                       </div>
                     ))
@@ -1110,17 +1711,173 @@ export default function App() {
             </div>
 
             {/* Footer */}
-            <div className="flex gap-3 border-t border-slate-100 px-6 py-4">
-              <button onClick={() => setShowArchiveSelectModal(false)}
-                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">
+            <div className="flex flex-col gap-2 border-t border-slate-100 px-6 py-4">
+              <button
+                onClick={() => {
+                  setShowArchiveSelectModal(false);
+                  setView("archive");
+                }}
+                className="w-full rounded-lg bg-amber-50 py-2 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 flex items-center justify-center gap-1.5"
+              >
+                <FolderOpen className="h-3.5 w-3.5" />
+                Go to Archive Folder Page
+              </button>
+              <div className="flex gap-3">
+                <button onClick={() => setShowArchiveSelectModal(false)}
+                  className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleBulkFolderArchive()}
+                  disabled={archiveSelectIds.size === 0}
+                  className="flex-1 rounded-lg bg-amber-600 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Archive {archiveSelectIds.size > 0 ? `(${archiveSelectIds.size})` : ""} Selected
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Recycle Bin Selection Modal ───────────────────────── */}
+      {showRecycleSelectModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="absolute inset-0" onClick={() => setShowRecycleSelectModal(false)} />
+          <div className="relative w-full max-w-xl rounded-2xl bg-white shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-50">
+                  <Trash2 className="h-5 w-5 text-rose-600" />
+                </div>
+                <div>
+                  <h2 className="text-base font-semibold text-slate-800">Manage Recycle Bin Items</h2>
+                  <p className="text-xs text-slate-500">Select folders and files to restore or permanently delete</p>
+                </div>
+              </div>
+              <button onClick={() => setShowRecycleSelectModal(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 transition cursor-pointer">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6">
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                  Deleted Items ({deletedNodes.length})
+                </p>
+                {deletedNodes.length > 0 && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setRecycleSelectIds(new Set(deletedNodes.map(n => n.id)))}
+                      className="text-xs font-semibold text-rose-600 hover:underline cursor-pointer"
+                    >
+                      Select All
+                    </button>
+                    <span className="text-xs text-slate-300">|</span>
+                    <button
+                      onClick={() => setRecycleSelectIds(new Set())}
+                      className="text-xs font-semibold text-slate-500 hover:underline cursor-pointer"
+                    >
+                      Deselect All
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="max-h-80 space-y-0.5 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 p-2">
+                {deletedNodes.length === 0 ? (
+                  <p className="py-12 text-center text-sm text-slate-400">No items in Recycle Bin.</p>
+                ) : (
+                  deletedNodes.map((n) => {
+                    const isFile = n.kind === "file";
+                    const iconInfo = iconFor(n);
+                    const IconComponent = isFile ? (iconInfo?.Icon || FileText) : Trash2;
+                    const iconColorClass = isFile ? (iconInfo?.cls || "text-slate-500") : "text-rose-600";
+                    return (
+                      <label key={n.id} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-white transition">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded accent-rose-600 cursor-pointer"
+                          checked={recycleSelectIds.has(n.id)}
+                          onChange={(e) => {
+                            const next = new Set(recycleSelectIds);
+                            if (e.target.checked) next.add(n.id); else next.delete(n.id);
+                            setRecycleSelectIds(next);
+                          }}
+                        />
+                        <IconComponent className={`h-4 w-4 shrink-0 ${iconColorClass}`} />
+                        <div className="min-w-0 flex-1">
+                          <span className="text-sm font-semibold text-slate-700 block truncate">{n.name}</span>
+                          <span className="text-[10px] text-slate-400 font-medium block">
+                            {isFile ? "File" : "Folder"} {n.main_folder ? `· ${n.main_folder}` : ""}
+                          </span>
+                        </div>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-slate-100 px-6 py-4 bg-slate-50 flex gap-3">
+              <button 
+                onClick={() => setShowRecycleSelectModal(false)}
+                className="flex-1 rounded-lg border border-slate-200 bg-white py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+              >
                 Cancel
               </button>
               <button
-                onClick={() => handleBulkFolderArchive()}
-                disabled={archiveSelectIds.size === 0}
-                className="flex-1 rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={handleBulkRestoreDeleted}
+                disabled={recycleSelectIds.size === 0}
+                className="flex-1 rounded-lg bg-emerald-600 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-1.5"
               >
-                Archive {archiveSelectIds.size > 0 ? `(${archiveSelectIds.size})` : ""} Selected
+                <RotateCcw className="h-4 w-4" />
+                Restore {recycleSelectIds.size > 0 ? `(${recycleSelectIds.size})` : ""}
+              </button>
+              <button
+                onClick={handleBulkPermanentDelete}
+                disabled={recycleSelectIds.size === 0}
+                className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Trash2 className="h-4 w-4" />
+                Hard Delete {recycleSelectIds.size > 0 ? `(${recycleSelectIds.size})` : ""}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bulk Recycle Hard Delete Confirmation Modal ────────── */}
+      {showBulkDeleteRecycleModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="absolute inset-0" onClick={() => setShowBulkDeleteRecycleModal(false)} />
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-50">
+                <ShieldOff className="h-5 w-5 text-rose-600" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-slate-800">Hard Delete Selected Items?</h2>
+                <p className="text-xs text-rose-500 font-medium">This action cannot be undone!</p>
+              </div>
+            </div>
+            <div className="mb-6 rounded-xl border border-rose-100 bg-rose-50/30 p-4 text-xs text-slate-600 leading-relaxed">
+              You are about to permanently delete <strong className="text-rose-700">{recycleSelectIds.size} selected item(s)</strong> using SharePoint Embedded Hard Delete API. They will be removed forever and cannot be restored from the Recycle Bin.
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setShowBulkDeleteRecycleModal(false)}
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition cursor-pointer">
+                Cancel
+              </button>
+              <button
+                onClick={executeBulkPermanentDelete}
+                className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-500 cursor-pointer"
+              >
+                Hard Delete Permanently
               </button>
             </div>
           </div>
@@ -1137,8 +1894,8 @@ export default function App() {
                 <Trash2 className="h-5 w-5 text-rose-600" />
               </div>
               <div>
-                <h2 className="text-base font-semibold text-slate-800">Delete Folders</h2>
-                <p className="text-xs text-slate-500">Selected folders will be permanently deleted</p>
+                <h2 className="text-base font-semibold text-slate-800">Move Folders to Recycle Bin</h2>
+                <p className="text-xs text-slate-500">Selected folders will be moved to the Recycle Bin</p>
               </div>
             </div>
             <div className="mb-4 max-h-60 space-y-1 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 p-2">
@@ -1164,15 +1921,68 @@ export default function App() {
             </div>
             <div className="flex gap-3">
               <button onClick={() => setShowDeleteModal(false)}
-                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition cursor-pointer">
                 Cancel
               </button>
               <button
                 onClick={() => handleBulkFolderDelete()}
                 disabled={deleteFolderIds.size === 0}
-                className="flex-1 rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex-1 rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
-                Delete {deleteFolderIds.size > 0 ? `(${deleteFolderIds.size})` : ""}
+                Move {deleteFolderIds.size > 0 ? `(${deleteFolderIds.size})` : ""} to Recycle Bin
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete Files Modal ──────────────────────────────────────────── */}
+      {showDeleteFilesModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="absolute inset-0" onClick={() => setShowDeleteFilesModal(false)} />
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-50">
+                <Trash2 className="h-5 w-5 text-rose-600" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-slate-800">Move Files to Recycle Bin</h2>
+                <p className="text-xs text-slate-500">Selected files will be moved to the Recycle Bin</p>
+              </div>
+            </div>
+            <div className="mb-4 min-h-[150px] max-h-60 space-y-1 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 p-2 pr-6">
+              {children.filter((c) => c.kind === "file").length === 0 ? (
+                <p className="py-4 text-center text-sm text-slate-400">No files available in this folder.</p>
+              ) : (
+                children.filter((c) => c.kind === "file").map((f) => (
+                  <label key={f.id} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 hover:bg-white transition">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded accent-rose-600"
+                      checked={deleteFileIds.has(f.id)}
+                      onChange={(e) => {
+                        const next = new Set(deleteFileIds);
+                        if (e.target.checked) next.add(f.id); else next.delete(f.id);
+                        setDeleteFileIds(next);
+                      }}
+                    />
+                    <FileText className="h-4 w-4 text-slate-400 shrink-0" />
+                    <span className="text-sm font-medium text-slate-700 truncate">{f.name}</span>
+                  </label>
+                ))
+              )}
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setShowDeleteFilesModal(false)}
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition cursor-pointer">
+                Cancel
+              </button>
+              <button
+                onClick={() => handleBulkFileDelete()}
+                disabled={deleteFileIds.size === 0}
+                className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                Move {deleteFileIds.size > 0 ? `(${deleteFileIds.size})` : ""} Selected to Recycle Bin
               </button>
             </div>
           </div>
@@ -1189,22 +1999,44 @@ export default function App() {
                 <Archive className="h-5 w-5 text-amber-600" />
               </div>
               <div>
-                <h2 className="text-base font-semibold text-slate-800">Archived Folders</h2>
-                <p className="text-xs text-slate-500">Deleted folders — restore to bring them back</p>
+                <h2 className="text-base font-semibold text-slate-800">Archived Items</h2>
+                <p className="text-xs text-slate-500">Archived folders and files — restore to bring them back</p>
               </div>
             </div>
-            <div className="mb-4 max-h-60 space-y-1 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 p-2">
+            <div className="mb-4 min-h-[150px] max-h-60 space-y-1 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 p-2 pr-6">
               {archivedNodes.length === 0 ? (
-                <p className="py-4 text-center text-sm text-slate-400">No archived folders.</p>
+                <p className="py-4 text-center text-sm text-slate-400">No archived items.</p>
               ) : (
                 archivedNodes.map((f) => (
-                  <div key={f.id} className="flex items-center justify-between rounded-lg px-3 py-2 hover:bg-white">
-                    <span className="text-sm font-medium text-slate-700">{f.name}</span>
-                    <button
-                      onClick={() => setRestoreConfirmNode(f)}
-                      className="rounded-md px-2.5 py-1 text-xs font-medium text-brand-600 hover:bg-brand-50 transition"
+                  <div key={f.id} className="flex items-center justify-between rounded-lg px-2.5 py-1.5 hover:bg-slate-50 transition relative">
+                    <span 
+                      onClick={() => {
+                        if (f.kind === "file") {
+                          setPreview(f);
+                        } else {
+                          setShowArchivePanel(false);
+                          setView("archive");
+                          navigateTo("archive", [...path, { id: f.id, name: f.name }]);
+                        }
+                      }}
+                      className="min-w-0 flex-1 text-xs font-semibold text-slate-700 cursor-pointer hover:text-amber-800 hover:underline transition flex items-center gap-1.5"
+                      title={f.kind === "file" ? `Click to preview file ${f.name}` : `Click to view archived folder ${f.name}`}
                     >
-                      <ArchiveRestore className="mr-1 inline h-3.5 w-3.5" />Restore
+                      {f.kind === "file" ? (
+                        <FileText className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                      ) : (
+                        <FolderOpen className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                      )}
+                      <span className="truncate flex-1">
+                        {f.name} {f.main_folder ? `(${f.main_folder})` : ""}
+                      </span>
+                    </span>
+                    <button
+                      onClick={(e) => handleArchiveMenuToggle(e, f.id)}
+                      className="rounded-lg p-1 text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition shrink-0"
+                      title="More actions"
+                    >
+                      <MoreVertical className="h-4 w-4 text-slate-600" />
                     </button>
                   </div>
                 ))
@@ -1255,6 +2087,31 @@ export default function App() {
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100"
             />
 
+            {createFolderName && (
+              (() => {
+                const cleaned = cleanFolderName(createFolderName);
+                const hasSpecial = createFolderName !== cleaned;
+                const hasLetters = /[a-zA-Z]/.test(cleaned);
+                
+                if (hasSpecial || !hasLetters) {
+                  return (
+                    <p className="mt-2 text-[11px] leading-relaxed text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex flex-col gap-0.5">
+                      {hasSpecial && (
+                        <span>⚠️ <strong>Note:</strong> Special characters (like quotes, equals, dashes) will be ignored.</span>
+                      )}
+                      {!hasLetters && (
+                        <span className="text-red-650 font-medium">⚠️ <strong>Validation:</strong> Please include alphabetic characters (letters) for the month name.</span>
+                      )}
+                      {cleaned && hasLetters && (
+                        <span>Folder will be created as: <strong className="text-amber-900 font-semibold">"{cleaned}"</strong></span>
+                      )}
+                    </p>
+                  );
+                }
+                return null;
+              })()
+            )}
+
 
             {createFolderError && (
               <p className="mt-2 text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
@@ -1292,8 +2149,8 @@ export default function App() {
                 <Trash2 className="h-5 w-5 text-rose-600" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-slate-800">Delete file?</h3>
-                <p className="text-xs text-slate-500">This action cannot be undone</p>
+                <h3 className="text-base font-semibold text-slate-800">Move file to Recycle Bin?</h3>
+                <p className="text-xs text-slate-500">This file can be restored later</p>
               </div>
             </div>
 
@@ -1306,27 +2163,29 @@ export default function App() {
 
             {/* Warning */}
             <p className="mt-3 text-xs text-slate-500">
-              The file will be permanently removed from SharePoint and cannot be recovered.
+              The file will be hidden from the active explorer. You can access it in the Recycle Bin.
             </p>
 
             {/* Actions */}
             <div className="mt-5 flex gap-3">
               <button
                 onClick={() => setDeleteFileNode(null)}
-                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 onClick={() => void confirmDeleteFile()}
-                className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white hover:bg-rose-700 transition"
+                className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white hover:bg-rose-700 transition cursor-pointer"
               >
-                Delete
+                Move to Recycle Bin
               </button>
             </div>
           </div>
         </div>
       )}
+
+
 
       {/* ── Restore Confirmation Modal ───────────────────────── */}
       {restoreConfirmNode && (
@@ -1363,6 +2222,97 @@ export default function App() {
         </div>
       )}
 
+      {activeMenuFolderId && (
+        (() => {
+          const f = archivedNodes.find(n => n.id === activeMenuFolderId);
+          if (!f) return null;
+          return createPortal(
+            <>
+              {/* Overlay backdrop to close the menu on click */}
+              <div 
+                className="fixed inset-0 z-[9998]" 
+                onClick={() => setActiveMenuFolderId(null)} 
+              />
+              <div
+                style={{
+                  position: "fixed",
+                  ...(archiveMenuDropPos.flipped
+                    ? { bottom: archiveMenuDropPos.bottom }
+                    : { top: archiveMenuDropPos.top }),
+                  right: archiveMenuDropPos.right,
+                  zIndex: 9999,
+                  maxHeight: "280px",
+                  overflowY: "auto",
+                }}
+                className="w-40 rounded-lg border border-slate-200 bg-white p-1 shadow-xl flex flex-col gap-0.5"
+              >
+                <button
+                  onClick={() => {
+                    setActiveMenuFolderId(null);
+                    navigateTo("archive", [...path, { id: f.id, name: f.name }]);
+                    setShowArchiveSelectModal(false);
+                    setShowArchivePanel(false);
+                  }}
+                  className="flex items-center gap-2 w-full rounded px-2.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                >
+                  <Eye className="h-3.5 w-3.5 text-slate-400" />
+                  View
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveMenuFolderId(null);
+                    void downloadFolderRecursively(f);
+                  }}
+                  className="flex items-center gap-2 w-full rounded px-2.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                >
+                  <Download className="h-3.5 w-3.5 text-slate-400" />
+                  Download
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveMenuFolderId(null);
+                    setRestoreConfirmNode(f);
+                  }}
+                  className="flex items-center gap-2 w-full border-t border-slate-100 mt-0.5 pt-1.5 rounded-b px-2.5 py-2 text-left text-xs font-semibold text-brand-600 hover:bg-brand-50 transition"
+                >
+                  <ArchiveRestore className="h-3.5 w-3.5 text-brand-500" />
+                  Restore
+                </button>
+              </div>
+            </>,
+            document.body
+          );
+        })()
+      )}
+
+      {/* Full Photo Modal overlay */}
+      {showFullPhoto && profilePhoto && (
+        <div 
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-md cursor-pointer"
+          onClick={() => setShowFullPhoto(false)}
+        >
+          <div 
+            className="relative max-h-[90vh] max-w-[90vw] overflow-hidden rounded-2xl border border-white/10 bg-black/40 shadow-2xl p-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img 
+              src={profilePhoto} 
+              alt="Full Profile" 
+              className="max-h-[80vh] max-w-[80vw] rounded-xl object-contain" 
+            />
+            <div className="mt-3 flex items-center justify-between px-2">
+              <span className="text-xs text-white/60 font-medium">{user?.display_name} &middot; Profile Photo</span>
+              <button 
+                onClick={() => setShowFullPhoto(false)}
+                className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/20 transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -1376,6 +2326,7 @@ function FolderGrid({
   onDelete,
   onDownload,
   onRenew,
+  isMainFolder = false,
 }: {
   items: FolderNode[];
   accent: (typeof MAIN_ACCENTS)[string];
@@ -1385,13 +2336,83 @@ function FolderGrid({
   onDelete: (n: FolderNode) => void;
   onDownload: (n: FolderNode) => void;
   onRenew: (n: FolderNode, f: File) => void;
+  isMainFolder?: boolean;
 }) {
+  const [showAllVessels, setShowAllVessels] = useState(false);
   const folders = items.filter((i) => i.kind !== "file");
   const files = items.filter((i) => i.kind === "file");
 
+  const commonFolder = isMainFolder ? folders.find((f) => f.name.toLowerCase().includes("common")) : null;
+  const vesselFolders = isMainFolder 
+    ? folders.filter((f) => !f.name.toLowerCase().includes("common"))
+    : folders;
+
+  const displayedVessels = isMainFolder && !showAllVessels 
+    ? vesselFolders.slice(0, 4) 
+    : vesselFolders;
+
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      {folders.length > 0 &&
+      {/* If isMainFolder, we separate common from vessel folders */}
+      {isMainFolder ? (
+        <>
+          {commonFolder && (
+            <div className="mb-6">
+              <p className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-400">
+                Common Agreements / Documents
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="sm:col-span-1 lg:col-span-1">
+                  <FolderCard key={commonFolder.id} node={commonFolder} accent={accent} onOpen={onOpen} isBig={true} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {vesselFolders.length > 0 && (
+            <div>
+              <p className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-400">
+                Vessels
+              </p>
+              {layout === "grid" ? (
+                <>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {displayedVessels.map((n) => (
+                      <FolderCard key={n.id} node={n} accent={accent} onOpen={onOpen} />
+                    ))}
+                  </div>
+                  {vesselFolders.length > 4 && (
+                    <div className="mt-4 flex justify-center">
+                      <button
+                        onClick={() => setShowAllVessels(!showAllVessels)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-slate-800"
+                      >
+                        {showAllVessels ? (
+                          <>
+                            Show Less <ChevronUp className="h-3.5 w-3.5" />
+                          </>
+                        ) : (
+                          <>
+                            More Vessels ({vesselFolders.length - 4}) <ChevronDown className="h-3.5 w-3.5" />
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                  {vesselFolders.map((n) => (
+                    <FolderRow key={n.id} node={n} accent={accent} onOpen={onOpen} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        /* Standard rendering */
+        folders.length > 0 &&
         (layout === "grid" ? (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {folders.map((n) => (
@@ -1404,7 +2425,8 @@ function FolderGrid({
               <FolderRow key={n.id} node={n} accent={accent} onOpen={onOpen} />
             ))}
           </div>
-        ))}
+        ))
+      )}
 
       {files.length > 0 && (
         <div>
@@ -1446,22 +2468,24 @@ function FolderCard({
   node,
   accent,
   onOpen,
+  isBig = false,
 }: {
   node: FolderNode;
   accent: (typeof MAIN_ACCENTS)[string];
   onOpen: (n: FolderNode) => void;
+  isBig?: boolean;
 }) {
   const { Icon, cls } = iconFor(node);
   return (
     <button
       onClick={() => onOpen(node)}
-      className="group flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md"
+      className={`group flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md ${isBig ? "p-5" : "p-4"}`}
     >
-      <span className={"flex h-11 w-11 shrink-0 items-center justify-center rounded-xl " + accent.chip}>
-        <Icon className={"h-5 w-5 " + cls} />
+      <span className={`flex shrink-0 items-center justify-center rounded-xl transition ${isBig ? "h-14 w-14" : "h-11 w-11"} ${accent.chip}`}>
+        <Icon className={`${isBig ? "h-6 w-6" : "h-5 w-5"} ${cls}`} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold text-slate-800">{node.name}</span>
+        <span className={`block truncate font-semibold text-slate-800 ${isBig ? "text-base" : "text-sm"}`}>{node.name}</span>
         <span className="mt-0.5 block text-xs text-slate-500">{folderSubtitle(node)}</span>
       </span>
       {node.month_driven && (
@@ -1579,28 +2603,27 @@ function FileActions({
             maxHeight: "280px",
             overflowY: "auto",
           }}
-          className="w-44 rounded-xl bg-transparent py-0.5"
+          className="w-36 rounded-lg border border-slate-200 bg-white p-1 shadow-xl flex flex-col gap-0.5"
         >
           <button
             onClick={() => { onDownload(file); setOpen(false); }}
-            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-bold text-slate-800 transition-all hover:bg-brand-600 hover:text-white hover:shadow-sm"
+            className="flex items-center gap-2 w-full rounded px-2.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
           >
-            <Download className="h-4 w-4 text-brand-600" />
+            <Download className="h-3.5 w-3.5 text-slate-400" />
             Download
           </button>
           <button
             onClick={() => renewInputRef.current?.click()}
-            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-bold text-slate-800 transition-all hover:bg-brand-600 hover:text-white hover:shadow-sm"
+            className="flex items-center gap-2 w-full rounded px-2.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
           >
-            <RotateCcw className="h-4 w-4 text-violet-600" />
+            <RotateCcw className="h-3.5 w-3.5 text-slate-400" />
             Renew
           </button>
-          <div className="my-0.5" />
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(file); setOpen(false); }}
-            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-bold text-rose-600 transition-all hover:bg-rose-600 hover:text-white hover:shadow-sm"
+            className="flex items-center gap-2 w-full border-t border-slate-100 mt-0.5 pt-1.5 rounded-b px-2.5 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50 transition"
           >
-            <Trash2 className="h-4 w-4" />
+            <Trash2 className="h-3.5 w-3.5 text-rose-500" />
             Delete
           </button>
         </div>,

@@ -28,6 +28,8 @@ class Store:
         # id -> job dict.
         self.jobs = {}
         self._job_ids = itertools.count(1)
+        self.archived_ids = set()
+        self.deleted_ids = set()
         self._build_roots()
 
     # ------------------------------------------------------------------ build
@@ -162,7 +164,7 @@ class Store:
 
     def children(self, node_id):
         node = self.nodes[node_id]
-        return [self.serialize(self.nodes[c], depth=1) for c in node["children"]]
+        return [self.serialize(self.nodes[c], depth=1) for c in node["children"] if c not in self.deleted_ids]
 
     # ------------------------------------------------------------ month folders
     def ensure_month_folder(self, month_driven_id, year, month):
@@ -190,18 +192,21 @@ class Store:
             raise NotFound("Parent folder not found")
         if not parent["month_driven"]:
             raise BadRequest("Can only create sub-folders inside month-driven folders")
-        name = name.strip()
+        from .services.normalize import clean_folder_name
+        name = clean_folder_name(name)
+        if not name:
+            raise BadRequest("Folder name is required")
+        if not any(c.isalpha() for c in name):
+            raise BadRequest("Folder name must contain alphabetic characters (letters)")
         
         # Replace slashes/backslashes/colons with hyphens, and * ? " < > | with underscores
         name = name.replace("/", "-").replace("\\", "-").replace(":", "-")
         for c in '*?"<>|':
             name = name.replace(c, "_")
         name = name.strip(" .")
-
-        if not name:
-            raise BadRequest("Folder name is required")
-        if self._has_child_named(parent_id, name):
-            raise Conflict(f"A folder named '{name}' already exists here")
+        matching_name = self._has_child_named(parent_id, name)
+        if matching_name:
+            raise Conflict(f"A folder with a similar name '{matching_name}' already exists here (ignoring casing, spaces, and special characters)")
         month_node = self._make_node(name, "month", parent_id)
         month_node["is_month"] = True
         for cat in parent.get("month_children", []):
@@ -219,10 +224,15 @@ class Store:
         return node
 
     def _has_child_named(self, parent_id, name):
-        return any(
-            self.nodes[c]["name"].lower() == name.lower()
-            for c in self.nodes[parent_id]["children"]
-        )
+        from .services.normalize import normalize_folder_name
+        normalized_name = normalize_folder_name(name)
+        for c in self.nodes[parent_id]["children"]:
+            child_node = self.nodes[c]
+            if child_node["kind"] != "file":
+                if normalize_folder_name(child_node["name"]) == normalized_name:
+                    return child_node["name"]
+        return None
+
 
     def _find_file_globally(self, filename: str, exclude_folder_id: str | None = None):
         """Return (node, folder_path) if a file with the same name already exists
@@ -293,7 +303,9 @@ class Store:
 
         # 2. Check fitz (PyMuPDF) and paddleocr installations explicitly
         try:
+            # pyrefly: ignore [missing-import]
             import fitz
+            # pyrefly: ignore [missing-import]
             from paddleocr import PaddleOCR
         except (ImportError, ModuleNotFoundError) as ocr_err:
             raise InternalServerError(
@@ -333,39 +345,65 @@ class Store:
         return node["content"], node["content_type"], node["name"]
 
     def delete_folder(self, folder_id):
-        """Remove a folder and all its descendants from the in-memory tree."""
-        node = self.nodes.get(folder_id)
-        if not node:
+        """Soft delete a folder by adding its ID to deleted_ids."""
+        if folder_id not in self.nodes:
             return False
-        # Recursively collect all descendant IDs
-        to_remove = []
-        stack = [folder_id]
-        while stack:
-            nid = stack.pop()
-            n = self.nodes.get(nid)
-            if n:
-                to_remove.append(nid)
-                stack.extend(n.get("children", []))
-        # Remove from parent's children list
-        pid = node.get("parent_id")
-        if pid and pid in self.nodes:
-            self.nodes[pid]["children"] = [
-                c for c in self.nodes[pid]["children"] if c != folder_id
-            ]
-        # Delete all collected nodes
-        for nid in to_remove:
-            self.nodes.pop(nid, None)
+        self.deleted_ids.add(folder_id)
         return True
 
     def delete_file(self, node_id):
-        node = self.nodes.get(node_id)
-        if not node or node["kind"] != "file":
+        """Soft delete a file by adding its ID to deleted_ids."""
+        if node_id not in self.nodes or self.nodes[node_id]["kind"] != "file":
             return False
-        pid = node["parent_id"]
-        if pid is not None and node_id in self.nodes[pid]["children"]:
-            self.nodes[pid]["children"].remove(node_id)
-        self.nodes.pop(node_id, None)
+        self.deleted_ids.add(node_id)
         return True
+
+    def restore_deleted_item(self, item_id):
+        if item_id in self.deleted_ids:
+            self.deleted_ids.discard(item_id)
+            return True
+        return False
+
+    def permanent_delete_item(self, item_id, item_type):
+        self.deleted_ids.discard(item_id)
+        if item_type == "folder":
+            node = self.nodes.get(item_id)
+            if not node:
+                return False
+            # Recursively collect all descendant IDs
+            to_remove = []
+            stack = [item_id]
+            while stack:
+                nid = stack.pop()
+                n = self.nodes.get(nid)
+                if n:
+                    to_remove.append(nid)
+                    stack.extend(n.get("children", []))
+            # Remove from parent's children list
+            pid = node.get("parent_id")
+            if pid and pid in self.nodes:
+                self.nodes[pid]["children"] = [
+                    c for c in self.nodes[pid]["children"] if c != item_id
+                ]
+            # Delete all collected nodes
+            for nid in to_remove:
+                self.nodes.pop(nid, None)
+                self.archived_ids.discard(nid)
+                self.deleted_ids.discard(nid)
+            return True
+        else:
+            node = self.nodes.get(item_id)
+            if not node or node["kind"] != "file":
+                return False
+            pid = node["parent_id"]
+            if pid is not None and item_id in self.nodes[pid]["children"]:
+                self.nodes[pid]["children"].remove(item_id)
+            self.nodes.pop(item_id, None)
+            self.archived_ids.discard(item_id)
+            return True
+
+    def get_deleted_ids(self):
+        return list(self.deleted_ids)
 
     def search(self, query):
         ql = query.lower().strip()
@@ -374,6 +412,8 @@ class Store:
         results = []
 
         def walk(nid, trail):
+            if nid in self.deleted_ids:
+                return
             node = self.nodes[nid]
             t2 = trail + [{"id": nid, "name": node["name"]}]
             if node["kind"] != "main" and ql in node["name"].lower():
@@ -432,6 +472,15 @@ class Store:
             "destination": job["destination"],
             "detected_month": job["detected_month"],
         }
+
+    def archive_item(self, item_id, item_type):
+        self.archived_ids.add(item_id)
+
+    def restore_item(self, item_id):
+        self.archived_ids.discard(item_id)
+
+    def get_archived_ids(self):
+        return list(self.archived_ids)
 
 
 # --------------------------------------------------------------------- helpers

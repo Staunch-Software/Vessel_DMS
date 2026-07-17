@@ -5,12 +5,18 @@ import { VESSEL_TYPES, type VesselInput } from "../api";
 interface Props {
   onClose: () => void;
   onCreate: (data: VesselInput) => Promise<void>;
+  vessels: Array<{ name: string }>;
 }
 
 const inputCls =
   "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100";
 
-export function CreateVesselModal({ onClose, onCreate }: Props) {
+const normalizeVesselName = (name: string) => {
+  if (!name) return "";
+  return name.replace(/\s/g, "").replace(/_/g, "").replace(/'/g, "").replace(/"/g, "").toLowerCase();
+};
+
+export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
   const [name, setName] = useState("");
   const [imo, setImo] = useState("");
   const [shipyard, setShipyard] = useState("");
@@ -18,13 +24,20 @@ export function CreateVesselModal({ onClose, onCreate }: Props) {
   const [vesselType, setVesselType] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [backendNameError, setBackendNameError] = useState<string | null>(null);
 
   const imoValid = imo === "" || /^\d{7}$/.test(imo);
+  const normalizedInput = normalizeVesselName(name);
+  const isDuplicate = name.trim() !== "" && vessels.some(
+    (v) => normalizeVesselName(v.name) === normalizedInput
+  );
+  const nameError = isDuplicate ? "Vessel name already exists." : backendNameError;
 
   const submit = async () => {
-    if (!name.trim() || !imoValid) return;
+    if (!name.trim() || !imoValid || isDuplicate) return;
     setBusy(true);
     setError(null);
+    setBackendNameError(null);
     try {
       await onCreate({
         name: name.trim(),
@@ -35,10 +48,13 @@ export function CreateVesselModal({ onClose, onCreate }: Props) {
       });
       onClose();
     } catch (e: unknown) {
-      const msg =
-        (e as { response?: { data?: { detail?: string } } })?.response?.data
-          ?.detail ?? "Could not create vessel.";
-      setError(msg);
+      const data = (e as { response?: { data?: { detail?: string; message?: string } } })?.response?.data;
+      const msg = data?.message || data?.detail || "Could not create vessel.";
+      if (msg === "Vessel name already exists.") {
+        setBackendNameError("Vessel name already exists.");
+      } else {
+        setError(msg);
+      }
       setBusy(false);
     }
   };
@@ -75,10 +91,22 @@ export function CreateVesselModal({ onClose, onCreate }: Props) {
         <input
           autoFocus
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            setName(e.target.value);
+            setBackendNameError(null);
+            setError(null);
+          }}
           placeholder="e.g. MV Pacific Trader"
-          className={inputCls}
+          className={
+            "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 " +
+            (nameError
+              ? "border-rose-300 focus:border-rose-400 focus:ring-rose-100"
+              : "border-slate-300 focus:border-brand-400 focus:ring-brand-100")
+          }
         />
+        {nameError && (
+          <p className="mt-1 text-xs text-rose-600">{nameError}</p>
+        )}
 
         <label className="mb-1.5 mt-4 block text-sm font-medium text-slate-700">IMO number</label>
         <input
@@ -140,7 +168,7 @@ export function CreateVesselModal({ onClose, onCreate }: Props) {
           </button>
           <button
             onClick={submit}
-            disabled={busy || !name.trim() || !imoValid}
+            disabled={busy || !name.trim() || !imoValid || isDuplicate}
             className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-500 disabled:opacity-50"
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}

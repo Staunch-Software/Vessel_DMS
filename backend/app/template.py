@@ -71,7 +71,207 @@ SHIP_TEMPLATE = {
         ),
         folder(
             "Drawings and Manuals",
-            [leaf("Drawing"), leaf("Manual"), leaf("To be Classified")],
+            [
+                folder(
+                    "Drawing",
+                    [
+                        folder(
+                            "Basic",
+                            [
+                                leaf("General Arrangement"),
+                                leaf("Capacity Plan & Dead Weight"),
+                                leaf("Trim & Stability Information"),
+                                leaf("Loading Manual"),
+                                leaf("Damage Control Plan"),
+                                leaf("EEDI Technical File"),
+                                leaf("Ship Structure Access Manuals"),
+                                leaf("Docking Plan"),
+                                leaf("Emergency Towing Booklet"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Hull",
+                            [
+                                leaf("Makers List of Hull Parts"),
+                                leaf("Results of Official Sea Trial"),
+                                leaf("Container Stowage Plan"),
+                                leaf("Mooring Arrangement"),
+                                leaf("Midship Section"),
+                                leaf("Bulkhead Plans"),
+                                leaf("Profile & Deck Plan"),
+                                leaf("Superstructure"),
+                                leaf("Shell Expansion"),
+                                leaf("Rudder and Rudder Stock"),
+                                leaf("Painting Schedule"),
+                                leaf("Cargo Securing Manual"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Safety",
+                            [
+                                leaf("Life Saving Appliances Plan"),
+                                leaf("Fire Control Plan"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Engine",
+                            [
+                                leaf("Arrangement of Engine Room"),
+                                leaf("Machinery Makers List"),
+                                leaf("Machinery Particulars"),
+                                leaf("Test Record of Official Sea Trial"),
+                                leaf("Shafting Arrangements"),
+                                leaf("Stern Tube"),
+                                leaf("Bilge System"),
+                                leaf("Ballast System"),
+                                leaf("Fuel Oil System"),
+                                leaf("Lube Oil System"),
+                                leaf("Cooling Water System"),
+                                leaf("Air System"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Electrical",
+                            [
+                                leaf("Single Line Diagram"),
+                                leaf("Main Switchboard Arrangement"),
+                                leaf("Emergency Switchboard Arrangement"),
+                                leaf("Power Distribution Diagram"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                    ],
+                ),
+                folder(
+                    "Manual",
+                    [
+                        folder(
+                            "Main Engine",
+                            [
+                                leaf("Operation & Maintenance Manual"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Auxiliary Engine",
+                            [
+                                leaf("Operation & Maintenance Manual"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Boiler",
+                            [
+                                leaf("Operation & Maintenance Manual"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Shafting",
+                            [
+                                leaf("Stern Tube Manual"),
+                                leaf("CPP Manual"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Steering Gear",
+                            [
+                                leaf("Operation Manual"),
+                                leaf("Maintenance Manual"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Propulsion",
+                            [
+                                leaf("Shaft Generator Manual"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Thrusters",
+                            [
+                                leaf("Operation & Maintenance Manual"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Electrical",
+                            [
+                                leaf("Power Management System"),
+                                leaf("Main Switchboard Manual"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Automation",
+                            [
+                                leaf("Alarm Monitoring System"),
+                                leaf("Engine Control System"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Cargo",
+                            [
+                                leaf("Cargo Crane Manual"),
+                                leaf("Hatch Cover Manual"),
+                                leaf("Ballast System Manual"),
+                                leaf("Cargo Pump Manual"),
+                                leaf("IG System Manual"),
+                                leaf("COW Manual"),
+                                leaf("ODME Manual"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Safety",
+                            [
+                                leaf("Fire Detection System Manual"),
+                                leaf("Fire Alarm Manual"),
+                                leaf("CO2 System Manual"),
+                                leaf("Emergency Generator Manual"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Pollution",
+                            [
+                                leaf("BWTS Manual"),
+                                leaf("OWS Manual"),
+                                leaf("Sewage Treatment Plant Manual"),
+                                leaf("Incinerator Manual"),
+                                leaf("Exhaust Gas Scrubber Manual"),
+                                leaf("SCR System Manual"),
+                                leaf("EGR System Manual"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Refrigeration",
+                            [
+                                leaf("AC Plant Manual"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                        folder(
+                            "Deck Machinery",
+                            [
+                                leaf("Windlass Manual"),
+                                leaf("Mooring Winch Manual"),
+                                leaf("Hydraulic Manual"),
+                                leaf("To be Classified"),
+                            ],
+                        ),
+                    ],
+                ),
+                leaf("To be Classified"),
+            ],
         ),
         folder("PO & Invoice", [leaf("Purchase Order"), leaf("Vendor Invoice")]),
         leaf("Incidents"),

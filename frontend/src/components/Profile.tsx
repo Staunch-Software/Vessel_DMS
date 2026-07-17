@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
-  Anchor, Mail, Phone, Clock, LogOut, Camera,
+  Mail, Phone, Clock, LogOut, Camera,
   MapPin, Hash, Calendar, Users, ArrowLeft, LayoutDashboard,
   Layers, ShieldOff, Edit3, Save, X,
   Building2, Activity, RefreshCw, UserCheck,
@@ -340,11 +340,13 @@ interface MiniSidebarProps {
   mains: FolderNode[];
   displayName: string;
   jobTitle: string;
+  photoBase64?: string | null;
   onBack: () => void;
   onDashboard: () => void;
+  onViewFullPhoto?: () => void;
 }
 
-function MiniSidebar({ mains, displayName, jobTitle, onBack, onDashboard }: MiniSidebarProps) {
+function MiniSidebar({ mains, displayName, jobTitle, photoBase64, onBack, onDashboard, onViewFullPhoto }: MiniSidebarProps) {
   return (
     <aside
       className="flex h-full w-72 shrink-0 flex-col"
@@ -355,15 +357,14 @@ function MiniSidebar({ mains, displayName, jobTitle, onBack, onDashboard }: Mini
         onClick={onBack}
         className="flex items-center gap-3 px-5 py-5 text-left transition hover:bg-white/5 w-full"
       >
-        <div
-          className="flex h-10 w-10 items-center justify-center rounded-xl"
-          style={{ background: "rgba(20,184,166,0.2)", border: "1px solid rgba(94,234,212,0.3)" }}
-        >
-          <Anchor className="h-5 w-5" style={{ color: teal300 }} />
-        </div>
+        <img
+          src="/nissen-logo.svg"
+          alt="Nissen Kaiun logo"
+          className="h-10 w-auto drop-shadow-md"
+        />
         <div>
           <h1 className="text-sm font-semibold leading-tight" style={{ color: white }}>
-            Vessel DMS
+            Nissen DMS
           </h1>
           <p className="text-[11px]" style={{ color: slate400 }}>SharePoint Embedded</p>
         </div>
@@ -435,10 +436,18 @@ function MiniSidebar({ mains, displayName, jobTitle, onBack, onDashboard }: Mini
       >
         <div className="flex items-center gap-2">
           <div
-            className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold"
+            onClick={() => {
+              if (photoBase64 && onViewFullPhoto) onViewFullPhoto();
+            }}
+            className={"flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold overflow-hidden " + (photoBase64 ? "cursor-pointer hover:opacity-80 transition" : "")}
             style={{ background: teal, color: navy }}
+            title={photoBase64 ? "Click to view full photo" : undefined}
           >
-            {displayName.split(" ").map((n) => n[0]).join("")}
+            {photoBase64 ? (
+              <img src={photoBase64} alt="Profile" className="h-full w-full object-cover" />
+            ) : (
+              displayName.split(" ").map((n) => n[0]).join("")
+            )}
           </div>
           <div className="min-w-0">
             <p className="truncate text-[11px] font-medium" style={{ color: slate200 }}>
@@ -474,6 +483,7 @@ export default function ProfilePage({
   const [form,             setForm]             = useState<EditForm>(initForm(null));
   const [formErrors,       setFormErrors]       = useState<FormErrors>({});
   const [showSignOutPopup, setShowSignOutPopup] = useState(false);
+  const [showFullPhoto, setShowFullPhoto] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
 
@@ -603,8 +613,10 @@ export default function ProfilePage({
         mains={mains}
         displayName={displayName}
         jobTitle={profile?.job_title ?? ""}
+        photoBase64={profile?.photo_base64}
         onBack={onBack}
         onDashboard={onDashboard}
+        onViewFullPhoto={() => setShowFullPhoto(true)}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
@@ -755,8 +767,14 @@ export default function ProfilePage({
                         className="hidden"
                         onChange={handlePhotoChange}
                       />
-                      <div className="flex h-24 w-24 items-center justify-center rounded-full text-3xl font-bold overflow-hidden"
-                        style={{ background: `radial-gradient(circle at 35% 30%, ${steel}, ${navy2} 75%)`, border: `3px solid ${teal300}`, color: white }}>
+                      <div 
+                        onClick={() => {
+                          if (profile?.photo_base64) setShowFullPhoto(true);
+                        }}
+                        className={"flex h-24 w-24 items-center justify-center rounded-full text-3xl font-bold overflow-hidden " + (profile?.photo_base64 ? "cursor-pointer hover:opacity-90 transition" : "")}
+                        style={{ background: `radial-gradient(circle at 35% 30%, ${steel}, ${navy2} 75%)`, border: `3px solid ${teal300}`, color: white }}
+                        title={profile?.photo_base64 ? "Click to view full photo" : undefined}
+                      >
                         {profile?.photo_base64 ? (
                           <img src={profile.photo_base64} alt="Profile" className="h-full w-full object-cover" />
                         ) : (
@@ -1013,6 +1031,35 @@ export default function ProfilePage({
           )}
         </div>
       </main>
+
+      {/* Full Photo Modal */}
+      {showFullPhoto && profile?.photo_base64 && (
+        <div 
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-md cursor-pointer"
+          onClick={() => setShowFullPhoto(false)}
+        >
+          <div 
+            className="relative max-h-[90vh] max-w-[90vw] overflow-hidden rounded-2xl border border-white/10 bg-black/40 shadow-2xl p-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img 
+              src={profile.photo_base64} 
+              alt="Full Profile" 
+              className="max-h-[80vh] max-w-[80vw] rounded-xl object-contain" 
+            />
+            <div className="mt-3 flex items-center justify-between px-2">
+              <span className="text-xs text-white/60 font-medium">{displayName} &middot; Profile Photo</span>
+              <button 
+                onClick={() => setShowFullPhoto(false)}
+                className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/20 transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

@@ -8,7 +8,9 @@
 """
 from datetime import date, datetime
 
+# pyrefly: ignore [missing-import]
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, String, Text, func
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -162,3 +164,14 @@ class ActivityLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     user: Mapped["UserProfile"] = relationship(back_populates="activity_logs")
+
+
+class ArchivedItem(Base):
+    __tablename__ = "archived_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    item_type: Mapped[str] = mapped_column(String(20))  # "folder" or "file"
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+

@@ -16,6 +16,7 @@ warnings.filterwarnings("ignore", message="Timezone offset does not match system
 import httpx
 
 from fastapi import FastAPI, Form, Header, HTTPException, Query, Response, UploadFile
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -156,38 +157,51 @@ async def check_email(payload: CheckEmailIn):
 
     # Acquire an app-only token for Graph
     token_url = f"{settings.graph_authority}/{settings.azure_tenant_id}/oauth2/v2.0/token"
-    async with httpx.AsyncClient(verify=settings.graph_verify_ssl) as client:
-        # 1. Get an app-only access token
-        token_resp = await client.post(
-            token_url,
-            data={
-                "grant_type": "client_credentials",
-                "client_id": settings.graph_client_id,
-                "client_secret": settings.graph_client_secret,
-                "scope": settings.graph_scope,
-            },
-        )
-        if token_resp.status_code != 200:
-            # If we can't reach Graph, fail open so the user can still try MSAL.
+    try:
+        async with httpx.AsyncClient(verify=settings.graph_verify_ssl, timeout=10.0) as client:
+            # 1. Get an app-only access token
+            token_resp = await client.post(
+                token_url,
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": settings.graph_client_id,
+                    "client_secret": settings.graph_client_secret,
+                    "scope": settings.graph_scope,
+                },
+            )
+            if token_resp.status_code != 200:
+                # If we can't reach Graph, fail open so the user can still try MSAL.
+                return {"allowed": True}
+
+            app_token = token_resp.json().get("access_token", "")
+
+            # 2. Look up the user in the directory
+            user_resp = await client.get(
+                f"{settings.graph_base_url}/users/{email}",
+                headers={"Authorization": f"Bearer {app_token}"},
+            )
+
+            if user_resp.status_code == 200:
+                return {"allowed": True}
+            if user_resp.status_code == 404:
+                raise HTTPException(
+                    401,
+                    detail="This email address is not authorised. Contact your administrator.",
+                )
+            # Any other error from Graph — fail open
             return {"allowed": True}
-
-        app_token = token_resp.json().get("access_token", "")
-
-        # 2. Look up the user in the directory
-        user_resp = await client.get(
-            f"{settings.graph_base_url}/users/{email}",
-            headers={"Authorization": f"Bearer {app_token}"},
-        )
-
-    if user_resp.status_code == 200:
-        return {"allowed": True}
-    if user_resp.status_code == 404:
+    except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.TimeoutException) as timeout_err:
+        print("ConnectTimeout or ReadTimeout")
         raise HTTPException(
-            403,
-            detail="This email address is not authorised. Contact your administrator.",
+            status_code=500,
+            detail="connection time-out and unreachable authentication request"
         )
-    # Any other error from Graph — fail open
-    return {"allowed": True}
+    except httpx.RequestError as req_err:
+        print("ConnectTimeout or ReadTimeout")
+        raise HTTPException(
+            status_code=500,
+            detail="connection time-out and unreachable authentication request"
+        )
 
 
 @app.post("/api/auth/login")
@@ -294,21 +308,48 @@ async def auth_login(payload: LoginIn):
                 if is_new:
                     row = db_models.UserProfile(email=email)
                     db.add(row)
+                    row.display_name = display_name
+                    row.first_name = me.get("givenName")
+                    row.last_name = me.get("surname")
+                    row.azure_oid = me.get("id")
+                    row.job_title = me.get("jobTitle")
+                    row.department = me.get("department")
+                    row.phone = phone
+                    row.office_location = me.get("officeLocation")
+                    row.company_name = me.get("companyName")
+                    row.employee_id = me.get("employeeId")
+                    if manager_name:
+                        row.manager_name = manager_name
+                    if manager_email:
+                        row.manager_email = manager_email
+                else:
+                    # For existing users, only populate missing/null fields
+                    # with Graph data so user's edits in the app are preserved.
+                    if not row.display_name:
+                        row.display_name = display_name
+                    if not row.first_name:
+                        row.first_name = me.get("givenName")
+                    if not row.last_name:
+                        row.last_name = me.get("surname")
+                    if not row.azure_oid:
+                        row.azure_oid = me.get("id")
+                    if not row.job_title:
+                        row.job_title = me.get("jobTitle")
+                    if not row.department:
+                        row.department = me.get("department")
+                    if not row.phone:
+                        row.phone = phone
+                    if not row.office_location:
+                        row.office_location = me.get("officeLocation")
+                    if not row.company_name:
+                        row.company_name = me.get("companyName")
+                    if not row.employee_id:
+                        row.employee_id = me.get("employeeId")
+                    if not row.manager_name and manager_name:
+                        row.manager_name = manager_name
+                    if not row.manager_email and manager_email:
+                        row.manager_email = manager_email
 
-                row.display_name = display_name
-                row.first_name = me.get("givenName")
-                row.last_name = me.get("surname")
-                row.azure_oid = me.get("id")
-                row.job_title = me.get("jobTitle")
-                row.department = me.get("department")
-                row.phone = phone
-                row.office_location = me.get("officeLocation")
-                row.company_name = me.get("companyName")
-                row.employee_id = me.get("employeeId")
-                if manager_name:
-                    row.manager_name = manager_name
-                if manager_email:
-                    row.manager_email = manager_email
                 row.tenant_id = payload.tenant_id or None
                 row.last_login = now
 
@@ -361,11 +402,26 @@ async def auth_login(payload: LoginIn):
         except Exception:
             pass  # Non-critical; don't break login
 
-    profile.setdefault("created_at", now.isoformat())
-    profile.setdefault("emergency_contact", None)
-    profile.setdefault("folder_permissions", [])
-    profile.setdefault("recent_activity", [{"action": "login", "detail": "Logged in", "created_at": now.isoformat()}])
-    _profile_cache[email] = profile
+    # Merge with existing cache if present to preserve user's edits
+    existing_cached = _profile_cache.get(email)
+    if existing_cached:
+        # Update last login and non-empty values
+        for key in ["last_login", "tenant_id"]:
+            if key in profile:
+                existing_cached[key] = profile[key]
+        for key in ["display_name", "first_name", "last_name", "azure_oid", "job_title", 
+                    "department", "phone", "office_location", "company_name", "employee_id", 
+                    "manager_name", "manager_email"]:
+            val = profile.get(key)
+            if val and not existing_cached.get(key):
+                existing_cached[key] = val
+        profile = existing_cached
+    else:
+        profile.setdefault("created_at", now.isoformat())
+        profile.setdefault("emergency_contact", None)
+        profile.setdefault("folder_permissions", [])
+        profile.setdefault("recent_activity", [{"action": "login", "detail": "Logged in", "created_at": now.isoformat()}])
+        _profile_cache[email] = profile
 
     return {"display_name": display_name, "email": email}
 
@@ -661,7 +717,26 @@ async def create_vessel(payload: VesselIn):
             hull_number=(payload.hull_number or "").strip() or None,
             vessel_type=vtype,
         )
-    except (BadRequest, Conflict) as e:
+    except Conflict as e:
+        if str(e) == "Vessel name already exists.":
+            return JSONResponse(status_code=409, content={"message": str(e)})
+        _raise(e)
+    except BadRequest as e:
+        _raise(e)
+
+
+@app.post("/api/vessels/{vessel_id}/reprovision")
+async def reprovision_vessel(vessel_id: str):
+    """Re-run idempotent folder provisioning for an existing vessel.
+
+    Safe to call at any time — ensure_folder is create-or-fetch, so existing
+    folders are never duplicated; only missing subfolders are created.
+    """
+    try:
+        return await get_backend().reprovision_vessel(vessel_id)
+    except NotFound as e:
+        _raise(e)
+    except BadRequest as e:
         _raise(e)
 
 
@@ -821,3 +896,84 @@ async def get_job(job_id: str):
     if job is None:
         raise HTTPException(404, "Job not found")
     return job
+
+
+@app.get("/api/archive/ids")
+async def get_archived_ids():
+    try:
+        return await get_backend().get_archived_ids()
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get archived IDs: {e}")
+
+
+@app.get("/api/archive/nodes")
+async def get_archived_nodes():
+    try:
+        return await get_backend().get_archived_nodes()
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get archived nodes: {e}")
+
+
+@app.post("/api/archive/{item_id}", status_code=204)
+async def archive_item(item_id: str, type: str = Query("folder"), user_email: str | None = Query(None), x_user_email: str | None = Header(default=None)):
+    try:
+        await get_backend().archive_item(item_id, type)
+        _log_activity(user_email or x_user_email, "archive_folder" if type == "folder" else "archive_file", f"Archived {type}: {item_id}")
+        return Response(status_code=204)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to archive item: {e}")
+
+
+@app.post("/api/restore/{item_id}", status_code=204)
+async def restore_item(item_id: str, user_email: str | None = Query(None), x_user_email: str | None = Header(default=None)):
+    try:
+        await get_backend().restore_item(item_id)
+        _log_activity(user_email or x_user_email, "restore_folder", f"Restored item: {item_id}")
+        return Response(status_code=204)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to restore item: {e}")
+
+
+@app.get("/api/recycle-bin/ids")
+async def get_deleted_ids():
+    try:
+        return await get_backend().get_deleted_ids()
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get deleted IDs: {e}")
+
+
+@app.get("/api/recycle-bin/nodes")
+async def get_deleted_nodes():
+    try:
+        return await get_backend().get_deleted_nodes()
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get deleted nodes: {e}")
+
+
+@app.post("/api/recycle-bin/restore/{item_id}", status_code=204)
+async def restore_deleted_item(item_id: str, type: str = Query("folder"), user_email: str | None = Query(None), x_user_email: str | None = Header(default=None)):
+    try:
+        result = await get_backend().restore_deleted_item(item_id)
+        if not result:
+            raise HTTPException(404, "Item not found in Recycle Bin")
+        _log_activity(user_email or x_user_email, "restore_folder" if type == "folder" else "restore_file", f"Restored {type}: {item_id}")
+        return Response(status_code=204)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to restore deleted item: {e}")
+
+
+@app.delete("/api/recycle-bin/{item_id}", status_code=204)
+async def permanent_delete_item(item_id: str, type: str = Query("folder"), user_email: str | None = Query(None), x_user_email: str | None = Header(default=None)):
+    try:
+        result = await get_backend().permanent_delete_item(item_id, type)
+        if not result:
+            raise HTTPException(404, "Item not found")
+        _log_activity(user_email or x_user_email, "permanent_delete_folder" if type == "folder" else "permanent_delete_file", f"Permanently deleted {type}: {item_id}")
+        return Response(status_code=204)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to permanently delete item: {e}")
+

@@ -1,30 +1,40 @@
 import { useState } from "react";
-import { LayoutDashboard, Layers, Plus, User, LogOut, ShieldOff } from "lucide-react";
+import { LayoutDashboard, Layers, Plus, User, LogOut, ShieldOff, Archive, Trash2 } from "lucide-react";
 import type { FolderNode } from "../api";
 import { MAIN_ACCENTS } from "./nodeStyle";
 
 interface Props {
   mains: FolderNode[];
-  view: "dashboard" | "explorer" | "profile";
+  view: "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin";
   selectedMainId: string | null;
+  userDisplayName?: string;
+  userPhotoBase64?: string | null;
   onSelectMain: (node: FolderNode) => void;
   onDashboard: () => void;
   onNewVessel: () => void;
   onSignOut: () => void;
   onGlobalSignOut: () => void;
   onProfile: () => void;
+  onViewFullPhoto?: () => void;
+  onArchive: () => void;
+  onRecycleBin: () => void;
 }
 
 export function Sidebar({
   mains,
   view,
   selectedMainId,
+  userDisplayName,
+  userPhotoBase64,
   onSelectMain,
   onDashboard,
   onNewVessel,
   onSignOut,
   onGlobalSignOut,
   onProfile,
+  onViewFullPhoto,
+  onArchive,
+  onRecycleBin,
 }: Props) {
   const [showSignOutPopup, setShowSignOutPopup] = useState(false);
 
@@ -109,6 +119,45 @@ export function Sidebar({
 
       {/* Bottom: Profile + Sign-out section */}
       <div className="border-t border-white/10 px-3 py-3 space-y-1">
+        {/* Archive button */}
+        <button
+          onClick={onArchive}
+          className={
+            "group flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition " +
+            (view === "archive"
+              ? "bg-white/10 font-medium text-white"
+              : "text-slate-300 hover:bg-white/5 hover:text-white")
+          }
+          title="View Archived Folders"
+        >
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10">
+            <Archive className="h-4 w-4 text-amber-400" />
+          </span>
+          <span className="truncate min-w-0 flex-1 text-left">
+            Archive
+          </span>
+        </button>
+
+        {/* Recycle Bin button */}
+        <button
+          onClick={onRecycleBin}
+          className={
+            "group flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition " +
+            (view === "recycle_bin"
+              ? "bg-white/10 font-medium text-white"
+              : "text-slate-300 hover:bg-white/5 hover:text-white")
+          }
+          title="View Recycle Bin"
+        >
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10">
+            <Trash2 className="h-4 w-4 text-rose-400" />
+          </span>
+          <span className="truncate min-w-0 flex-1 text-left">
+            Recycle Bin
+          </span>
+        </button>
+
+
         {/* Profile button */}
         <button
           onClick={onProfile}
@@ -120,10 +169,27 @@ export function Sidebar({
           }
           title="View Profile"
         >
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10">
-            <User className="h-4 w-4 text-brand-300" />
+          <span 
+            onClick={(e) => {
+              if (userPhotoBase64 && onViewFullPhoto) {
+                e.stopPropagation();
+                onViewFullPhoto();
+              }
+            }}
+            className={"flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold overflow-hidden " + (userPhotoBase64 ? "cursor-pointer hover:opacity-85 transition rounded-full" : "bg-white/10 text-brand-300")}
+            title={userPhotoBase64 ? "Click to view full photo" : undefined}
+          >
+            {userPhotoBase64 ? (
+              <img src={userPhotoBase64} alt="Profile" className="h-full w-full object-cover" />
+            ) : userDisplayName ? (
+              userDisplayName.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
+            ) : (
+              <User className="h-4 w-4" />
+            )}
           </span>
-          Profile
+          <span className="truncate min-w-0 flex-1 text-left">
+            {userDisplayName || "Profile"}
+          </span>
         </button>
 
         {/* Sign-out button */}

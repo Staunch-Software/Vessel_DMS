@@ -9,17 +9,19 @@
 """
 import asyncio
 from datetime import date
+from sqlalchemy import func
 
 from .. import template
 from ..config import settings
 from ..db.base import SessionLocal
 from ..db import models
 from ..graph import drive as gd
-from ..graph.client import GraphError
+from ..graph.client import GraphError, graph
 from ..ocr.dates import month_label
 from ..ocr.extract import detect_document_month
 from .classify import classify
 from .errors import BadRequest, Conflict, NotFound, InternalServerError
+from .normalize import normalize_vessel_name
 
 
 def sanitize_folder_name(name: str) -> str:
@@ -172,9 +174,24 @@ class RealBackend:
             raise BadRequest("Vessel name is required")
         if imo and (not imo.isdigit() or len(imo) != 7):
             raise BadRequest("IMO number must be exactly 7 digits")
+        normalized_name = normalize_vessel_name(name)
         with SessionLocal() as db:
-            if db.query(models.Vessel).filter(models.Vessel.name.ilike(name)).first():
-                raise Conflict("A vessel with that name already exists")
+            existing = db.query(models.Vessel).filter(
+                func.lower(
+                    func.replace(
+                        func.replace(
+                            func.replace(
+                                func.replace(models.Vessel.name, ' ', ''),
+                                '_', ''
+                            ),
+                            "'", ''
+                        ),
+                        '"', ''
+                    )
+                ) == normalized_name
+            ).first()
+            if existing:
+                raise Conflict("Vessel name already exists.")
             if imo and db.query(models.Vessel).filter_by(imo=imo).first():
                 raise Conflict("A vessel with that IMO number already exists")
 
@@ -234,6 +251,42 @@ class RealBackend:
             "hull_number": vhull,
             "vessel_type": vtype,
         }
+
+    async def reprovision_vessel(self, vessel_id: str) -> dict:
+        """Idempotently re-run folder provisioning for an existing vessel.
+
+        Safe to call at any time: `ensure_folder` is a create-or-fetch operation,
+        so existing folders are left untouched and only missing ones are created.
+        """
+        await self.ensure_base_structure()
+        drive_id = await self._drive()
+
+        with SessionLocal() as db:
+            vessel = db.query(models.Vessel).filter_by(id=vessel_id).one_or_none()
+            if vessel is None:
+                raise NotFound(f"Vessel {vessel_id!r} not found")
+            name = vessel.name
+            vid = vessel.id
+            main_ids = {
+                m: db.query(models.Folder).filter_by(path=m).one().drive_item_id
+                for m in template.MAIN_FOLDERS
+            }
+
+        async def reprovision_main(main):
+            ship = await gd.ensure_folder(drive_id, main_ids[main], name)
+            ship_path = f"{main}/{name}"
+            with SessionLocal() as db:
+                self._upsert(db, ship_path, name, "ship", ship["id"], False, vid)
+                db.commit()
+            await asyncio.gather(
+                *(
+                    self._ensure_node(drive_id, ship["id"], ship_path, spec, vid)
+                    for spec in template.SHIP_TEMPLATE[main]
+                )
+            )
+
+        await asyncio.gather(*(reprovision_main(m) for m in template.MAIN_FOLDERS))
+        return {"ok": True, "vessel_id": vessel_id, "name": name}
 
     # ----------------------------------------------------------- navigation
     async def mains(self):
@@ -443,14 +496,28 @@ class RealBackend:
         """Delete a folder and all its contents via Graph API."""
         drive_id = await self._drive()
         from ..graph import drive as _gd
-        await _gd.delete_item(drive_id, folder_id)
-        # Remove from DB cache
+
+        # Resolve the logical path of this folder from SQLite cache before deleting
         with SessionLocal() as db:
-            rows = (
-                db.query(models.Folder)
-                .filter(models.Folder.drive_item_id == folder_id)
-                .all()
-            )
+            folder_row = db.query(models.Folder).filter(models.Folder.drive_item_id == folder_id).first()
+            folder_path = folder_row.path if folder_row else None
+
+        await _gd.delete_item(drive_id, folder_id)
+
+        # Remove the folder and all of its descendant folders from the database cache
+        with SessionLocal() as db:
+            if folder_path:
+                rows = (
+                    db.query(models.Folder)
+                    .filter((models.Folder.path == folder_path) | (models.Folder.path.like(f"{folder_path}/%")))
+                    .all()
+                )
+            else:
+                rows = (
+                    db.query(models.Folder)
+                    .filter(models.Folder.drive_item_id == folder_id)
+                    .all()
+                )
             for row in rows:
                 db.delete(row)
             db.commit()
@@ -459,16 +526,29 @@ class RealBackend:
     async def create_subfolder(self, folder_id: str, name: str) -> dict:
         """Manually create a named sub-folder inside a month_driven folder,
         then provision its category children from the template."""
-        name = (name or "").strip()
-        name = sanitize_folder_name(name)
+        from .normalize import clean_folder_name
+        name = clean_folder_name(name)
         if not name:
             raise BadRequest("Folder name is required")
+        if not any(c.isalpha() for c in name):
+            raise BadRequest("Folder name must contain alphabetic characters (letters)")
+        name = sanitize_folder_name(name)
         drive_id = await self._drive()
         parent_path = await self._folder_path(drive_id, folder_id)
         parent_parts = parent_path.split("/") if parent_path else []
         parent_flags = classify(parent_parts)
         if not parent_flags.get("month_driven"):
             raise BadRequest("Can only create sub-folders inside month-driven folders")
+        
+        # Check for duplicate folder names (case-insensitive and normalized)
+        from .normalize import normalize_folder_name
+        normalized_new_name = normalize_folder_name(name)
+        existing_items = await gd.list_children(drive_id, folder_id)
+        for it in existing_items:
+            if "folder" in it:
+                if normalize_folder_name(it["name"]) == normalized_new_name:
+                    raise Conflict(f"A folder with a similar name '{it['name']}' already exists here (ignoring casing, spaces, and special characters)")
+
         new_item = await gd.ensure_folder(drive_id, folder_id, name)
         mpath = f"{parent_path}/{name}"
         cats = parent_flags.get("categories", [])
@@ -684,3 +764,132 @@ class RealBackend:
             "destination": job.destination,
             "detected_month": job.detected_month,
         }
+
+    async def archive_item(self, item_id: str, item_type: str):
+        with SessionLocal() as db:
+            row = db.query(models.ArchivedItem).filter_by(item_id=item_id).one_or_none()
+            if not row:
+                row = models.ArchivedItem(item_id=item_id, item_type=item_type)
+                db.add(row)
+                db.commit()
+
+    async def restore_item(self, item_id: str):
+        with SessionLocal() as db:
+            row = db.query(models.ArchivedItem).filter_by(item_id=item_id).one_or_none()
+            if row:
+                db.delete(row)
+                db.commit()
+
+    async def get_archived_ids(self) -> list[str]:
+        with SessionLocal() as db:
+            rows = db.query(models.ArchivedItem).all()
+            return [r.item_id for r in rows]
+
+    async def get_archived_nodes(self):
+        drive_id = await self._drive()
+        ids = await self.get_archived_ids()
+        out = []
+        for i in ids:
+            try:
+                it = await gd.get_item(drive_id, i)
+                is_folder = "folder" in it
+                kind = "folder" if is_folder else "file"
+
+                # Derive logical path and main folder from parentReference
+                ref = (it.get("parentReference") or {}).get("path", "")
+                rel = ref.split("root:", 1)[1].lstrip("/") if "root:" in ref else ""
+                original_path = f"{rel}/{it['name']}".strip("/") if rel else it["name"]
+                main_folder = original_path.split("/", 1)[0] if "/" in original_path else original_path
+
+                node = {
+                    "id": it["id"],
+                    "name": it["name"],
+                    "kind": kind,
+                    "upload": False,
+                    "month_driven": False,
+                    "has_children": is_folder and it.get("folder", {}).get("childCount", 0) > 0,
+                    "main_folder": main_folder,
+                    "original_path": original_path,
+                }
+                if not is_folder:
+                    node["ext"] = it["name"].rsplit(".", 1)[-1].lower() if "." in it["name"] else ""
+                    node["size"] = it.get("size")
+                    node["modified"] = it.get("lastModifiedDateTime")
+                out.append(node)
+            except Exception:
+                pass
+        return out
+
+    async def get_deleted_ids(self) -> list[str]:
+        try:
+            url = f"/storage/fileStorage/containers/{settings.container_id}/recycleBin/items"
+            data = await graph().get(url)
+            items = data.get("value", [])
+            return [it["id"] for it in items]
+        except Exception:
+            return []
+
+    async def get_deleted_nodes(self):
+        try:
+            url = f"/storage/fileStorage/containers/{settings.container_id}/recycleBin/items"
+            data = await graph().get(url)
+            items = data.get("value", [])
+            out = []
+            for it in items:
+                name = it["name"]
+                is_folder = "." not in name
+                kind = "folder" if is_folder else "file"
+
+                # Parse main folder and original path from deletedFromLocation
+                loc = it.get("deletedFromLocation", "")
+                main_folder = ""
+                original_path = ""
+                if "Document Library/" in loc:
+                    rel_part = loc.split("Document Library/", 1)[1]
+                    original_path = rel_part
+                    if "/" in rel_part:
+                        main_folder = rel_part.split("/", 1)[0]
+                    else:
+                        main_folder = rel_part
+
+                node = {
+                    "id": it["id"],
+                    "name": name,
+                    "kind": kind,
+                    "upload": False,
+                    "month_driven": False,
+                    "has_children": False,
+                    "main_folder": main_folder,
+                    "original_path": original_path,
+                }
+                if not is_folder:
+                    node["ext"] = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+                    node["size"] = it.get("size")
+                    node["modified"] = it.get("deletedDateTime") or it.get("lastModifiedDateTime")
+                out.append(node)
+            return out
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to get deleted nodes: {e}")
+            return []
+
+    async def restore_deleted_item(self, item_id: str) -> bool:
+        url = f"/storage/fileStorage/containers/{settings.container_id}/recycleBin/items/restore"
+        try:
+            await graph().post(url, json={"ids": [item_id]})
+            return True
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to restore deleted item {item_id}: {e}")
+            return False
+
+    async def permanent_delete_item(self, item_id: str, item_type: str) -> bool:
+        url = f"/storage/fileStorage/containers/{settings.container_id}/recycleBin/items/delete"
+        try:
+            await graph().post(url, json={"ids": [item_id]})
+            return True
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to permanently delete item {item_id}: {e}")
+            return False
+

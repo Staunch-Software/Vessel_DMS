@@ -19,6 +19,7 @@ _ocr = None
 def _get_ocr():
     global _ocr
     if _ocr is None:
+        # pyrefly: ignore [missing-import]
         from paddleocr import PaddleOCR
 
         _ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
@@ -40,7 +41,9 @@ def _ocr_image_array(arr) -> str:
 
 
 def _png_to_array(png_bytes: bytes):
+    # pyrefly: ignore [missing-import]
     import numpy as np
+    # pyrefly: ignore [missing-import]
     from PIL import Image
 
     img = Image.open(io.BytesIO(png_bytes)).convert("RGB")

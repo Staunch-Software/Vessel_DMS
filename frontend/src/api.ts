@@ -21,6 +21,8 @@ export interface FolderNode {
   modified?: string | null;
   categories?: string[];
   children?: FolderNode[];
+  main_folder?: string;
+  original_path?: string;
 }
 
 export interface Vessel {
@@ -68,6 +70,10 @@ export async function listVessels(): Promise<Vessel[]> {
 
 export async function createVessel(payload: VesselInput): Promise<unknown> {
   return (await api.post("/vessels", payload)).data;
+}
+
+export async function reprovisionVessel(vesselId: string): Promise<{ ok: boolean; vessel_id: string; name: string }> {
+  return (await api.post(`/vessels/${vesselId}/reprovision`)).data;
 }
 
 export interface Stats {
@@ -152,6 +158,43 @@ export async function deleteFolder(folderId: string, userEmail?: string, folderN
   if (folderName) params.folder_name = folderName;
   await api.delete(`/folders/${folderId}`, Object.keys(params).length ? { params } : undefined);
 }
+
+export async function getArchivedIds(): Promise<string[]> {
+  return (await api.get("/archive/ids")).data;
+}
+
+export async function getArchivedNodes(): Promise<FolderNode[]> {
+  return (await api.get("/archive/nodes")).data;
+}
+
+export async function archiveItem(itemId: string, type: "folder" | "file", userEmail?: string): Promise<void> {
+  const params: Record<string, string> = { type };
+  if (userEmail) params.user_email = userEmail;
+  await api.post(`/archive/${itemId}`, null, { params });
+}
+
+export async function restoreItem(itemId: string, userEmail?: string): Promise<void> {
+  const params: Record<string, string> = {};
+  if (userEmail) params.user_email = userEmail;
+  await api.post(`/restore/${itemId}`, null, { params });
+}
+
+export async function getDeletedNodes(): Promise<FolderNode[]> {
+  return (await api.get("/recycle-bin/nodes")).data;
+}
+
+export async function restoreDeletedItem(itemId: string, type: "folder" | "file", userEmail?: string): Promise<void> {
+  const params: Record<string, string> = { type };
+  if (userEmail) params.user_email = userEmail;
+  await api.post(`/recycle-bin/restore/${itemId}`, null, { params });
+}
+
+export async function permanentDeleteItem(itemId: string, type: "folder" | "file", userEmail?: string): Promise<void> {
+  const params: Record<string, string> = { type };
+  if (userEmail) params.user_email = userEmail;
+  await api.delete(`/recycle-bin/${itemId}`, { params });
+}
+
 
 export async function logActivity(email: string, action: string, detail?: string): Promise<void> {
   try {
