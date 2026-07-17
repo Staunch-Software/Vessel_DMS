@@ -28,16 +28,18 @@ class StubBackend:
         imo = (imo or "").strip()
         if not name:
             raise BadRequest("Vessel name is required")
-        if imo and not imo.isdigit() or (imo and len(imo) != 7):
+        if not imo:
+            raise BadRequest("IMO number is required")
+        if not imo.isdigit() or len(imo) != 7:
             raise BadRequest("IMO number must be exactly 7 digits")
         
         normalized_name = normalize_vessel_name(name)
         if any(normalize_vessel_name(v["name"]) == normalized_name for v in store.vessels):
             raise Conflict("Vessel name already exists.")
-        if imo and any(v.get("imo") == imo for v in store.vessels):
+        if any(v.get("imo") == imo for v in store.vessels):
             raise Conflict("A vessel with that IMO number already exists")
         return store.add_vessel(
-            name, imo or None, shipyard=shipyard, hull_number=hull_number, vessel_type=vessel_type
+            name, imo, shipyard=shipyard, hull_number=hull_number, vessel_type=vessel_type
         )
 
     async def reprovision_vessel(self, vessel_id: str) -> dict:

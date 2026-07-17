@@ -19,6 +19,7 @@ const normalizeVesselName = (name: string) => {
 export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
   const [name, setName] = useState("");
   const [imo, setImo] = useState("");
+  const [imoTouched, setImoTouched] = useState(false);
   const [shipyard, setShipyard] = useState("");
   const [hull, setHull] = useState("");
   const [vesselType, setVesselType] = useState("");
@@ -26,7 +27,7 @@ export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [backendNameError, setBackendNameError] = useState<string | null>(null);
 
-  const imoValid = imo === "" || /^\d{7}$/.test(imo);
+  const imoValid = /^\d{7}$/.test(imo);
   const normalizedInput = normalizeVesselName(name);
   const isDuplicate = name.trim() !== "" && vessels.some(
     (v) => normalizeVesselName(v.name) === normalizedInput
@@ -34,6 +35,7 @@ export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
   const nameError = isDuplicate ? "Vessel name already exists." : backendNameError;
 
   const submit = async () => {
+    setImoTouched(true);
     if (!name.trim() || !imoValid || isDuplicate) return;
     setBusy(true);
     setError(null);
@@ -108,21 +110,28 @@ export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
           <p className="mt-1 text-xs text-rose-600">{nameError}</p>
         )}
 
-        <label className="mb-1.5 mt-4 block text-sm font-medium text-slate-700">IMO number</label>
+        <label className="mb-1.5 mt-4 block text-sm font-medium text-slate-700">
+          IMO number <span className="text-rose-500">*</span>
+        </label>
         <input
           value={imo}
-          onChange={(e) => setImo(e.target.value.replace(/\D/g, "").slice(0, 7))}
+          onChange={(e) => {
+            setImo(e.target.value.replace(/\D/g, "").slice(0, 7));
+            setImoTouched(true);
+          }}
           inputMode="numeric"
           placeholder="7 digits, e.g. 9074729"
           className={
             "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 " +
-            (imoValid
+            (!imoTouched || imoValid
               ? "dms-input border-border"
-              : "border-error/50 focus:border-error focus:ring-error/20")
+              : "border-rose-300 focus:border-rose-400 focus:ring-rose-100")
           }
         />
-        {!imoValid && (
-          <p className="mt-1 text-xs text-rose-600">IMO number must be exactly 7 digits.</p>
+        {imoTouched && !imoValid && (
+          <p className="mt-1 text-xs text-rose-600">
+            {imo === "" ? "IMO number is required." : "IMO number must be exactly 7 digits."}
+          </p>
         )}
 
         <label className="mb-1.5 mt-4 block text-sm font-medium text-slate-700">

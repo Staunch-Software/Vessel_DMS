@@ -58,13 +58,16 @@ VESSEL_TYPES = {
     "Bulk Carrier",
     "Container Carrier",
     "Gas Carrier",
+    "Oil Tanker",
+    "Chemical Tanker",
+    "Reffer Carrier",
     "Other Cargo Ships",
 }
 
 
 class VesselIn(BaseModel):
     name: str
-    imo: str | None = None
+    imo: str
     shipyard: str | None = None
     hull_number: str | None = None
     vessel_type: str | None = None

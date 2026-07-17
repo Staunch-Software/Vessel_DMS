@@ -46,6 +46,9 @@ export const VESSEL_TYPES = [
   "Bulk Carrier",
   "Container Carrier",
   "Gas Carrier",
+  "Oil Tanker",
+  "Chemical Tanker",
+  "Reffer Carrier",
   "Other Cargo Ships",
 ] as const;
 

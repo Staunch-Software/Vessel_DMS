@@ -228,7 +228,9 @@ class RealBackend:
         imo = (imo or "").strip()
         if not name:
             raise BadRequest("Vessel name is required")
-        if imo and (not imo.isdigit() or len(imo) != 7):
+        if not imo:
+            raise BadRequest("IMO number is required")
+        if not imo.isdigit() or len(imo) != 7:
             raise BadRequest("IMO number must be exactly 7 digits")
         normalized_name = normalize_vessel_name(name)
         with SessionLocal() as db:
@@ -248,7 +250,7 @@ class RealBackend:
             ).first()
             if existing:
                 raise Conflict("Vessel name already exists.")
-            if imo and db.query(models.Vessel).filter_by(imo=imo).first():
+            if db.query(models.Vessel).filter_by(imo=imo).first():
                 raise Conflict("A vessel with that IMO number already exists")
 
         await self.ensure_base_structure()
@@ -257,7 +259,7 @@ class RealBackend:
         with SessionLocal() as db:
             vessel = models.Vessel(
                 name=name,
-                imo=imo or None,
+                imo=imo,
                 shipyard=shipyard,
                 hull_number=hull_number,
                 vessel_type=vessel_type,
