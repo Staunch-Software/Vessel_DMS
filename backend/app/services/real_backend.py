@@ -119,14 +119,30 @@ class RealBackend:
     def _upsert(self, db, path, name, kind, item_id, month_driven, vessel_id):
         row = db.query(models.Folder).filter_by(path=path).one_or_none()
         if row is None:
-            row = models.Folder(path=path)
-            db.add(row)
+            # Also check by drive_item_id to avoid duplicates after renames
+            row = db.query(models.Folder).filter_by(drive_item_id=item_id).one_or_none()
+            if row is not None:
+                # Update path to the new one if it changed
+                old_path_row = db.query(models.Folder).filter_by(path=path).one_or_none()
+                if old_path_row and old_path_row.id != row.id:
+                    db.delete(old_path_row)
+                row.path = path
+            else:
+                row = models.Folder(path=path)
+                db.add(row)
         row.name = name
         row.kind = kind
         row.drive_item_id = item_id
         row.month_driven = month_driven
         if vessel_id is not None:
             row.vessel_id = vessel_id
+        elif row.vessel_id is None and kind == "ship":
+            # Auto-link: try to find a vessel whose name matches this ship folder
+            vessel = db.query(models.Vessel).filter(
+                func.lower(models.Vessel.name) == func.lower(name)
+            ).one_or_none()
+            if vessel:
+                row.vessel_id = vessel.id
         return row
 
     def _folder_by_item(self, db, item_id):
@@ -310,6 +326,142 @@ class RealBackend:
             "vessel_type": vtype,
         }
 
+    async def update_vessel(self, vessel_id: str, name: str | None = None, imo: str | None = None, shipyard: str | None = None, hull_number: str | None = None, vessel_type: str | None = None):
+        with SessionLocal() as db:
+            vessel = db.query(models.Vessel).filter_by(id=int(vessel_id)).first()
+            if not vessel:
+                raise NotFound("Vessel not found")
+            old_name = vessel.name
+            old_imo = vessel.imo
+
+        new_name = name.strip() if name is not None else None
+        if new_name is not None:
+            new_name = sanitize_folder_name(new_name)
+        new_imo = imo.strip() if imo is not None else None
+
+        if new_name is not None and new_name == "":
+            raise BadRequest("Vessel name cannot be empty")
+        if new_imo is not None and new_imo == "":
+            raise BadRequest("IMO number cannot be empty")
+        if new_imo and (not new_imo.isdigit() or len(new_imo) != 7):
+            raise BadRequest("IMO number must be exactly 7 digits")
+
+        if new_name and new_name.lower() != old_name.lower():
+            normalized_name = normalize_vessel_name(new_name)
+            with SessionLocal() as db:
+                existing = db.query(models.Vessel).filter(
+                    func.lower(
+                        func.replace(
+                            func.replace(
+                                func.replace(
+                                    func.replace(models.Vessel.name, ' ', ''),
+                                    '_', ''
+                                ),
+                                "'", ''
+                            ),
+                            '"', ''
+                        )
+                    ) == normalized_name
+                ).first()
+                if existing:
+                    raise Conflict("Vessel name already exists.")
+
+        if new_imo and new_imo != old_imo:
+            with SessionLocal() as db:
+                if db.query(models.Vessel).filter_by(imo=new_imo).first():
+                    raise Conflict("A vessel with that IMO number already exists")
+
+        if new_name and new_name != old_name:
+            drive_id = await self._drive()
+            from ..graph import drive as _gd
+            with SessionLocal() as db:
+                # Rename all ship folders linked to this vessel in SharePoint
+                vessel_folders = db.query(models.Folder).filter_by(vessel_id=int(vessel_id), kind="ship").all()
+                for folder in vessel_folders:
+                    try:
+                        await _gd.graph().patch(f"/drives/{drive_id}/items/{folder.drive_item_id}", json={"name": new_name})
+                    except Exception as e:
+                        print(f"Error renaming folder {folder.path} in SharePoint: {e}")
+
+                # Also find orphaned ship folders (vessel_id=None) with the old name
+                # and rename + link them to this vessel
+                orphaned = db.query(models.Folder).filter(
+                    models.Folder.kind == "ship",
+                    models.Folder.vessel_id == None,  # noqa: E711
+                    func.lower(models.Folder.name) == func.lower(old_name)
+                ).all()
+                for folder in orphaned:
+                    try:
+                        await _gd.graph().patch(f"/drives/{drive_id}/items/{folder.drive_item_id}", json={"name": new_name})
+                        folder.vessel_id = int(vessel_id)
+                    except Exception as e:
+                        print(f"Error renaming orphaned folder {folder.path} in SharePoint: {e}")
+                db.commit()
+
+        with SessionLocal() as db:
+            v = db.query(models.Vessel).filter_by(id=int(vessel_id)).one()
+            if new_name:
+                v.name = new_name
+            if new_imo:
+                v.imo = new_imo
+            if shipyard is not None:
+                v.shipyard = shipyard.strip() or None
+            if hull_number is not None:
+                v.hull_number = hull_number.strip() or None
+            if vessel_type is not None:
+                v.vessel_type = vessel_type.strip() or None
+            
+            if new_name and new_name != old_name:
+                folders = db.query(models.Folder).filter_by(vessel_id=v.id).all()
+                for folder in folders:
+                    if folder.kind == "ship" and folder.name == old_name:
+                        folder.name = new_name
+                    for main in template.MAIN_FOLDERS:
+                        old_prefix = f"{main}/{old_name}"
+                        new_prefix = f"{main}/{new_name}"
+                        if folder.path == old_prefix:
+                            folder.path = new_prefix
+                        elif folder.path.startswith(f"{old_prefix}/"):
+                            folder.path = new_prefix + folder.path[len(old_prefix):]
+            db.commit()
+            
+            v_updated = db.query(models.Vessel).filter_by(id=int(vessel_id)).one()
+            return {
+                "id": str(v_updated.id),
+                "name": v_updated.name,
+                "imo": v_updated.imo,
+                "shipyard": v_updated.shipyard,
+                "hull_number": v_updated.hull_number,
+                "vessel_type": v_updated.vessel_type,
+            }
+
+    async def repair_vessel_links(self) -> dict:
+        """Scan all ship-kind folders with vessel_id=None and try to link them
+        to a vessel row by matching the folder name (case-insensitive).
+        Returns a summary of how many were fixed."""
+        with SessionLocal() as db:
+            # Build name -> vessel_id map
+            vessels = db.query(models.Vessel).all()
+            name_to_id: dict[str, int] = {v.name.lower(): v.id for v in vessels}
+
+            # Find orphaned ship folders
+            orphans = (
+                db.query(models.Folder)
+                .filter(models.Folder.kind == "ship", models.Folder.vessel_id == None)  # noqa: E711
+                .all()
+            )
+            fixed = 0
+            unmatched = []
+            for folder in orphans:
+                vid = name_to_id.get(folder.name.lower())
+                if vid is not None:
+                    folder.vessel_id = vid
+                    fixed += 1
+                else:
+                    unmatched.append(folder.name)
+            db.commit()
+        return {"fixed": fixed, "unmatched": unmatched}
+
     async def reprovision_vessel(self, vessel_id: str) -> dict:
         """Idempotently re-run folder provisioning for an existing vessel.
 
@@ -397,27 +549,64 @@ class RealBackend:
         out = []
         with SessionLocal() as db:
             parent_row = self._folder_by_item(db, folder_id)
-            vessel_id = parent_row.vessel_id if parent_row else None
+            parent_vessel_id = parent_row.vessel_id if parent_row else None
+
+            # Build a quick lookup: drive_item_id -> vessel.name for ship folders
+            # This lets us display the canonical DB vessel name instead of the
+            # raw SharePoint folder name which may be out of sync.
+            # Single JOIN query: folders.drive_item_id -> vessels.name
+            ship_rows = (
+                db.query(models.Folder.drive_item_id, models.Vessel.name)
+                .join(models.Vessel, models.Folder.vessel_id == models.Vessel.id)
+                .filter(models.Folder.kind == "ship")
+                .all()
+            )
+            # Map: drive_item_id -> canonical vessel name from DB
+            ship_id_to_name: dict[str, str] = {
+                row.drive_item_id: row.name for row in ship_rows if row.drive_item_id
+            }
+
             for it in items:
-                name = it["name"]
+                sharepoint_name = it["name"]
                 if "folder" in it:
-                    parts = parent_parts + [name]
+                    parts = parent_parts + [sharepoint_name]
                     flags = classify(parts)
+                    vessel_id = parent_vessel_id
+
+                    # If this is a ship folder, determine its vessel_id from
+                    # the cache (the upsert below will also do it, but we need
+                    # the ID to correctly rebuild parts/path for the child).
+                    if flags["kind"] == "ship":
+                        # Check existing cache for this drive_item_id
+                        existing = (
+                            db.query(models.Folder)
+                            .filter_by(drive_item_id=it["id"])
+                            .one_or_none()
+                        )
+                        if existing and existing.vessel_id:
+                            vessel_id = existing.vessel_id
+
                     self._upsert(
-                        db, "/".join(parts), name, flags["kind"], it["id"],
+                        db, "/".join(parts), sharepoint_name, flags["kind"], it["id"],
                         flags["month_driven"], vessel_id,
                     )
+
+                    # Use the canonical DB vessel name for ship folders
+                    display_name = sharepoint_name
+                    if flags["kind"] == "ship" and it["id"] in ship_id_to_name:
+                        display_name = ship_id_to_name[it["id"]]
+
                     node = {
                         "id": it["id"],
-                        "name": name,
+                        "name": display_name,
                         **flags,
                         "has_children": (it.get("folder") or {}).get("childCount", 0) > 0,
                     }
                 else:
-                    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+                    ext = sharepoint_name.rsplit(".", 1)[-1].lower() if "." in sharepoint_name else ""
                     node = {
                         "id": it["id"],
-                        "name": name,
+                        "name": sharepoint_name,
                         "kind": "file",
                         "upload": False,
                         "month_driven": False,
@@ -429,6 +618,7 @@ class RealBackend:
                 out.append(node)
             db.commit()
         return out
+
 
     async def stats(self):
         with SessionLocal() as db:

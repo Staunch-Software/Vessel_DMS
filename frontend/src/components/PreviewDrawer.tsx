@@ -14,12 +14,12 @@ export function PreviewDrawer({
   const url = fileContentUrl(file.id);
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-fg/40" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex sm:justify-end bg-fg/40" onClick={onClose}>
       <div
-        className="dms-card flex h-full w-full max-w-3xl flex-col rounded-none border-l border-border bg-surface shadow-2xl"
+        className="dms-card flex w-full flex-col rounded-none border-border bg-surface shadow-2xl sm:h-full sm:max-w-3xl sm:border-l"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex items-center gap-3 border-b border-border px-5 py-3.5">
+        <header className="flex items-center gap-3 border-b border-border px-4 py-3 sm:px-5 sm:py-3.5">
           <meta.Icon className={"h-5 w-5 shrink-0 " + meta.cls} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-fg">{file.name}</p>

@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Upload } from "lucide-react";
 import type { FolderNode } from "../api";
 
@@ -10,8 +11,10 @@ interface Props {
 
 export function UploadControl({ node, onUpload, variant = "inline" }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [category, setCategory] = useState("");
+  const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
 
   const pick = () => inputRef.current?.click();
 
@@ -27,9 +30,9 @@ export function UploadControl({ node, onUpload, variant = "inline" }: Props) {
 
   const primary = variant === "primary";
   const base =
-    "inline-flex items-center gap-2 font-medium transition " +
+    "dms-touch-btn inline-flex items-center gap-1.5 font-medium transition " +
     (primary
-      ? `rounded-lg px-4 py-2 text-sm shadow-sm ${isMonth ? "text-accent-fg" : "text-primary-fg"} `
+      ? `rounded-lg px-3 py-2 text-sm shadow-sm ${isMonth ? "text-accent-fg" : "text-primary-fg"} `
       : "rounded-md px-2.5 py-1 text-xs ");
   const color = isMonth
     ? primary
@@ -39,56 +42,96 @@ export function UploadControl({ node, onUpload, variant = "inline" }: Props) {
       ? "bg-primary hover:bg-primary-hover"
       : "bg-primary/10 text-primary ring-1 ring-primary/30 hover:bg-primary/15";
 
+  // Update rect on scroll or resize
+  useEffect(() => {
+    if (!open) return;
+    const updateRect = () => {
+      if (buttonRef.current) {
+        setButtonRect(buttonRef.current.getBoundingClientRect());
+      }
+    };
+    updateRect();
+    window.addEventListener("scroll", updateRect, true);
+    window.addEventListener("resize", updateRect);
+    return () => {
+      window.removeEventListener("scroll", updateRect, true);
+      window.removeEventListener("resize", updateRect);
+    };
+  }, [open]);
+
+  const handleOpenClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isMonth) {
+      if (buttonRef.current) {
+        setButtonRect(buttonRef.current.getBoundingClientRect());
+      }
+      setOpen((v) => !v);
+    } else {
+      pick();
+    }
+  };
+
   return (
-    <div className="relative">
+    <div className="relative inline-block text-left">
       <input ref={inputRef} type="file" className="hidden" onChange={handleFile} />
       <button
-        onClick={(e) => {
-          e.stopPropagation();
-          if (isMonth) setOpen((v) => !v);
-          else pick();
-        }}
+        ref={buttonRef}
+        onClick={handleOpenClick}
         className={base + color}
         title={isMonth ? "Upload — month detected automatically" : "Upload file"}
       >
-        <Upload className={primary ? "h-4 w-4" : "h-3.5 w-3.5"} />
-        Upload{isMonth && primary ? " (auto-month)" : ""}
+        <Upload className={primary ? "h-4 w-4 shrink-0" : "h-3.5 w-3.5 shrink-0"} />
+        <span className="dms-action-btn-text">
+          Upload{isMonth && primary ? " (auto-month)" : ""}
+        </span>
       </button>
 
-      {isMonth && open && (
-        <div
-          className="dms-card absolute right-0 z-30 mt-2 w-72 border border-border p-3 text-left shadow-xl"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <p className="mb-1 text-xs font-semibold text-fg">
-            Auto-filed by month
-          </p>
-          <p className="mb-3 text-[11px] leading-snug text-muted">
-            The month folder is detected from the document and created if needed.
-            Optionally pick a category.
-          </p>
-          <label className="mb-1 block text-[11px] font-medium text-muted">
-            Category (optional)
-          </label>
-          <select
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            className="dms-input mb-3 w-full rounded-md px-2 py-1.5 text-xs text-fg"
+      {isMonth && open && buttonRect && createPortal(
+        <>
+          {/* Backdrop to close on outside click */}
+          <div
+            className="fixed inset-0 z-[9998]"
+            onClick={() => setOpen(false)}
+          />
+          <div
+            className="dms-card fixed z-[9999] mt-2 border border-border p-4 text-left shadow-2xl rounded-2xl w-80 max-w-[calc(100vw-2rem)]"
+            style={{
+              top: buttonRect.bottom,
+              left: Math.max(16, buttonRect.right - 320), // Aligns right edge of 320px popover to right of button
+            }}
+            onClick={(e) => e.stopPropagation()}
           >
-            <option value="">To be Classified</option>
-            {node.categories?.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={pick}
-            className="dms-btn-primary w-full rounded-md px-3 py-1.5 text-xs font-medium"
-          >
-            Choose file & upload
-          </button>
-        </div>
+            <p className="mb-1 text-sm font-bold text-fg">
+              Auto-filed by month
+            </p>
+            <p className="mb-3 text-[11px] leading-relaxed text-muted">
+              The month folder is detected from the document and created if needed.
+              Optionally pick a category.
+            </p>
+            <label className="mb-1 block text-[11px] font-bold text-muted uppercase tracking-wider">
+              Category (optional)
+            </label>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="dms-input mb-4 w-full rounded-lg px-2.5 py-1.5 text-xs text-fg"
+            >
+              <option value="">To be Classified</option>
+              {node.categories?.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={pick}
+              className="dms-btn-primary w-full rounded-lg py-2 text-xs font-semibold"
+            >
+              Choose file & upload
+            </button>
+          </div>
+        </>,
+        document.body
       )}
     </div>
   );

@@ -116,24 +116,24 @@ export function Approvals({ actingEmail }: { actingEmail: string }) {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <header className="border-b border-border bg-surface px-8 py-5">
+      <header className="border-b border-border bg-surface dms-page-px py-5">
         <h2 className="text-xl font-semibold text-fg">Approvals</h2>
         <p className="mt-0.5 text-sm text-muted">
           Review documents uploaded by your team before they're filed.
         </p>
       </header>
 
-      <div className="dms-page-bg flex-1 overflow-y-auto px-8 py-6">
+      <div className="dms-page-bg flex-1 overflow-y-auto dms-page-px dms-page-py">
         <div className="mx-auto max-w-5xl space-y-4">
-          {/* Tabs + search */}
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex overflow-hidden rounded-lg border border-border bg-surface">
+          {/* Tabs + search — wrap on mobile */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="flex flex-wrap overflow-hidden rounded-lg border border-border bg-surface">
               {TABS.map((t) => (
                 <button
                   key={t.key}
                   onClick={() => setTab(t.key)}
                   className={
-                    "px-3.5 py-2 text-sm font-medium transition " +
+                    "px-3 py-2 text-sm font-medium transition " +
                     (tab === t.key
                       ? "bg-primary text-primary-fg"
                       : "text-muted hover:bg-surface-hover")
@@ -146,12 +146,12 @@ export function Approvals({ actingEmail }: { actingEmail: string }) {
                 </button>
               ))}
             </div>
-            <div className="relative ml-auto w-full max-w-xs">
+            <div className="relative w-full sm:ml-auto sm:max-w-xs">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search filename, uploader, folder…"
+                placeholder="Search filename, uploader…"
                 className="w-full rounded-lg border border-border bg-surface py-2 pl-9 pr-3 text-sm text-fg focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
               />
             </div>
@@ -211,22 +211,22 @@ export function Approvals({ actingEmail }: { actingEmail: string }) {
                     </span>
 
                     {r.status === "pending" && (
-                      <div className="flex shrink-0 items-center gap-1.5">
+                      <div className="flex shrink-0 items-center gap-1">
                         <button
                           onClick={() => handleApprove(r)}
                           disabled={busyId === r.id}
-                          className="inline-flex items-center gap-1 rounded-md bg-success px-2.5 py-1.5 text-xs font-medium text-success-fg transition hover:brightness-110 disabled:opacity-50"
+                          className="dms-touch-btn inline-flex items-center gap-1 rounded-md bg-success px-2 py-1.5 text-xs font-medium text-success-fg transition hover:brightness-110 disabled:opacity-50"
                         >
-                          <Check className="h-3.5 w-3.5" />
-                          Approve
+                          <Check className="h-3.5 w-3.5 shrink-0" />
+                          <span className="dms-action-btn-text">Approve</span>
                         </button>
                         <button
                           onClick={() => setRejectingId(r.id)}
                           disabled={busyId === r.id}
-                          className="inline-flex items-center gap-1 rounded-md bg-error-bg px-2.5 py-1.5 text-xs font-medium text-error ring-1 ring-error/20 transition hover:bg-error/15 disabled:opacity-50"
+                          className="dms-touch-btn inline-flex items-center gap-1 rounded-md bg-error-bg px-2 py-1.5 text-xs font-medium text-error ring-1 ring-error/20 transition hover:bg-error/15 disabled:opacity-50"
                         >
-                          <X className="h-3.5 w-3.5" />
-                          Reject
+                          <X className="h-3.5 w-3.5 shrink-0" />
+                          <span className="dms-action-btn-text">Reject</span>
                         </button>
                       </div>
                     )}
@@ -317,9 +317,9 @@ function ApprovalPreview({
   const url = approvalPreviewUrl(request.id, actingEmail);
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-fg/40" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex sm:justify-end bg-fg/40" onClick={onClose}>
       <div
-        className="flex h-full w-full max-w-2xl flex-col bg-surface shadow-2xl"
+        className="flex w-full flex-col bg-surface shadow-2xl sm:h-full sm:max-w-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center gap-3 border-b border-border px-5 py-3.5">

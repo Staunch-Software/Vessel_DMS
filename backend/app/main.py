@@ -73,6 +73,14 @@ class VesselIn(BaseModel):
     vessel_type: str | None = None
 
 
+class VesselUpdateIn(BaseModel):
+    name: str | None = None
+    imo: str | None = None
+    shipyard: str | None = None
+    hull_number: str | None = None
+    vessel_type: str | None = None
+
+
 class RejectIn(BaseModel):
     reason: str | None = None
 
@@ -760,6 +768,28 @@ async def create_vessel(payload: VesselIn):
         _raise(e)
 
 
+@app.patch("/api/vessels/{vessel_id}")
+async def update_vessel(vessel_id: str, payload: VesselUpdateIn):
+    vtype = (payload.vessel_type or "").strip() or None
+    if vtype and vtype not in VESSEL_TYPES:
+        raise HTTPException(400, "Invalid vessel type")
+    try:
+        return await get_backend().update_vessel(
+            vessel_id,
+            name=payload.name,
+            imo=payload.imo,
+            shipyard=payload.shipyard,
+            hull_number=payload.hull_number,
+            vessel_type=vtype,
+        )
+    except Conflict as e:
+        return JSONResponse(status_code=409, content={"message": str(e)})
+    except NotFound as e:
+        return JSONResponse(status_code=404, content={"message": str(e)})
+    except BadRequest as e:
+        _raise(e)
+
+
 @app.post("/api/vessels/{vessel_id}/reprovision")
 async def reprovision_vessel(vessel_id: str):
     """Re-run idempotent folder provisioning for an existing vessel.
@@ -773,6 +803,15 @@ async def reprovision_vessel(vessel_id: str):
         _raise(e)
     except BadRequest as e:
         _raise(e)
+
+
+@app.post("/api/vessels/repair-links")
+async def repair_vessel_links():
+    """Scan all ship-kind folders with vessel_id=None and link them to the
+    matching vessel row by name (case-insensitive).
+    Safe to call at any time — only fills in missing links, never removes data.
+    """
+    return await get_backend().repair_vessel_links()
 
 
 @app.get("/api/mains")
@@ -1019,11 +1058,23 @@ async def permanent_delete_item(item_id: str, type: str = Query("folder"), user_
 # Approval workflow (admin only)
 # ---------------------------------------------------------------------------
 
+@app.get("/api/my-approvals")
+async def list_my_approvals(
+    status: str | None = None, x_user_email: str | None = Header(default=None)
+):
+    if not x_user_email:
+        raise HTTPException(400, "X-User-Email header required")
+    email = x_user_email.strip().lower()
+    approvals = await get_backend().list_approvals(status)
+    return [a for a in approvals if a.get("uploaded_by_email", "").strip().lower() == email]
+
+
 @app.get("/api/approvals")
 async def list_approvals(
     status: str | None = None, q: str | None = None, admin: str = Depends(_require_admin)
 ):
     return await get_backend().list_approvals(status, q)
+
 
 
 @app.get("/api/approvals/{request_id}")

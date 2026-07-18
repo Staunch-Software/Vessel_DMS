@@ -44,8 +44,8 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {/* Stat cards — 2 cols on mobile, 4 on desktop */}
+      <div className="dms-stat-grid grid grid-cols-2 gap-3 lg:grid-cols-4">
         {cards.map((s) => (
           <div
             key={s.label}
@@ -80,7 +80,7 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-5 lg:grid-cols-2">
         {/* Fleet */}
         <section className="dms-panel">
           <div className="flex items-center justify-between border-b border-border px-5 py-3.5">

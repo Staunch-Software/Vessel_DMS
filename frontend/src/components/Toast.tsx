@@ -19,7 +19,7 @@ export function ToastStack({
   onDismiss: (id: number) => void;
 }) {
   return (
-    <div className="fixed bottom-5 right-5 z-50 flex w-96 max-w-[calc(100vw-2rem)] flex-col gap-3">
+    <div className="fixed bottom-4 left-4 right-4 z-50 flex flex-col gap-2 sm:bottom-5 sm:left-auto sm:right-5 sm:w-96 sm:max-w-[calc(100vw-2.5rem)]">
       {toasts.map((t) => {
         const isDuplicate = t.status === "failed" && isDuplicateError(t.detail);
         

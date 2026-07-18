@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   Mail, Phone, Clock, LogOut, Camera,
-  MapPin, Hash, Calendar, Users, ArrowLeft, LayoutDashboard,
-  Layers, ShieldOff, Edit3, Save, X,
+  MapPin, Hash, Calendar, Users, ArrowLeft,
+  ShieldOff, Edit3, Save, X,
   Building2, Activity, RefreshCw, UserCheck,
   AlertCircle, Upload, FolderOpen, Trash2, FolderPlus, LogIn, Printer,
 } from "lucide-react";
-import { MAIN_ACCENTS } from "./nodeStyle";
+
 import type { FolderNode, UserProfile, ProfileUpdatePayload } from "../api";
 import { getProfile, updateProfile } from "../api";
 
@@ -335,144 +335,21 @@ function FieldRow({
 
 
 
-// ── Mini sidebar (profile page) ────────────────────────────────────────────────
-interface MiniSidebarProps {
-  mains: FolderNode[];
-  displayName: string;
-  jobTitle: string;
-  photoBase64?: string | null;
-  onBack: () => void;
-  onDashboard: () => void;
-  onViewFullPhoto?: () => void;
-}
-
-function MiniSidebar({ mains, displayName, jobTitle, photoBase64, onBack, onDashboard, onViewFullPhoto }: MiniSidebarProps) {
-  return (
-    <aside
-      className="flex h-full w-72 shrink-0 flex-col"
-      style={{ background: navy, color: slate200 }}
-    >
-      {/* Logo */}
-      <button
-        onClick={onBack}
-        className="flex items-center gap-3 px-5 py-5 text-left transition hover:bg-white/5 w-full"
-      >
-        <img
-          src="/nissen-logo.svg"
-          alt="Nissen Kaiun logo"
-          className="h-10 w-auto drop-shadow-md"
-        />
-        <div>
-          <h1 className="text-sm font-semibold leading-tight" style={{ color: white }}>
-            Nissen DMS
-          </h1>
-          <p className="text-[11px]" style={{ color: slate400 }}>SharePoint Embedded</p>
-        </div>
-      </button>
-
-      {/* Back / Nav */}
-      <div className="px-4 pb-3">
-        <button
-          onClick={onBack}
-          className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition"
-          style={{ background: "rgba(255,255,255,0.08)", color: slate200 }}
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to DMS
-        </button>
-      </div>
-
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 pb-4">
-        <button
-          onClick={onDashboard}
-          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition hover:bg-white/5"
-          style={{ color: slate200 }}
-        >
-          <span
-            className="flex h-7 w-7 items-center justify-center rounded-lg"
-            style={{ background: "rgba(255,255,255,0.1)" }}
-          >
-            <LayoutDashboard className="h-4 w-4" style={{ color: teal300 }} />
-          </span>
-          Dashboard
-        </button>
-
-        <p
-          className="px-2 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider"
-          style={{ color: slate500 }}
-        >
-          Main Folders
-        </p>
-
-        {mains.map((m) => {
-          const accent = MAIN_ACCENTS[m.name];
-          return (
-            <button
-              key={m.id}
-              onClick={onBack}
-              className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition hover:bg-white/5"
-              style={{ color: slate200 }}
-            >
-              <span
-                className={
-                  "flex h-7 w-7 items-center justify-center rounded-lg " +
-                  (accent ? accent.chip : "bg-white/10")
-                }
-              >
-                <Layers
-                  className={"h-4 w-4 " + (accent ? accent.text : "text-white")}
-                />
-              </span>
-              <span className="truncate text-left">{m.name}</span>
-            </button>
-          );
-        })}
-      </nav>
-
-      {/* Profile strip at bottom */}
-      <div
-        className="border-t px-5 py-3"
-        style={{ borderColor: "rgba(255,255,255,0.05)", color: slate500 }}
-      >
-        <div className="flex items-center gap-2">
-          <div
-            onClick={() => {
-              if (photoBase64 && onViewFullPhoto) onViewFullPhoto();
-            }}
-            className={"flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold overflow-hidden " + (photoBase64 ? "cursor-pointer hover:opacity-80 transition" : "")}
-            style={{ background: teal, color: navy }}
-            title={photoBase64 ? "Click to view full photo" : undefined}
-          >
-            {photoBase64 ? (
-              <img src={photoBase64} alt="Profile" className="h-full w-full object-cover" />
-            ) : (
-              displayName.split(" ").map((n) => n[0]).join("")
-            )}
-          </div>
-          <div className="min-w-0">
-            <p className="truncate text-[11px] font-medium" style={{ color: slate200 }}>
-              {displayName}
-            </p>
-            <p className="text-[10px]" style={{ color: slate500 }}>{jobTitle}</p>
-          </div>
-        </div>
-      </div>
-    </aside>
-  );
-}
 
 // ── Profile Page ───────────────────────────────────────────────────────────────
 interface ProfilePageProps {
-  mains: FolderNode[];
   userEmail: string;
   onBack: () => void;
-  onDashboard: () => void;
   onSignOut: () => void;
   onGlobalSignOut: () => void;
+  onPhotoUpdate?: (photo: string | null) => void;
+  // kept for API compat — no longer used for sidebar rendering
+  mains?: FolderNode[];
+  onDashboard?: () => void;
 }
 
 export default function ProfilePage({
-  mains, userEmail, onBack, onDashboard, onSignOut, onGlobalSignOut,
+  userEmail, onBack, onSignOut, onGlobalSignOut, onPhotoUpdate,
 }: ProfilePageProps) {
   const [profile,          setProfile]          = useState<UserProfile | null>(null);
   const [loading,          setLoading]          = useState(true);
@@ -511,6 +388,9 @@ export default function ProfilePage({
         const updated = await updateProfile(userEmail, { photo_base64: base64 });
         setProfile(updated);
         setForm(initForm(updated));
+        if (onPhotoUpdate) {
+          onPhotoUpdate(updated.photo_base64 || null);
+        }
       } catch {
         setPhotoError("Failed to update profile photo.");
       } finally {
@@ -605,24 +485,12 @@ export default function ProfilePage({
   }
 
   const displayName = profile?.display_name ?? userEmail;
-  const initials = displayName.split(" ").map((n: string) => n[0]).filter(Boolean).join("").toUpperCase().slice(0, 2);
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: slate100 }}>
-      <MiniSidebar
-        mains={mains}
-        displayName={displayName}
-        jobTitle={profile?.job_title ?? ""}
-        photoBase64={profile?.photo_base64}
-        onBack={onBack}
-        onDashboard={onDashboard}
-        onViewFullPhoto={() => setShowFullPhoto(true)}
-      />
-
-      <main className="flex flex-1 flex-col overflow-hidden">
+    <main className="flex flex-1 flex-col overflow-hidden">
         {/* Top bar */}
         <div
-          className="flex flex-shrink-0 items-center justify-between border-b px-8 py-3"
+          className="flex flex-shrink-0 items-center justify-between border-b dms-page-px py-3"
           style={{ background: white, borderColor: slate200 }}
         >
           <div className="flex items-center gap-2">
@@ -743,7 +611,7 @@ export default function ProfilePage({
             </div>
           )}
           {!loading && fetchError && (
-            <div className="flex items-center gap-2 px-8 py-8 text-sm" style={{ color: danger }}>
+            <div className="flex items-center gap-2 dms-page-px py-8 text-sm" style={{ color: danger }}>
               <AlertCircle className="h-4 w-4 shrink-0" />{fetchError}
             </div>
           )}
@@ -752,7 +620,7 @@ export default function ProfilePage({
             <>
               {/* Hero */}
               <div
-                className="relative overflow-hidden px-8 py-8"
+                className="relative overflow-hidden dms-page-px py-6 sm:py-8"
                 style={{ background: `linear-gradient(135deg, ${navy} 0%, ${navy2} 60%, ${steel} 100%)` }}
               >
                 <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full" style={{ border: "1px solid rgba(94,234,212,0.15)" }} />
@@ -771,14 +639,18 @@ export default function ProfilePage({
                         onClick={() => {
                           if (profile?.photo_base64) setShowFullPhoto(true);
                         }}
-                        className={"flex h-24 w-24 items-center justify-center rounded-full text-3xl font-bold overflow-hidden " + (profile?.photo_base64 ? "cursor-pointer hover:opacity-90 transition" : "")}
-                        style={{ background: `radial-gradient(circle at 35% 30%, ${steel}, ${navy2} 75%)`, border: `3px solid ${teal300}`, color: white }}
+                        className="flex h-24 w-24 items-center justify-center rounded-full text-3xl font-bold overflow-hidden"
+                        style={{ border: `3px solid ${teal300}`, background: profile?.photo_base64 ? undefined : "#cbd5e1" }}
                         title={profile?.photo_base64 ? "Click to view full photo" : undefined}
                       >
                         {profile?.photo_base64 ? (
                           <img src={profile.photo_base64} alt="Profile" className="h-full w-full object-cover" />
                         ) : (
-                          initials
+                          <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-full w-full object-cover">
+                            <circle cx="50" cy="50" r="50" fill="#cbd5e1" />
+                            <circle cx="50" cy="45" r="18" fill="#94a3b8" />
+                            <path d="M15 88C15 70 30 65 50 65C70 65 85 70 85 88" fill="#94a3b8" />
+                          </svg>
                         )}
                       </div>
                       <button
@@ -822,8 +694,8 @@ export default function ProfilePage({
                 </div>
               </div>
 
-              {/* Cards grid */}
-              <div className="grid grid-cols-1 gap-5 p-8 lg:grid-cols-3">
+              {/* Cards grid — 1 col on mobile, 3 on large desktop */}
+              <div className="grid grid-cols-1 gap-4 dms-page-px dms-page-py lg:grid-cols-3">
 
                 {/* Left Column (spans 2 columns on desktop) */}
                 <div className="lg:col-span-2 flex flex-col gap-5">
@@ -1030,36 +902,35 @@ export default function ProfilePage({
             </>
           )}
         </div>
-      </main>
 
-      {/* Full Photo Modal */}
-      {showFullPhoto && profile?.photo_base64 && (
-        <div 
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-md cursor-pointer"
-          onClick={() => setShowFullPhoto(false)}
-        >
+        {/* Full Photo Modal */}
+        {showFullPhoto && profile?.photo_base64 && (
           <div 
-            className="relative max-h-[90vh] max-w-[90vw] overflow-hidden rounded-2xl border border-white/10 bg-black/40 shadow-2xl p-2"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-md cursor-pointer"
+            onClick={() => setShowFullPhoto(false)}
           >
-            <img 
-              src={profile.photo_base64} 
-              alt="Full Profile" 
-              className="max-h-[80vh] max-w-[80vw] rounded-xl object-contain" 
-            />
-            <div className="mt-3 flex items-center justify-between px-2">
-              <span className="text-xs text-white/60 font-medium">{displayName} &middot; Profile Photo</span>
-              <button 
-                onClick={() => setShowFullPhoto(false)}
-                className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/20 transition cursor-pointer"
-              >
-                Close
-              </button>
+            <div 
+              className="relative max-h-[90vh] max-w-[90vw] overflow-hidden rounded-2xl border border-white/10 bg-black/40 shadow-2xl p-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <img 
+                src={profile.photo_base64} 
+                alt="Full Profile" 
+                className="max-h-[80vh] max-w-[80vw] rounded-xl object-contain" 
+              />
+              <div className="mt-3 flex items-center justify-between px-2">
+                <span className="text-xs text-white/60 font-medium">{displayName} &middot; Profile Photo</span>
+                <button 
+                  onClick={() => setShowFullPhoto(false)}
+                  className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/20 transition cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-    </div>
+    </main>
   );
 }

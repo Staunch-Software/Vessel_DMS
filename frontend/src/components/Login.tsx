@@ -77,7 +77,7 @@ function PageShell({ children }: { children: React.ReactNode }) {
             </svg>
 
             {/* Top bar */}
-            <header className="sticky top-0 z-20 backdrop-blur-sm flex items-center justify-between px-8 md:px-14 py-5 border-b border-border bg-topnav-bg/90">
+            <header className="sticky top-0 z-20 backdrop-blur-sm flex items-center justify-between px-4 md:px-14 py-4 border-b border-border bg-topnav-bg/90">
                 <div className="flex items-center gap-3">
                     <img
                         src={NISSEN_LOGO}
@@ -205,7 +205,7 @@ function SessionExpiredView({
     const isInactivity = reason === "inactivity";
     return (
         <PageShell>
-            <main className="relative z-10 px-8 md:px-14 py-14 flex flex-col lg:flex-row gap-12 items-start justify-between">
+            <main className="relative z-10 px-4 md:px-14 py-8 md:py-14 flex flex-col lg:flex-row gap-8 lg:gap-12 items-start justify-between">
                 {/* Left column */}
                 <div className="w-full lg:max-w-[calc(100%-30rem)] lg:pr-8 mb-12 lg:mb-0">
                     <div className="flex items-center gap-2 text-brand-400 text-[11px] tracking-[0.2em] font-semibold mb-6">
@@ -213,7 +213,7 @@ function SessionExpiredView({
                         NISSEN KAIUN SINGAPORE FLEET
                     </div>
 
-                    <h1 className="font-serif text-5xl md:text-[3.75rem] leading-[1.05] text-white mb-6">
+                    <h1 className="font-serif text-3xl sm:text-5xl md:text-[3.75rem] leading-[1.05] text-white mb-6">
                         Premium global shipping,
                         <br />
                         <span className="italic text-brand-300">managed locally.</span>
@@ -226,7 +226,7 @@ function SessionExpiredView({
                         advanced product tankers.
                     </p>
 
-                    <div className="grid sm:grid-cols-3 gap-4 max-w-xl mb-10">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 max-w-xl mb-10">
                         <FeatureCard icon={<Ship className="w-4 h-4" />} title="Modern Fleet" copy="Over 100 high-spec bulkers, tankers, and boxships." />
                         <FeatureCard icon={<Compass className="w-4 h-4" />} title="Global Routing" copy="Reliable sea transport routes across all major oceans." />
                         <FeatureCard icon={<Award className="w-4 h-4" />} title="Class Certified" copy="Classified under top maritime boards for safety." />
@@ -286,7 +286,7 @@ function SessionExpiredView({
 function SignedOutView({ onSignBackIn }: { onSignBackIn: () => void }) {
     return (
         <PageShell>
-            <main className="relative z-10 px-8 md:px-14 py-14 flex flex-col lg:flex-row gap-12 items-start justify-between">
+            <main className="relative z-10 px-4 md:px-14 py-8 md:py-14 flex flex-col lg:flex-row gap-8 lg:gap-12 items-start justify-between">
                 {/* Left column */}
                 <div className="w-full lg:max-w-[calc(100%-30rem)] lg:pr-8 mb-12 lg:mb-0">
                     <div className="flex items-center gap-2 text-primary text-[11px] tracking-[0.2em] font-semibold mb-6">
@@ -294,7 +294,7 @@ function SignedOutView({ onSignBackIn }: { onSignBackIn: () => void }) {
                         NISSEN KAIUN SINGAPORE FLEET
                     </div>
 
-                    <h1 className="font-serif text-5xl md:text-[3.75rem] leading-[1.05] text-fg mb-6">
+                    <h1 className="font-serif text-3xl sm:text-5xl md:text-[3.75rem] leading-[1.05] text-fg mb-6">
                         Premium global shipping,
                         <br />
                         <span className="italic text-primary">managed locally.</span>
@@ -309,7 +309,7 @@ function SignedOutView({ onSignBackIn }: { onSignBackIn: () => void }) {
                     </p>
 
                     {/* Feature cards */}
-                    <div className="grid sm:grid-cols-3 gap-4 max-w-xl mb-10">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 max-w-xl mb-10">
                         <FeatureCard
                             icon={<Ship className="w-4 h-4" />}
                             title="Modern Fleet"
@@ -454,7 +454,7 @@ function LoginView({ authError }: { authError?: string | null }) {
 
     return (
         <PageShell>
-            <main className="relative z-10 px-8 md:px-14 py-14 flex flex-col lg:flex-row gap-12 items-start justify-between">
+            <main className="relative z-10 px-4 md:px-14 py-8 md:py-14 flex flex-col lg:flex-row gap-8 lg:gap-12 items-start justify-between">
                 {/* Left column */}
                 <div className="w-full lg:max-w-[calc(100%-30rem)] lg:pr-8 mb-12 lg:mb-0">
                     <div className="flex items-center gap-2 text-primary text-[11px] tracking-[0.2em] font-semibold mb-6">
@@ -462,7 +462,7 @@ function LoginView({ authError }: { authError?: string | null }) {
                         VESSEL DOCUMENT MANAGEMENT SYSTEM
                     </div>
 
-                    <h1 className="font-serif text-5xl md:text-[3.75rem] leading-[1.05] text-fg mb-6">
+                    <h1 className="font-serif text-3xl sm:text-5xl md:text-[3.75rem] leading-[1.05] text-fg mb-6">
                         Every certificate,
                         <br />
                         <span className="italic text-primary">every vessel,</span> in one
@@ -477,7 +477,7 @@ function LoginView({ authError }: { authError?: string | null }) {
                     </p>
 
                     {/* Feature cards */}
-                    <div className="grid sm:grid-cols-3 gap-4 max-w-xl mb-10">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 max-w-xl mb-10">
                         <FeatureCard
                             icon={<FileCheck2 className="w-4 h-4" />}
                             title="Certificate registry"

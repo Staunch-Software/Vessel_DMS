@@ -97,11 +97,11 @@ export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-fg/50 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-40 flex items-end sm:items-center justify-center bg-fg/50 p-0 sm:p-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
+        className="max-h-[92vh] w-full sm:max-w-md overflow-y-auto rounded-t-2xl sm:rounded-2xl bg-white p-5 sm:p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

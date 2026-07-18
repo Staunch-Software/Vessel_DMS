@@ -14,20 +14,19 @@ export function ThemeSettings() {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <header className="border-b border-border bg-surface px-8 py-5">
+      <header className="border-b border-border bg-surface dms-page-px py-5">
         <h2 className="text-xl font-semibold text-fg">Appearance</h2>
         <p className="mt-0.5 text-sm text-muted">
-          Choose how Vessel DMS looks. Changes apply instantly, everywhere, and are
-          remembered on this device.
+          Choose how Vessel DMS looks. Changes apply instantly and are remembered on this device.
         </p>
       </header>
 
-      <div className="dms-page-bg flex-1 overflow-y-auto px-8 py-6">
+      <div className="dms-page-bg flex-1 overflow-y-auto dms-page-px dms-page-py">
         <div className="mx-auto max-w-5xl space-y-8">
           {/* ---------------------------------------------------------- Mode */}
           <section>
             <h3 className="mb-3 text-sm font-semibold text-fg">Theme mode</h3>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-3">
               {MODE_OPTIONS.map((opt) => {
                 const active = modePref === opt.key;
                 const Icon = opt.icon;
@@ -73,7 +72,7 @@ export function ThemeSettings() {
                 Previewing in {resolvedMode === "dark" ? "dark" : "light"} mode
               </p>
             </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {themes.map((seed) => (
                 <ThemeCard
                   key={seed.id}

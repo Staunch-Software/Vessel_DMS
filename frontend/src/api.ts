@@ -79,6 +79,10 @@ export async function reprovisionVessel(vesselId: string): Promise<{ ok: boolean
   return (await api.post(`/vessels/${vesselId}/reprovision`)).data;
 }
 
+export async function updateVessel(vesselId: string, payload: Partial<VesselInput>): Promise<unknown> {
+  return (await api.patch(`/vessels/${vesselId}`, payload)).data;
+}
+
 export interface Stats {
   vessels: number;
   main_folders: number;
@@ -248,6 +252,15 @@ export async function listApprovals(
   if (q) params.q = q;
   return (await api.get("/approvals", { params })).data;
 }
+
+export async function listMyApprovals(
+  status?: ApprovalStatus | "all"
+): Promise<ApprovalRequest[]> {
+  const params: Record<string, string> = {};
+  if (status && status !== "all") params.status = status;
+  return (await api.get("/my-approvals", { params })).data;
+}
+
 
 export async function approveRequest(adminEmail: string, requestId: string): Promise<void> {
   await api.post(`/approvals/${requestId}/approve`, null, { params: { admin: adminEmail } });

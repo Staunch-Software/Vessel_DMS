@@ -99,7 +99,7 @@ export function SearchBar({
 
   return (
     <div ref={boxRef} className="relative z-40 w-full max-w-3xl">
-      <div className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_11rem_auto]">
+      <div className="dms-topbar-search grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_11rem_auto]">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle" />
           <input
@@ -129,7 +129,8 @@ export function SearchBar({
           )}
         </div>
 
-        <div className="relative">
+        {/* Vessel filter — hidden on mobile, visible on sm+ */}
+        <div className="vessel-filter relative hidden sm:block">
           <button
             type="button"
             onClick={() => setVesselOpen((v) => !v)}
@@ -173,9 +174,10 @@ export function SearchBar({
           )}
         </div>
 
+        {/* Search button — hidden on mobile (Enter key triggers search instead), visible on sm+ */}
         <button
           onClick={() => void runSearch(query, vesselId)}
-          className="dms-btn-primary rounded-xl px-4 py-2 text-sm font-semibold"
+          className="dms-btn-primary hidden rounded-xl px-4 py-2 text-sm font-semibold sm:block"
         >
           {loading ? "Searching..." : "Search"}
         </button>

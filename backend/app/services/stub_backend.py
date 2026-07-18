@@ -7,6 +7,18 @@ from ..store import store
 from .normalize import normalize_vessel_name
 from .errors import BadRequest, Conflict, NotFound
 from .notify import notify_email
+from ..db.base import SessionLocal
+from ..db import models
+from sqlalchemy import func
+from .. import template
+
+def sanitize_folder_name(name: str) -> str:
+    name = name.replace("/", "-").replace("\\", "-")
+    name = name.replace(":", "-")
+    for c in '*?"<>|':
+        name = name.replace(c, "_")
+    name = name.strip(" .")
+    return name
 
 
 class StubBackend:
@@ -42,12 +54,89 @@ class StubBackend:
             name, imo, shipyard=shipyard, hull_number=hull_number, vessel_type=vessel_type
         )
 
+    async def update_vessel(self, vessel_id: str, name: str | None = None, imo: str | None = None, shipyard: str | None = None, hull_number: str | None = None, vessel_type: str | None = None):
+        vessel = next((v for v in store.vessels if v["id"] == vessel_id), None)
+        if not vessel:
+            raise NotFound("Vessel not found")
+        old_name = vessel["name"]
+        old_imo = vessel["imo"]
+
+        new_name = name.strip() if name is not None else None
+        if new_name is not None:
+            new_name = sanitize_folder_name(new_name)
+        new_imo = imo.strip() if imo is not None else None
+
+        if new_name is not None and new_name == "":
+            raise BadRequest("Vessel name cannot be empty")
+        if new_imo is not None and new_imo == "":
+            raise BadRequest("IMO number cannot be empty")
+        if new_imo and (not new_imo.isdigit() or len(new_imo) != 7):
+            raise BadRequest("IMO number must be exactly 7 digits")
+
+        if new_name and new_name.lower() != old_name.lower():
+            normalized_name = normalize_vessel_name(new_name)
+            if any(normalize_vessel_name(v["name"]) == normalized_name for v in store.vessels):
+                raise Conflict("Vessel name already exists.")
+
+        if new_imo and new_imo != old_imo:
+            if any(v.get("imo") == new_imo for v in store.vessels):
+                raise Conflict("A vessel with that IMO number already exists")
+
+        updated = store.update_vessel(
+            vessel_id, name=new_name or None, imo=new_imo or None,
+            shipyard=shipyard, hull_number=hull_number, vessel_type=vessel_type
+        )
+        if not updated:
+            raise NotFound("Vessel not found")
+
+        # Also update the sqlite cache db (so they are in sync)
+        with SessionLocal() as db:
+            v_db = db.query(models.Vessel).filter_by(id=int(vessel_id)).first()
+            if v_db:
+                if new_name:
+                    v_db.name = new_name
+                if new_imo:
+                    v_db.imo = new_imo
+                if shipyard is not None:
+                    v_db.shipyard = shipyard.strip() or None
+                if hull_number is not None:
+                    v_db.hull_number = hull_number.strip() or None
+                if vessel_type is not None:
+                    v_db.vessel_type = vessel_type.strip() or None
+
+                if new_name and new_name != old_name:
+                    folders = db.query(models.Folder).filter_by(vessel_id=v_db.id).all()
+                    for folder in folders:
+                        if folder.kind == "ship" and folder.name == old_name:
+                            folder.name = new_name
+                        for main in template.MAIN_FOLDERS:
+                            old_prefix = f"{main}/{old_name}"
+                            new_prefix = f"{main}/{new_name}"
+                            if folder.path == old_prefix:
+                                folder.path = new_prefix
+                            elif folder.path.startswith(f"{old_prefix}/"):
+                                folder.path = new_prefix + folder.path[len(old_prefix):]
+                db.commit()
+
+        return {
+            "id": str(updated["id"]),
+            "name": updated["name"],
+            "imo": updated["imo"],
+            "shipyard": updated["shipyard"],
+            "hull_number": updated["hull_number"],
+            "vessel_type": updated["vessel_type"],
+        }
+
     async def reprovision_vessel(self, vessel_id: str) -> dict:
         """Stub: no-op — the in-memory store always uses the current template."""
         vessel = next((v for v in store.vessels if v["id"] == vessel_id), None)
         if vessel is None:
             raise NotFound(f"Vessel {vessel_id!r} not found")
         return {"ok": True, "vessel_id": vessel_id, "name": vessel["name"]}
+
+    async def repair_vessel_links(self) -> dict:
+        """Stub: no-op — in-memory store is always consistent."""
+        return {"fixed": 0, "unmatched": []}
 
     async def mains(self):
         return store.mains()

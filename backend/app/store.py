@@ -105,6 +105,31 @@ class Store:
                 self.ensure_month_folder(md["id"], nm_year, nm_month)
         return vessel
 
+    def update_vessel(self, vessel_id, name=None, imo=None, shipyard=None, hull_number=None, vessel_type=None):
+        vessel = next((v for v in self.vessels if v["id"] == vessel_id), None)
+        if not vessel:
+            return None
+        
+        if name is not None:
+            new_name = name.strip()
+            if new_name:
+                vessel["name"] = new_name
+                for main_name, ship_id in vessel.get("ship_folders", {}).items():
+                    if ship_id in self.nodes:
+                        self.nodes[ship_id]["name"] = new_name
+                        self.nodes[ship_id]["vessel"] = new_name
+
+        if imo is not None:
+            vessel["imo"] = imo.strip() or None
+        if shipyard is not None:
+            vessel["shipyard"] = shipyard.strip() or None
+        if hull_number is not None:
+            vessel["hull_number"] = hull_number.strip() or None
+        if vessel_type is not None:
+            vessel["vessel_type"] = vessel_type.strip() or None
+            
+        return vessel
+
     def _descendant_month_driven(self, root_id):
         out = []
         stack = [root_id]

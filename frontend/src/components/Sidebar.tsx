@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { LayoutDashboard, ClipboardCheck, Layers, Palette, Plus, User, LogOut, ShieldOff, Archive, Trash2 } from "lucide-react";
+import { LayoutDashboard, ClipboardCheck, Layers, Palette, Plus, LogOut, ShieldOff, Archive, Trash2, X } from "lucide-react";
 import type { FolderNode } from "../api";
 import { MAIN_ACCENTS } from "./nodeStyle";
 
@@ -21,6 +21,10 @@ interface Props {
   isAdmin?: boolean;
   onApprovals?: () => void;
   onSettings: () => void;
+  /** Whether the sidebar is open on mobile/tablet */
+  mobileOpen?: boolean;
+  /** Called when user taps the close button or overlay on mobile */
+  onMobileClose?: () => void;
 }
 
 export function Sidebar({
@@ -41,220 +45,239 @@ export function Sidebar({
   isAdmin = false,
   onApprovals,
   onSettings,
+  mobileOpen = false,
+  onMobileClose,
 }: Props) {
   const [showSignOutPopup, setShowSignOutPopup] = useState(false);
 
+  const handleNavClick = (fn: () => void) => {
+    fn();
+    onMobileClose?.();
+  };
+
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col border-r border-sidebar-border bg-sidebar-bg text-sidebar-fg">
-      <button
-        onClick={onDashboard}
-        className="flex items-center gap-3 px-5 py-5 text-left transition dms-sidebar-item"
+    <>
+      {/* ── Mobile overlay backdrop ─────────────────────────────── */}
+      <div
+        className={`dms-mobile-overlay ${mobileOpen ? "visible" : ""}`}
+        onClick={onMobileClose}
+      />
+
+      {/* ── Sidebar ─────────────────────────────────────────────── */}
+      <aside
+        className={`dms-sidebar-responsive flex h-full w-72 shrink-0 flex-col bg-navy-900 text-slate-200 overflow-hidden ${
+          mobileOpen ? "sidebar-open" : ""
+        }`}
       >
-        <img
-          src="/nissen-logo.svg"
-          alt="Nissen Kaiun logo"
-          className="h-10 w-auto drop-shadow-md"
-        />
-        <div>
-          <h1 className="text-sm font-semibold leading-tight text-sidebar-fg">
-            Nissen DMS
-          </h1>
-          <p className="text-[11px] text-sidebar-muted">SharePoint Embedded</p>
-        </div>
-      </button>
-
-      <div className="px-4 pb-3">
-        <button
-          onClick={onNewVessel}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-fg shadow-sm transition hover:bg-primary-hover"
-        >
-          <Plus className="h-4 w-4" />
-          New Vessel
-        </button>
-      </div>
-
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 pb-4">
-        <button
-          onClick={onDashboard}
-          className={
-            "flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition " +
-            (view === "dashboard"
-              ? "dms-sidebar-item-active font-medium text-sidebar-fg"
-              : "dms-sidebar-item")
-          }
-        >
-          <span className="dms-sidebar-icon-chip flex h-7 w-7 items-center justify-center rounded-lg">
-            <LayoutDashboard className="h-4 w-4 text-primary" />
-          </span>
-          Dashboard
-        </button>
-
-        {isAdmin && onApprovals && (
+        {/* Logo + mobile close button */}
+        <div className="flex items-center justify-between pr-3">
           <button
-            onClick={onApprovals}
+            onClick={() => handleNavClick(onDashboard)}
+            className="flex flex-1 items-center gap-2.5 px-5 py-3 text-left transition hover:bg-white/5 cursor-pointer"
+          >
+            <img
+              src="/nissen-logo.svg"
+              alt="Nissen Kaiun logo"
+              className="h-7 w-auto drop-shadow-md"
+            />
+            <div>
+              <h1 className="text-[13px] font-semibold leading-tight text-white">
+                Nissen DMS
+              </h1>
+              <p className="text-[10px] text-slate-400">SharePoint Embedded</p>
+            </div>
+          </button>
+          {/* Close button — only shown on tablet/mobile via CSS */}
+          <button
+            onClick={onMobileClose}
+            className="hidden lg:hidden flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white transition"
+            style={{ display: "flex" }}
+            title="Close sidebar"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        <div className="px-4 pb-2">
+          <button
+            onClick={() => handleNavClick(onNewVessel)}
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-brand-500 cursor-pointer"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New Vessel
+          </button>
+        </div>
+
+        <nav className="flex-1 space-y-0.5 overflow-y-hidden px-3 pb-2">
+          <button
+            onClick={() => handleNavClick(onDashboard)}
             className={
-              "flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition " +
-              (view === "approvals"
-                ? "dms-sidebar-item-active font-medium text-sidebar-fg"
-                : "dms-sidebar-item")
+              "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition cursor-pointer " +
+              (view === "dashboard"
+                ? "bg-white/10 font-medium text-white"
+                : "text-slate-300 hover:bg-white/5")
             }
           >
-            <span className="dms-sidebar-icon-chip flex h-7 w-7 items-center justify-center rounded-lg">
-              <ClipboardCheck className="h-4 w-4 text-primary" />
+            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/10">
+              <LayoutDashboard className="h-3.5 w-3.5 text-brand-300" />
             </span>
-            Approvals
+            Dashboard
           </button>
-        )}
 
-        <button
-          onClick={onSettings}
-          className={
-            "flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition " +
-            (view === "settings"
-              ? "dms-sidebar-item-active font-medium text-sidebar-fg"
-              : "dms-sidebar-item")
-          }
-        >
-          <span className="dms-sidebar-icon-chip flex h-7 w-7 items-center justify-center rounded-lg">
-            <Palette className="h-4 w-4 text-primary" />
-          </span>
-          Appearance
-        </button>
-
-        <p className="px-2 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-sidebar-muted">
-          Main Folders
-        </p>
-
-        {mains.map((m) => {
-          const accent = MAIN_ACCENTS[m.name];
-          const active = view === "explorer" && selectedMainId === m.id;
-          return (
+          {isAdmin && onApprovals && (
             <button
-              key={m.id}
-              onClick={() => onSelectMain(m)}
+              onClick={() => handleNavClick(onApprovals)}
               className={
-                "flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition " +
-                (active
-                  ? "dms-sidebar-item-active font-medium text-sidebar-fg"
-                  : "dms-sidebar-item")
+                "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition cursor-pointer " +
+                (view === "approvals"
+                  ? "bg-white/10 font-medium text-white"
+                  : "text-slate-300 hover:bg-white/5")
               }
             >
-              <span
+              <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/10">
+                <ClipboardCheck className="h-3.5 w-3.5 text-brand-300" />
+              </span>
+              Approvals
+            </button>
+          )}
+
+          <button
+            onClick={() => handleNavClick(onSettings)}
+            className={
+              "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition cursor-pointer " +
+              (view === "settings"
+                ? "bg-white/10 font-medium text-white"
+                : "text-slate-300 hover:bg-white/5")
+            }
+          >
+            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/10">
+              <Palette className="h-3.5 w-3.5 text-brand-300" />
+            </span>
+            Appearance
+          </button>
+
+          <p className="px-2 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Main Folders
+          </p>
+
+          {mains.map((m) => {
+            const accent = MAIN_ACCENTS[m.name];
+            const active = view === "explorer" && selectedMainId === m.id;
+            return (
+              <button
+                key={m.id}
+                onClick={() => handleNavClick(() => onSelectMain(m))}
                 className={
-                  "flex h-7 w-7 items-center justify-center rounded-lg " +
-                  (accent ? accent.chip : "dms-sidebar-icon-chip")
+                  "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition cursor-pointer " +
+                  (active
+                    ? "bg-white/10 font-medium text-white"
+                    : "text-slate-300 hover:bg-white/5")
                 }
               >
-                <Layers
-                  className={"h-4 w-4 " + (accent ? accent.text : "text-sidebar-fg")}
-                />
-              </span>
-              <span className="truncate text-left">{m.name}</span>
-            </button>
-          );
-        })}
-      </nav>
+                <span
+                  className={
+                    "flex h-6 w-6 items-center justify-center rounded-lg " +
+                    (accent ? accent.chip : "bg-white/10")
+                  }
+                >
+                  <Layers
+                    className={"h-3.5 w-3.5 " + (accent ? accent.text : "text-white")}
+                  />
+                </span>
+                <span className="truncate text-left">{m.name}</span>
+              </button>
+            );
+          })}
+        </nav>
 
-      {/* Bottom: Profile + Sign-out section */}
-      <div className="border-t border-white/10 px-3 py-3 space-y-1">
-        {/* Archive button */}
-        <button
-          onClick={onArchive}
-          className={
-            "group flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition " +
-            (view === "archive"
-              ? "bg-white/10 font-medium text-white"
-              : "text-slate-300 hover:bg-white/5 hover:text-white")
-          }
-          title="View Archived Folders"
-        >
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10">
-            <Archive className="h-4 w-4 text-amber-400" />
-          </span>
-          <span className="truncate min-w-0 flex-1 text-left">
-            Archive
-          </span>
-        </button>
-
-        {/* Recycle Bin button */}
-        <button
-          onClick={onRecycleBin}
-          className={
-            "group flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition " +
-            (view === "recycle_bin"
-              ? "bg-white/10 font-medium text-white"
-              : "text-slate-300 hover:bg-white/5 hover:text-white")
-          }
-          title="View Recycle Bin"
-        >
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10">
-            <Trash2 className="h-4 w-4 text-rose-400" />
-          </span>
-          <span className="truncate min-w-0 flex-1 text-left">
-            Recycle Bin
-          </span>
-        </button>
-
-
-        {/* Profile button */}
-        <button
-          onClick={onProfile}
-          className={
-            "group flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition " +
-            (view === "profile"
-              ? "bg-white/10 font-medium text-white"
-              : "text-slate-300 hover:bg-white/5 hover:text-white")
-          }
-          title="View Profile"
-        >
-          <span
-            onClick={(e) => {
-              if (userPhotoBase64 && onViewFullPhoto) {
-                e.stopPropagation();
-                onViewFullPhoto();
-              }
-            }}
-            className={"flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold overflow-hidden " + (userPhotoBase64 ? "cursor-pointer hover:opacity-85 transition rounded-full" : "bg-white/10 text-brand-300")}
-            title={userPhotoBase64 ? "Click to view full photo" : undefined}
+        {/* Bottom: Archive / Recycle Bin / Profile / Sign-out */}
+        <div className="border-t border-white/10 px-3 py-1.5 space-y-0.5">
+          <button
+            onClick={() => handleNavClick(onArchive)}
+            className={
+              "group flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition cursor-pointer " +
+              (view === "archive"
+                ? "bg-white/10 font-medium text-white"
+                : "text-slate-300 hover:bg-white/5 hover:text-white")
+            }
+            title="View Archived Folders"
           >
-            {userPhotoBase64 ? (
-              <img src={userPhotoBase64} alt="Profile" className="h-full w-full object-cover" />
-            ) : userDisplayName ? (
-              userDisplayName.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
-            ) : (
-              <User className="h-4 w-4" />
-            )}
-          </span>
-          <span className="truncate min-w-0 flex-1 text-left">
-            {userDisplayName || "Profile"}
-          </span>
-        </button>
+            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/10">
+              <Archive className="h-3.5 w-3.5 text-amber-400" />
+            </span>
+            <span className="truncate min-w-0 flex-1 text-left">Archive</span>
+          </button>
 
-        {/* Sign-out button */}
-        {/* Sign-out section */}
-        <div className="border-t border-sidebar-border px-3 py-3">
+          <button
+            onClick={() => handleNavClick(onRecycleBin)}
+            className={
+              "group flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition cursor-pointer " +
+              (view === "recycle_bin"
+                ? "bg-white/10 font-medium text-white"
+                : "text-slate-300 hover:bg-white/5 hover:text-white")
+            }
+            title="View Recycle Bin"
+          >
+            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/10">
+              <Trash2 className="h-3.5 w-3.5 text-rose-400" />
+            </span>
+            <span className="truncate min-w-0 flex-1 text-left">Recycle Bin</span>
+          </button>
+
+          <button
+            onClick={() => handleNavClick(onProfile)}
+            className={
+              "group flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition cursor-pointer " +
+              (view === "profile"
+                ? "bg-white/10 font-medium text-white"
+                : "text-slate-300 hover:bg-white/5 hover:text-white")
+            }
+            title="View Profile"
+          >
+            <span
+              onClick={(e) => {
+                if (userPhotoBase64 && onViewFullPhoto) {
+                  e.stopPropagation();
+                  onViewFullPhoto();
+                }
+              }}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold overflow-hidden"
+              title={userPhotoBase64 ? "Click to view full photo" : undefined}
+            >
+              {userPhotoBase64 ? (
+                <img src={userPhotoBase64} alt="Profile" className="h-full w-full object-cover" />
+              ) : (
+                <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-full w-full object-cover">
+                  <circle cx="50" cy="50" r="50" fill="#cbd5e1" />
+                  <circle cx="50" cy="45" r="18" fill="#94a3b8" />
+                  <path d="M15 88C15 70 30 65 50 65C70 65 85 70 85 88" fill="#94a3b8" />
+                </svg>
+              )}
+            </span>
+            <span className="truncate min-w-0 flex-1 text-left">
+              {userDisplayName || "Profile"}
+            </span>
+          </button>
+
           <button
             onClick={() => setShowSignOutPopup(true)}
-            className="dms-sidebar-item flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition text-slate-300 hover:bg-white/5 hover:text-white cursor-pointer"
           >
-            <span className="dms-sidebar-icon-chip flex h-7 w-7 items-center justify-center rounded-lg">
-              <LogOut className="h-4 w-4 text-primary" />
+            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/10">
+              <LogOut className="h-3.5 w-3.5 text-primary" />
             </span>
             Sign Out
           </button>
         </div>
-      </div>
 
         {/* Sign Out Modal Popup */}
         {showSignOutPopup && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-fg/45 backdrop-blur-sm animate-fade-in">
-            {/* Click outside to close */}
             <div
               className="absolute inset-0"
               onClick={() => setShowSignOutPopup(false)}
             />
-
-            <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-navy-950 p-6 shadow-2xl animate-scale-up text-slate-200">
+            <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-navy-950 p-6 shadow-2xl animate-scale-up text-slate-200 mx-4">
               <div className="flex items-center gap-3 border-b border-white/10 pb-4 mb-5">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-400">
                   <LogOut className="h-5 w-5" />
@@ -314,6 +337,7 @@ export function Sidebar({
             </div>
           </div>
         )}
-    </aside>
+      </aside>
+    </>
   );
 }
