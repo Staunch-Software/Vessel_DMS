@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { Check, Monitor, Moon, Sun } from "lucide-react";
+import { Check, Monitor, Moon, Sun, ArrowLeft } from "lucide-react";
 import { useTheme, useTokensFor, type ThemeModePref } from "../theme/ThemeProvider";
 import type { ThemeMode, ThemeSeed } from "../theme/palettes";
 
@@ -9,16 +9,33 @@ const MODE_OPTIONS: { key: ThemeModePref; label: string; icon: typeof Sun; hint:
   { key: "system", label: "System", icon: Monitor, hint: "Match your OS setting" },
 ];
 
-export function ThemeSettings() {
+interface ThemeSettingsProps {
+  onBack?: () => void;
+}
+
+export function ThemeSettings({ onBack }: ThemeSettingsProps) {
   const { modePref, resolvedMode, themeId, themes, setModePref, setThemeId } = useTheme();
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <header className="border-b border-border bg-surface dms-page-px py-5">
-        <h2 className="text-xl font-semibold text-fg">Appearance</h2>
-        <p className="mt-0.5 text-sm text-muted">
-          Choose how Vessel DMS looks. Changes apply instantly and are remembered on this device.
-        </p>
+      <header className="border-b border-border bg-surface dms-page-px py-5 flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            {onBack && (
+              <button
+                onClick={onBack}
+                className="mr-2 inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-semibold text-muted hover:bg-surface-hover hover:text-fg transition cursor-pointer"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Back
+              </button>
+            )}
+            <h2 className="text-xl font-semibold text-fg">Appearance</h2>
+          </div>
+          <p className="mt-0.5 text-sm text-muted">
+            Choose how Vessel DMS looks. Changes apply instantly and are remembered on this device.
+          </p>
+        </div>
       </header>
 
       <div className="dms-page-bg flex-1 overflow-y-auto dms-page-px dms-page-py">

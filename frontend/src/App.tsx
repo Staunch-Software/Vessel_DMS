@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { createPortal } from "react-dom";
-import { ChevronRight, ChevronDown, ChevronUp, Menu, MoreVertical, Download, RotateCcw, FolderOpen, FolderPlus, Trash2, X, Archive, ArchiveRestore, Eye, FileText, ShieldOff, Plus, Ship } from "lucide-react";
+import { ChevronRight, ChevronDown, ChevronUp, Menu, MoreVertical, Download, RotateCcw, FolderOpen, FolderPlus, Trash2, X, Archive, ArchiveRestore, Eye, FileText, ShieldOff, Plus, Ship, Clock3 } from "lucide-react";
 import { ApprovalResultPopup, type ApprovalResultItem } from "./components/ApprovalResultPopup";
 import { DuplicateFilePopup, type DuplicateFileInfo } from "./components/DuplicateFilePopup";
-import { listMyApprovals } from "./api";
+import { listMyApprovals, listApprovals } from "./api";
+import { NotificationBell, type NotificationItem } from "./components/NotificationBell";
 
 import {
   createVessel,
@@ -79,6 +80,7 @@ import ProfilePage from "./components/Profile";
 import AuthCallback from "./AuthCallback";
 import { fileMeta, formatDate, formatSize } from "./components/fileType";
 import { ThemeSettings } from "./components/ThemeSettings";
+import { SettingsPage } from "./components/SettingsPage";
 import { Approvals } from "./components/Approvals";
 import { captureDiagnostics } from "./historyProbe";
 
@@ -240,12 +242,12 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { instance, accounts, inProgress } = useMsal();
   const [stats, setStats] = useState<Stats | null>(null);
-  const [view, setView] = useState<"dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings">(() => {
+  const [view, setView] = useState<"dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance">(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const v = params.get("view");
-      if (v === "explorer" || v === "profile" || v === "dashboard" || v === "archive" || v === "recycle_bin" || v === "approvals" || v === "settings") {
-        return v as "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings";
+      if (v === "explorer" || v === "profile" || v === "dashboard" || v === "archive" || v === "recycle_bin" || v === "approvals" || v === "settings" || v === "appearance") {
+        return v as "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance";
       }
     }
     return "dashboard";
@@ -301,6 +303,11 @@ export default function App() {
   const [searchQueryByPage, setSearchQueryByPage] = useState<Record<string, string>>({});
   const [pendingApprovalRequests, setPendingApprovalRequests] = useState<ApprovalResultItem[]>([]);
   const [duplicateFileInfo, setDuplicateFileInfo] = useState<DuplicateFileInfo | null>(null);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [readNotificationIds, setReadNotificationIds] = useState<string[]>([]);
+  const [selectedApprovalId, setSelectedApprovalId] = useState<string | null>(null);
+  const [selectedApprovalTab, setSelectedApprovalTab] = useState<"pending" | "approved" | "rejected" | "all" | undefined>(undefined);
+  const [showUploadSuccessModal, setShowUploadSuccessModal] = useState(false);
 
 
   // In-folder toolbar state
@@ -308,6 +315,32 @@ export default function App() {
   const [typeKey, setTypeKey] = useState<TypeKey>("all");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [layout, setLayout] = useState<ViewKey>("grid");
+
+  useEffect(() => {
+    if (user) {
+      const readKey = `read_notifications_${user.email}`;
+      const readIds = JSON.parse(localStorage.getItem(readKey) || "[]") as string[];
+      setReadNotificationIds(readIds);
+    } else {
+      setReadNotificationIds([]);
+    }
+  }, [user]);
+
+  const handleMarkAllNotificationsRead = useCallback(() => {
+    if (!user) return;
+    const readKey = `read_notifications_${user.email}`;
+    const readIds = JSON.parse(localStorage.getItem(readKey) || "[]") as string[];
+    const currentIds = notifications.map((n) => n.id);
+    const updatedIds = Array.from(new Set([...readIds, ...currentIds]));
+    localStorage.setItem(readKey, JSON.stringify(updatedIds));
+    setReadNotificationIds(updatedIds);
+  }, [user, notifications]);
+
+  const handleNotificationClick = useCallback((item: NotificationItem) => {
+    setSelectedApprovalId(item.id);
+    setSelectedApprovalTab(item.status);
+    setView("approvals");
+  }, []);
 
   const loadTop = useCallback(async () => {
     const [m, v, s, archIds, archNodes, delNodes] = await Promise.all([
@@ -536,52 +569,120 @@ export default function App() {
     }
   }, [user]);
 
-  // Polling for user's pending/decided approvals
+  const dismissRef = useRef(handleDismissApprovalResult);
+  useEffect(() => {
+    dismissRef.current = handleDismissApprovalResult;
+  }, [handleDismissApprovalResult]);
+
+  const isFirstCheckRef = useRef(true);
+
+  useEffect(() => {
+    isFirstCheckRef.current = true;
+  }, [user]);
+
+  const fetchNotifications = useCallback(async () => {
+    if (!user) return;
+    try {
+      const isAdmin = ADMIN_EMAILS.includes(user.email.toLowerCase());
+      
+      // Fetch notifications feed
+      let rawApprovals = [];
+      try {
+        if (isAdmin) {
+          rawApprovals = await listApprovals(user.email);
+        } else {
+          rawApprovals = await listMyApprovals();
+        }
+        const items: NotificationItem[] = rawApprovals.map((a: any) => {
+          let message = "";
+          let timestamp = a.uploaded_at;
+          if (a.status === "pending") {
+            message = isAdmin
+              ? `New document awaiting reviewer approval: ${a.filename} (uploaded by ${a.uploaded_by_name || a.uploaded_by_email})`
+              : `File "${a.filename}" has been uploaded successfully and is awaiting reviewer approval.`;
+          } else if (a.status === "approved") {
+            message = `File "${a.filename}" has been approved`;
+            timestamp = a.decided_at || a.uploaded_at;
+          } else if (a.status === "rejected") {
+            message = `File "${a.filename}" was rejected` + (a.rejection_reason ? `: ${a.rejection_reason}` : "");
+            timestamp = a.decided_at || a.uploaded_at;
+          }
+          return {
+            id: a.id,
+            filename: a.filename,
+            status: a.status,
+            timestamp,
+            message,
+            uploader: a.uploaded_by_name || a.uploaded_by_email,
+            rejectionReason: a.rejection_reason,
+          };
+        });
+        items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        setNotifications(items);
+      } catch (err) {
+        console.error("Failed to fetch notifications feed", err);
+      }
+
+      // Fetch decided approvals for personal toast alerts
+      const myApprovals = await listMyApprovals();
+      const decided = myApprovals.filter(a => a.status === "approved" || a.status === "rejected");
+      
+      const seenKey = `seen_approvals_${user.email}`;
+      const seenIds = JSON.parse(localStorage.getItem(seenKey) || "[]") as string[];
+      
+      if (isFirstCheckRef.current) {
+        // Suppress showing toast alerts for historical approvals decided in the past
+        const decidedIds = decided.map(a => a.id);
+        const initialSeen = Array.from(new Set([...seenIds, ...decidedIds]));
+        localStorage.setItem(seenKey, JSON.stringify(initialSeen));
+        isFirstCheckRef.current = false;
+        return;
+      }
+
+      const newDecided = decided.filter(a => !seenIds.includes(a.id));
+      if (newDecided.length > 0) {
+        const itemsToShow: ApprovalResultItem[] = newDecided.map(a => ({
+          id: a.id,
+          filename: a.filename,
+          status: a.status as "approved" | "rejected",
+          decidedAt: a.decided_at,
+          rejectionReason: a.rejection_reason,
+          finalPath: a.final_path,
+        }));
+        
+        // Mark them as seen immediately so we don't trigger updates/popups on subsequent polls
+        const updatedSeenIds = [...seenIds, ...itemsToShow.map(x => x.id)];
+        localStorage.setItem(seenKey, JSON.stringify(updatedSeenIds));
+
+        setPendingApprovalRequests((prev) => {
+          const next = [...prev];
+          itemsToShow.forEach(item => {
+            if (!next.some(x => x.id === item.id)) {
+              next.push(item);
+              setTimeout(() => {
+                dismissRef.current(item.id);
+              }, 9000);
+            }
+          });
+          return next;
+        });
+      }
+    } catch (err) {
+      console.error("Failed to poll my approvals", err);
+    }
+  }, [user]);
+
+  // Polling for user's pending/decided approvals & notifications
   useEffect(() => {
     if (!user) return;
     
-    const checkApprovals = async () => {
-      try {
-        const myApprovals = await listMyApprovals();
-        const decided = myApprovals.filter(a => a.status === "approved" || a.status === "rejected");
-        
-        const seenKey = `seen_approvals_${user.email}`;
-        const seenIds = JSON.parse(localStorage.getItem(seenKey) || "[]") as string[];
-        
-        const newDecided = decided.filter(a => !seenIds.includes(a.id));
-        if (newDecided.length > 0) {
-          const itemsToShow: ApprovalResultItem[] = newDecided.map(a => ({
-            id: a.id,
-            filename: a.filename,
-            status: a.status as "approved" | "rejected",
-            decidedAt: a.decided_at,
-            rejectionReason: a.rejection_reason,
-            finalPath: a.final_path,
-          }));
-          
-          setPendingApprovalRequests((prev) => {
-            const next = [...prev];
-            itemsToShow.forEach(item => {
-              if (!next.some(x => x.id === item.id)) {
-                next.push(item);
-                setTimeout(() => {
-                  handleDismissApprovalResult(item.id);
-                }, 9000);
-              }
-            });
-            return next;
-          });
-        }
-      } catch (err) {
-        console.error("Failed to poll my approvals", err);
-      }
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30000);
+    
+    return () => {
+      clearInterval(interval);
     };
-
-    checkApprovals();
-    const interval = setInterval(checkApprovals, 2000);
-
-    return () => clearInterval(interval);
-  }, [user, handleDismissApprovalResult]);
+  }, [user, fetchNotifications]);
 
 
   useEffect(() => {
@@ -823,19 +924,28 @@ export default function App() {
           final.status === "done"
             ? "Uploaded & filed"
             : final.status === "pending"
-              ? "Awaiting admin approval"
+              ? "Awaiting approval"
               : "Upload failed";
         upsertToast({
           id,
           status: final.status,
           title,
-          detail: final.status === "done" && final.destination ? formatUploadSuccessDetail(final.destination) : final.destination,
+          detail:
+            final.status === "pending"
+              ? "Awaiting reviewer approval"
+              : final.status === "done" && final.destination
+                ? formatUploadSuccessDetail(final.destination)
+                : final.destination,
           detectedMonth: final.detected_month,
         });
         // Small delay: SharePoint may take a moment to index a newly uploaded file
         // before it appears in a list_children response.
         if (final.status === "done") await sleep(1200);
         await refreshAfterMutation();
+        await fetchNotifications();
+        if (final.status === "pending") {
+          setShowUploadSuccessModal(true);
+        }
         setTimeout(() => dismissToast(id), 6000);
       } catch (e) {
         const detail = errDetail(e, file.name);
@@ -1014,11 +1124,23 @@ export default function App() {
         upsertToast({
           id,
           status: final.status,
-          title: final.status === "done" ? "Document renewed" : "Renew failed",
-          detail: final.destination,
+          title:
+            final.status === "done"
+              ? "Document renewed"
+              : final.status === "pending"
+                ? "Awaiting approval"
+                : "Renew failed",
+          detail:
+            final.status === "pending"
+              ? "Awaiting reviewer approval"
+              : final.destination,
           detectedMonth: final.detected_month,
         });
         await refreshAfterMutation();
+        await fetchNotifications();
+        if (final.status === "pending") {
+          setShowUploadSuccessModal(true);
+        }
         setTimeout(() => dismissToast(id), 6000);
       } catch (e) {
         upsertToast({ id, status: "failed", title: "Renew failed", detail: errDetail(e, node.name) });
@@ -1201,45 +1323,77 @@ export default function App() {
 
   const handleCreate = async (data: import("./api").VesselInput) => {
     await createVessel(data);
+    const toastId = Date.now() + Math.floor(Math.random() * 1000);
+    upsertToast({
+      id: toastId,
+      status: "done",
+      title: "Vessel created",
+      detail: `Successfully created vessel "${data.name}"`,
+    });
+    setTimeout(() => dismissToast(toastId), 4000);
     await loadTop();
     setView("explorer");
   };
 
   const handleUpdateVessel = async (vesselId: string, data: Partial<import("./api").VesselInput>) => {
-    await updateVessel(vesselId, data);
-    
-    // Reload vessels, mains, stats, archive, deleted in parallel
-    const [freshMains, freshVessels, freshStats, archIds, archNodes, delNodes] = await Promise.all([
-      getMains(),
-      listVessels(),
-      getStats(),
-      getArchivedIds(),
-      getArchivedNodes(),
-      getDeletedNodes(),
-    ]);
-    setMains(freshMains);
-    setVessels(freshVessels);
-    setStats(freshStats);
-    setArchivedFolderIds(new Set(archIds));
-    setArchivedNodes(archNodes);
-    setDeletedNodes(delNodes);
+    const toastId = Date.now() + Math.floor(Math.random() * 1000);
+    upsertToast({
+      id: toastId,
+      status: "processing",
+      title: "Updating vessel...",
+      detail: "Please wait",
+    });
+    try {
+      const result = await updateVessel(vesselId, data) as { message: string };
+      
+      // Reload vessels, mains, stats, archive, deleted in parallel
+      const [freshMains, freshVessels, freshStats, archIds, archNodes, delNodes] = await Promise.all([
+        getMains(),
+        listVessels(),
+        getStats(),
+        getArchivedIds(),
+        getArchivedNodes(),
+        getDeletedNodes(),
+      ]);
+      setMains(freshMains);
+      setVessels(freshVessels);
+      setStats(freshStats);
+      setArchivedFolderIds(new Set(archIds));
+      setArchivedNodes(archNodes);
+      setDeletedNodes(delNodes);
 
-    // Now refresh children with fresh mains (bypasses stale closure)
-    if (!currentId) {
-      setCurrent(null);
-      setChildren(freshMains);
-    } else {
-      try {
-        const [node, kids] = await Promise.all([
-          getFolder(currentId),
-          getChildren(currentId),
-        ]);
-        setCurrent(node);
-        setChildren(kids);
-      } catch {
-        // ignore
+      // Now refresh children with fresh mains (bypasses stale closure)
+      if (!currentId) {
+        setCurrent(null);
+        setChildren(freshMains);
+      } else {
+        try {
+          const [node, kids] = await Promise.all([
+            getFolder(currentId),
+            getChildren(currentId),
+          ]);
+          setCurrent(node);
+          setChildren(kids);
+        } catch {
+          // ignore
+        }
       }
+
+      upsertToast({
+        id: toastId,
+        status: "done",
+        title: "Vessel updated",
+        detail: result.message || `Successfully updated vessel "${data.name || ''}"`,
+      });
+    } catch (e) {
+      upsertToast({
+        id: toastId,
+        status: "failed",
+        title: "Update failed",
+        detail: errDetail(e, "Failed to update vessel details."),
+      });
     }
+    setTimeout(() => dismissToast(toastId), 6000);
   };
 
   const handleCreateFolder = async () => {
@@ -1512,46 +1666,72 @@ export default function App() {
         onRecycleBin={() => navigateTo("recycle_bin", [])}
         isAdmin={ADMIN_EMAILS.includes(user.email.toLowerCase())}
         onApprovals={goApprovals}
-        onSettings={goSettings}
         mobileOpen={sidebarOpen}
         onMobileClose={() => setSidebarOpen(false)}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden min-w-0">
-        {/* ── Mobile top bar (hamburger + logo) ── */}
-        <div className="dms-mobile-topbar border-b border-border">
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="dms-touch-btn rounded-lg text-fg hover:bg-surface2 transition"
-            aria-label="Open sidebar"
-          >
-            <Menu className="h-5 w-5" />
-          </button>
-          <span className="text-sm font-semibold text-fg truncate">Nissen DMS</span>
-        </div>
+        {/* Unified Global Navbar */}
+        <div className="dms-top-chrome relative z-30 flex items-center justify-between border-b border-border dms-page-px py-2">
+          {/* Left: Mobile hamburger menu and brand */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="lg:hidden dms-touch-btn rounded-lg text-fg hover:bg-surface2 transition"
+              aria-label="Open sidebar"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <span className="text-sm font-semibold text-fg lg:hidden truncate">Nissen DMS</span>
+          </div>
 
-        {/* Top bar: vessel switcher + global search */}
-        {view !== "settings" && view !== "approvals" && view !== "profile" && (
-          <div className="dms-top-chrome relative z-30 flex items-center gap-3 border-b border-border dms-page-px py-2.5">
-            <SearchBar
-              onNavigate={navigateToResult}
-              vessels={vessels}
-              vesselId={selectedVesselId}
-              onVesselChange={(vesselId) =>
-                setSelectedVesselByPage((prev) => ({ ...prev, [pageKey]: vesselId }))
-              }
-              query={searchQuery}
-              onQueryChange={(query) =>
-                setSearchQueryByPage((prev) => ({ ...prev, [pageKey]: query }))
-              }
+          {/* Center/Left (on Desktop): Search Bar (if applicable) */}
+          <div className="flex-1 flex items-center justify-start gap-4 ml-2 lg:ml-0">
+            {view !== "settings" && view !== "approvals" && view !== "profile" && view !== "dashboard" && (
+              <SearchBar
+                onNavigate={navigateToResult}
+                vessels={vessels}
+                vesselId={selectedVesselId}
+                onVesselChange={(vesselId) =>
+                  setSelectedVesselByPage((prev) => ({ ...prev, [pageKey]: vesselId }))
+                }
+                query={searchQuery}
+                onQueryChange={(query) =>
+                  setSearchQueryByPage((prev) => ({ ...prev, [pageKey]: query }))
+                }
+              />
+            )}
+          </div>
+
+          {/* Right: Notification Bell */}
+          <div className="flex items-center gap-3">
+            <NotificationBell
+              notifications={notifications}
+              readIds={readNotificationIds}
+              onMarkAllAsRead={handleMarkAllNotificationsRead}
+              onNotificationClick={handleNotificationClick}
             />
           </div>
-        )}
+        </div>
 
         {view === "settings" ? (
-          <ThemeSettings />
+          <SettingsPage
+            onBack={() => setView("profile")}
+            onSelectThemeSettings={() => setView("appearance")}
+          />
+        ) : view === "appearance" ? (
+          <ThemeSettings onBack={() => setView("settings")} />
         ) : view === "approvals" ? (
-          <Approvals actingEmail={user.email} />
+          <Approvals
+            actingEmail={user.email}
+            isAdmin={ADMIN_EMAILS.includes(user.email.toLowerCase())}
+            initialSelectedId={selectedApprovalId}
+            initialTab={selectedApprovalTab}
+            onClearInitial={() => {
+              setSelectedApprovalId(null);
+              setSelectedApprovalTab(undefined);
+            }}
+          />
         ) : view === "profile" ? (
           <ProfilePage
             mains={mains}
@@ -1560,6 +1740,7 @@ export default function App() {
             onDashboard={goDashboard}
             onSignOut={handleSignOut}
             onGlobalSignOut={handleGlobalSignOut}
+            onSettings={goSettings}
             onPhotoUpdate={setProfilePhoto}
           />
         ) : view === "dashboard" ? (
@@ -2382,6 +2563,33 @@ export default function App() {
                 className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
                 Move {deleteFileIds.size > 0 ? `(${deleteFileIds.size})` : ""} Selected to Recycle Bin
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Upload Success Modal ──────────────────────────────────────────── */}
+      {showUploadSuccessModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl z-10 border border-slate-100">
+            <div className="mb-4 flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-50">
+                <Clock3 className="h-6 w-6 text-amber-600 animate-pulse" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-slate-800">Awaiting Reviewer Approval</h2>
+                <p className="mt-2 text-sm text-slate-600 leading-relaxed">
+                  Your documents have been uploaded successfully and are awaiting approval from the authorized reviewer. The documents will be available after approval.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setShowUploadSuccessModal(false)}
+                className="w-full px-6 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm font-semibold text-white transition shadow-sm cursor-pointer text-center"
+              >
+                Close
               </button>
             </div>
           </div>

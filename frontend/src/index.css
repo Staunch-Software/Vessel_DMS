@@ -534,3 +534,10 @@ textarea::placeholder {
     display: inline-flex !important;
   }
 }
+
+/* Responsive visibility utility classes */
+@media (min-width: 1025px) {
+  .lg\:hidden {
+    display: none !important;
+  }
+}

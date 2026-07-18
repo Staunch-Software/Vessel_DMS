@@ -5,6 +5,7 @@ import {
   ShieldOff, Edit3, Save, X,
   Building2, Activity, RefreshCw, UserCheck,
   AlertCircle, Upload, FolderOpen, Trash2, FolderPlus, LogIn,
+  Settings,
 } from "lucide-react";
 
 import type { FolderNode, UserProfile, ProfileUpdatePayload } from "../api";
@@ -261,6 +262,7 @@ interface ProfilePageProps {
   onBack: () => void;
   onSignOut: () => void;
   onGlobalSignOut: () => void;
+  onSettings?: () => void;
   onPhotoUpdate?: (photo: string | null) => void;
   // kept for API compat — no longer used for sidebar rendering
   mains?: FolderNode[];
@@ -268,7 +270,7 @@ interface ProfilePageProps {
 }
 
 export default function ProfilePage({
-  userEmail, onBack, onSignOut, onGlobalSignOut, onPhotoUpdate,
+  userEmail, onBack, onSignOut, onGlobalSignOut, onSettings, onPhotoUpdate,
 }: ProfilePageProps) {
   const [profile,          setProfile]          = useState<UserProfile | null>(null);
   const [loading,          setLoading]          = useState(true);
@@ -422,14 +424,24 @@ export default function ProfilePage({
                 </button>
               </div>
             ) : (
-              <button
-                onClick={handleEdit}
-                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold bg-white border hover:bg-slate-50 transition"
-                style={{ color: slate500, borderColor: slate200 }}
-              >
-                <Edit3 className="h-3.5 w-3.5" />
-                Edit Profile
-              </button>
+              <>
+                <button
+                  onClick={onSettings}
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold bg-white border hover:bg-slate-50 transition"
+                  style={{ color: slate500, borderColor: slate200 }}
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                  Settings
+                </button>
+                <button
+                  onClick={handleEdit}
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold bg-white border hover:bg-slate-50 transition"
+                  style={{ color: slate500, borderColor: slate200 }}
+                >
+                  <Edit3 className="h-3.5 w-3.5" />
+                  Edit Profile
+                </button>
+              </>
             )}
             <button
               onClick={() => setShowSignOutPopup(true)}

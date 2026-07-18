@@ -14,6 +14,7 @@ import {
   approveRequest,
   approvalPreviewUrl,
   listApprovals,
+  listMyApprovals,
   rejectRequest,
   type ApprovalRequest,
   type ApprovalStatus,
@@ -48,8 +49,20 @@ function statusBadge(status: ApprovalStatus): string {
   return "bg-error-bg text-error ring-1 ring-error/20";
 }
 
-export function Approvals({ actingEmail }: { actingEmail: string }) {
-  const [tab, setTab] = useState<Tab>("pending");
+export function Approvals({
+  actingEmail,
+  isAdmin = false,
+  initialSelectedId = null,
+  initialTab,
+  onClearInitial,
+}: {
+  actingEmail: string;
+  isAdmin?: boolean;
+  initialSelectedId?: string | null;
+  initialTab?: Tab;
+  onClearInitial?: () => void;
+}) {
+  const [tab, setTab] = useState<Tab>(initialTab || "pending");
   const [query, setQuery] = useState("");
   const [requests, setRequests] = useState<ApprovalRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,17 +76,40 @@ export function Approvals({ actingEmail }: { actingEmail: string }) {
     setLoading(true);
     setError(null);
     try {
-      setRequests(await listApprovals(actingEmail, tab, query || undefined));
+      if (isAdmin) {
+        setRequests(await listApprovals(actingEmail, tab, query || undefined));
+      } else {
+        let res = await listMyApprovals(tab);
+        if (query) {
+          const q = query.toLowerCase();
+          res = res.filter((a) =>
+            a.filename.toLowerCase().includes(q)
+          );
+        }
+        setRequests(res);
+      }
     } catch (e) {
-      setError(
-        (e as { response?: { status?: number } })?.response?.status === 403
-          ? "You don't have administrator access to review approvals."
-          : "Could not load approval requests."
-      );
+      setError("Could not load approval requests.");
     } finally {
       setLoading(false);
     }
-  }, [actingEmail, tab, query]);
+  }, [actingEmail, tab, query, isAdmin]);
+
+  useEffect(() => {
+    if (initialTab) {
+      setTab(initialTab);
+    }
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (initialSelectedId && requests.length > 0) {
+      const found = requests.find((r) => r.id === initialSelectedId);
+      if (found) {
+        setSelected(found);
+        onClearInitial?.();
+      }
+    }
+  }, [initialSelectedId, requests, onClearInitial]);
 
   useEffect(() => {
     const t = setTimeout(load, query ? 250 : 0);
@@ -210,7 +246,7 @@ export function Approvals({ actingEmail }: { actingEmail: string }) {
                       {r.status}
                     </span>
 
-                    {r.status === "pending" && (
+                    {isAdmin && r.status === "pending" && (
                       <div className="flex shrink-0 items-center gap-1">
                         <button
                           onClick={() => handleApprove(r)}
@@ -288,6 +324,7 @@ export function Approvals({ actingEmail }: { actingEmail: string }) {
         <ApprovalPreview
           request={selected}
           actingEmail={actingEmail}
+          isAdmin={isAdmin}
           onClose={() => setSelected(null)}
           onApprove={() => handleApprove(selected)}
           onReject={() => setRejectingId(selected.id)}
@@ -301,6 +338,7 @@ export function Approvals({ actingEmail }: { actingEmail: string }) {
 function ApprovalPreview({
   request,
   actingEmail,
+  isAdmin = false,
   onClose,
   onApprove,
   onReject,
@@ -308,6 +346,7 @@ function ApprovalPreview({
 }: {
   request: ApprovalRequest;
   actingEmail: string;
+  isAdmin?: boolean;
   onClose: () => void;
   onApprove: () => void;
   onReject: () => void;
@@ -420,7 +459,7 @@ function ApprovalPreview({
           )}
         </div>
 
-        {request.status === "pending" && (
+        {isAdmin && request.status === "pending" && (
           <footer className="flex items-center justify-end gap-2 border-t border-border px-5 py-3.5">
             <button
               onClick={onReject}

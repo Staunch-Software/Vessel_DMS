@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { LayoutDashboard, ClipboardCheck, Layers, Palette, Plus, LogOut, ShieldOff, Archive, Trash2, X } from "lucide-react";
+import { LayoutDashboard, ClipboardCheck, Layers, Plus, LogOut, ShieldOff, Archive, Trash2, X } from "lucide-react";
 import type { FolderNode } from "../api";
 import { MAIN_ACCENTS } from "./nodeStyle";
 
 interface Props {
   mains: FolderNode[];
-  view: "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings";
+  view: "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance";
   selectedMainId: string | null;
   userDisplayName?: string;
   userPhotoBase64?: string | null;
@@ -20,7 +20,6 @@ interface Props {
   onRecycleBin: () => void;
   isAdmin?: boolean;
   onApprovals?: () => void;
-  onSettings: () => void;
   /** Whether the sidebar is open on mobile/tablet */
   mobileOpen?: boolean;
   /** Called when user taps the close button or overlay on mobile */
@@ -44,7 +43,6 @@ export function Sidebar({
   onRecycleBin,
   isAdmin = false,
   onApprovals,
-  onSettings,
   mobileOpen = false,
   onMobileClose,
 }: Props) {
@@ -141,20 +139,7 @@ export function Sidebar({
             </button>
           )}
 
-          <button
-            onClick={() => handleNavClick(onSettings)}
-            className={
-              "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition cursor-pointer " +
-              (view === "settings"
-                ? "bg-white/10 font-medium text-white"
-                : "text-slate-300 hover:bg-white/5")
-            }
-          >
-            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/10">
-              <Palette className="h-3.5 w-3.5 text-brand-300" />
-            </span>
-            Appearance
-          </button>
+
 
           <p className="px-2 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
             Main Folders

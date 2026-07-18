@@ -125,6 +125,8 @@ class StubBackend:
             "shipyard": updated["shipyard"],
             "hull_number": updated["hull_number"],
             "vessel_type": updated["vessel_type"],
+            "sp_success": True,
+            "sp_errors": [],
         }
 
     async def reprovision_vessel(self, vessel_id: str) -> dict:

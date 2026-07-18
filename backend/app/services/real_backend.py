@@ -371,6 +371,8 @@ class RealBackend:
                 if db.query(models.Vessel).filter_by(imo=new_imo).first():
                     raise Conflict("A vessel with that IMO number already exists")
 
+        sp_success = True
+        sp_errors = []
         if new_name and new_name != old_name:
             drive_id = await self._drive()
             from ..graph import drive as _gd
@@ -381,6 +383,8 @@ class RealBackend:
                     try:
                         await _gd.graph().patch(f"/drives/{drive_id}/items/{folder.drive_item_id}", json={"name": new_name})
                     except Exception as e:
+                        sp_success = False
+                        sp_errors.append(f"Folder '{folder.name}': {e}")
                         print(f"Error renaming folder {folder.path} in SharePoint: {e}")
 
                 # Also find orphaned ship folders (vessel_id=None) with the old name
@@ -395,6 +399,8 @@ class RealBackend:
                         await _gd.graph().patch(f"/drives/{drive_id}/items/{folder.drive_item_id}", json={"name": new_name})
                         folder.vessel_id = int(vessel_id)
                     except Exception as e:
+                        sp_success = False
+                        sp_errors.append(f"Orphaned folder '{folder.name}': {e}")
                         print(f"Error renaming orphaned folder {folder.path} in SharePoint: {e}")
                 db.commit()
 
@@ -433,6 +439,8 @@ class RealBackend:
                 "shipyard": v_updated.shipyard,
                 "hull_number": v_updated.hull_number,
                 "vessel_type": v_updated.vessel_type,
+                "sp_success": sp_success,
+                "sp_errors": sp_errors,
             }
 
     async def repair_vessel_links(self) -> dict:

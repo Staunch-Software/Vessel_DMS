@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """FastAPI entry point for the Vessel DMS.
 
 One code path over a backend interface: real SharePoint Embedded + PostgreSQL
@@ -183,9 +184,6 @@ async def check_email(payload: CheckEmailIn):
     When Graph is not configured (stub mode) we let all emails through so that
     development still works without Azure credentials.
     """
-    # TEMPORARY: Bypass email check for development
-    return {"allowed": True}
-    
     if not settings.graph_configured:
         return {"allowed": True}
 
@@ -684,12 +682,29 @@ async def create_vessel(payload: VesselIn):
 
 
 @app.patch("/api/vessels/{vessel_id}")
-async def update_vessel(vessel_id: str, payload: VesselUpdateIn):
+async def update_vessel(
+    vessel_id: str,
+    payload: VesselUpdateIn,
+    x_user_email: str | None = Header(default=None)
+):
     vtype = (payload.vessel_type or "").strip() or None
     if vtype and vtype not in VESSEL_TYPES:
         raise HTTPException(400, "Invalid vessel type")
+    
+    # 1. Get before state
+    v_before = None
     try:
-        return await get_backend().update_vessel(
+        vessels = await get_backend().list_vessels()
+        for v in vessels:
+            if str(v.get("id")) == str(vessel_id):
+                v_before = v
+                break
+    except Exception:
+        pass
+
+    try:
+        # 2. Perform update
+        v_after = await get_backend().update_vessel(
             vessel_id,
             name=payload.name,
             imo=payload.imo,
@@ -697,6 +712,47 @@ async def update_vessel(vessel_id: str, payload: VesselUpdateIn):
             hull_number=payload.hull_number,
             vessel_type=vtype,
         )
+        
+        # 3. Compare changes & compile message
+        changes = []
+        if v_before:
+            if v_before.get("name") != v_after.get("name"):
+                changes.append(f"Name ('{v_before.get('name')}' ➔ '{v_after.get('name')}')")
+            if v_before.get("imo") != v_after.get("imo"):
+                changes.append(f"IMO ('{v_before.get('imo')}' ➔ '{v_after.get('imo')}')")
+            if v_before.get("shipyard") != v_after.get("shipyard"):
+                changes.append(f"Shipyard ('{v_before.get('shipyard')}' ➔ '{v_after.get('shipyard')}')")
+            if v_before.get("hull_number") != v_after.get("hull_number"):
+                changes.append(f"Hull Number ('{v_before.get('hull_number')}' ➔ '{v_after.get('hull_number')}')")
+            if v_before.get("vessel_type") != v_after.get("vessel_type"):
+                changes.append(f"Vessel Type ('{v_before.get('vessel_type')}' ➔ '{v_after.get('vessel_type')}')")
+        
+        detail_msg = ""
+        if changes:
+            detail_msg = f"Updated vessel '{v_after.get('name')}': " + ", ".join(changes)
+        else:
+            detail_msg = f"Saved vessel '{v_after.get('name')}' with no changes."
+
+        # Include SharePoint rename result if available
+        sp_success = v_after.get("sp_success", True)
+        if not sp_success:
+            detail_msg += " (Note: some SharePoint folders failed to rename)"
+
+        # 4. Log activity
+        user_email = (x_user_email or "").strip().lower()
+        if user_email:
+            _log_activity(user_email, "update_vessel", detail_msg)
+
+        # 5. Return success result with message
+        return {
+            "id": v_after.get("id"),
+            "name": v_after.get("name"),
+            "imo": v_after.get("imo"),
+            "shipyard": v_after.get("shipyard"),
+            "hull_number": v_after.get("hull_number"),
+            "vessel_type": v_after.get("vessel_type"),
+            "message": detail_msg
+        }
     except Conflict as e:
         return JSONResponse(status_code=409, content={"message": str(e)})
     except NotFound as e:
@@ -774,7 +830,11 @@ async def upload(
         result = await get_backend().upload(
             folder_id, file.filename, data, file.content_type, email, name
         )
-        _log_activity(email, "file_upload", f"Uploaded: {file.filename} (pending approval)")
+        dest = result.get("destination") if isinstance(result, dict) else None
+        log_detail = f"Uploaded: {file.filename} (awaiting reviewer approval)"
+        if dest:
+            log_detail += f"|{dest}"
+        _log_activity(email, "file_upload", log_detail)
         return result
     except (NotFound, BadRequest, Conflict) as e:
         _raise(e)
@@ -832,7 +892,11 @@ async def month_upload(
             folder_id, file.filename, category, data, file.content_type,
             email, name
         )
-        _log_activity(email, "file_upload", f"Uploaded: {file.filename} (pending approval)")
+        dest = result.get("destination") if isinstance(result, dict) else None
+        log_detail = f"Uploaded: {file.filename} (awaiting reviewer approval)"
+        if dest:
+            log_detail += f"|{dest}"
+        _log_activity(email, "file_upload", log_detail)
         return result
     except (NotFound, BadRequest, Conflict, InternalServerError) as e:
         _raise(e)
@@ -993,15 +1057,42 @@ async def list_approvals(
 
 
 @app.get("/api/approvals/{request_id}")
-async def get_approval(request_id: str, admin: str = Depends(_require_admin)):
-    try:
-        return await get_backend().get_approval(request_id)
-    except NotFound as e:
-        _raise(e)
+async def get_approval(
+    request_id: str,
+    x_user_email: str | None = Header(default=None)
+):
+    email = (x_user_email or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "X-User-Email header required")
+    approval = await get_backend().get_approval(request_id)
+    if not approval:
+        raise HTTPException(404, "Approval request not found")
+    
+    is_admin = email in settings.admin_email_set
+    is_uploader = approval.get("uploaded_by_email", "").strip().lower() == email
+    if not (is_admin or is_uploader):
+        raise HTTPException(403, "Access denied")
+    return approval
 
 
 @app.get("/api/approvals/{request_id}/preview")
-async def approval_preview(request_id: str, admin: str = Depends(_require_admin)):
+async def approval_preview(
+    request_id: str,
+    x_user_email: str | None = Header(default=None),
+    admin: str | None = None
+):
+    email = (x_user_email or admin or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "X-User-Email header or admin query parameter required")
+    approval = await get_backend().get_approval(request_id)
+    if not approval:
+        raise HTTPException(404, "Approval request not found")
+    
+    is_admin = email in settings.admin_email_set
+    is_uploader = approval.get("uploaded_by_email", "").strip().lower() == email
+    if not (is_admin or is_uploader):
+        raise HTTPException(403, "Administrator access required")
+    
     result = await get_backend().get_approval_file(request_id)
     if result is None:
         raise HTTPException(404, "Staged file not found")
