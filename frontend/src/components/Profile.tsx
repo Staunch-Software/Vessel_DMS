@@ -4,7 +4,7 @@ import {
   MapPin, Hash, Calendar, Users, ArrowLeft,
   ShieldOff, Edit3, Save, X,
   Building2, Activity, RefreshCw, UserCheck,
-  AlertCircle, Upload, FolderOpen, Trash2, FolderPlus, LogIn, Printer,
+  AlertCircle, Upload, FolderOpen, Trash2, FolderPlus, LogIn,
 } from "lucide-react";
 
 import type { FolderNode, UserProfile, ProfileUpdatePayload } from "../api";
@@ -67,35 +67,10 @@ interface EditForm {
   phone: string;
   office_name: string;
   office_location: string;
-  address_line1: string;
-  address_line2: string;
-  area_locality: string;
-  landmark: string;
-  city: string;
-  state: string;
-  province: string;
-  postal_code: string;
-  country: string;
   department: string;
   manager_name: string;
   manager_email: string;
-  ec_name: string;
-  ec_relationship: string;
-  ec_phone: string;
-  ec_email: string;
   date_of_joining: string;
-  office_address_line1: string;
-  office_address_line2: string;
-  office_area_locality: string;
-  office_landmark: string;
-  office_city: string;
-  office_state: string;
-  office_province: string;
-  office_postal_code: string;
-  office_country: string;
-  office_tel: string;
-  office_fax: string;
-  office_phone: string;
 }
 
 function initForm(p: UserProfile | null): EditForm {
@@ -106,35 +81,10 @@ function initForm(p: UserProfile | null): EditForm {
     phone:           p?.phone           ?? "",
     office_name:     p?.office_name     ?? "",
     office_location: p?.office_location ?? "",
-    address_line1:   p?.address_line1   ?? "",
-    address_line2:   p?.address_line2   ?? "",
-    area_locality:   p?.area_locality   ?? "",
-    landmark:        p?.landmark        ?? "",
-    city:            p?.city            ?? "",
-    state:           p?.state           ?? "",
-    province:        p?.province        ?? "",
-    postal_code:     p?.postal_code     ?? "",
-    country:         p?.country         ?? "",
     department:      p?.department      ?? "",
     manager_name:    p?.manager_name    ?? "",
     manager_email:   p?.manager_email   ?? "",
-    ec_name:         p?.emergency_contact?.name              ?? "",
-    ec_relationship: p?.emergency_contact?.relationship_type ?? "",
-    ec_phone:        p?.emergency_contact?.phone             ?? "",
-    ec_email:        p?.emergency_contact?.email             ?? "",
-    date_of_joining: p?.date_of_joining                      ?? "",
-    office_address_line1: p?.office_address_line1            ?? "",
-    office_address_line2: p?.office_address_line2            ?? "",
-    office_area_locality: p?.office_area_locality            ?? "",
-    office_landmark:      p?.office_landmark                 ?? "",
-    office_city:          p?.office_city                     ?? "",
-    office_state:         p?.office_state                    ?? "",
-    office_province:      p?.office_province                 ?? "",
-    office_postal_code:   p?.office_postal_code              ?? "",
-    office_country:       p?.office_country                  ?? "",
-    office_tel:           p?.office_tel                      ?? "",
-    office_fax:           p?.office_fax                      ?? "",
-    office_phone:         p?.office_phone                    ?? "",
+    date_of_joining: p?.date_of_joining  ?? "",
   };
 }
 
@@ -146,8 +96,6 @@ function validateForm(f: EditForm): FormErrors {
   const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const phoneRe = /^[+\d()\-\s]*$/;
   const alphaSpaceRe = /^[a-zA-Z\s'\-]*$/;
-  const alphaOnlyRe = /^[a-zA-Z\s]*$/;
-  const postalRe = /^[a-zA-Z0-9\s\-]*$/;
   const empIdRe = /^[a-zA-Z0-9\s\-\/]*$/;
   const addressRe = /^[a-zA-Z0-9\s\-\/\.,#]*$/;
 
@@ -164,36 +112,7 @@ function validateForm(f: EditForm): FormErrors {
     { key: "department", label: "Department", regex: /^[a-zA-Z\s'\-&]*$/, regexError: "Only letters, spaces, ampersands, hyphens, and apostrophes are allowed" },
     { key: "manager_name", label: "Manager Name", regex: alphaSpaceRe, regexError: "Only letters, spaces, hyphens, and apostrophes are allowed" },
     { key: "manager_email", label: "Manager Email", regex: emailRe, regexError: "Enter a valid email address (e.g. name@company.com)" },
-    { key: "ec_name", label: "Full Name", regex: alphaSpaceRe, regexError: "Only letters, spaces, hyphens, and apostrophes are allowed" },
-    { key: "ec_relationship", label: "Relationship", regex: alphaOnlyRe, regexError: "Only letters and spaces are allowed" },
-    { key: "ec_phone", label: "Phone", regex: phoneRe, regexError: "Only digits, +, \u2013, ( ), and spaces are allowed" },
-    { key: "ec_email", label: "Email", regex: emailRe, regexError: "Enter a valid email address" },
-    
-    // Personal Address
-    { key: "address_line1", label: "Address Line 1", regex: addressRe, regexError: "Invalid characters in address" },
-    { key: "address_line2", label: "Address Line 2", regex: addressRe, regexError: "Invalid characters in address" },
-    { key: "area_locality", label: "Area / Locality", regex: addressRe, regexError: "Invalid characters" },
-    { key: "landmark", label: "Landmark", regex: addressRe, regexError: "Invalid characters" },
-    { key: "city", label: "City", regex: alphaSpaceRe, regexError: "Only letters, spaces, hyphens, and apostrophes are allowed" },
-    { key: "state", label: "State", regex: alphaSpaceRe, regexError: "Only letters, spaces, hyphens, and apostrophes are allowed" },
-    { key: "province", label: "Province", regex: alphaSpaceRe, regexError: "Only letters, spaces, hyphens, and apostrophes are allowed" },
-    { key: "postal_code", label: "Postal Code", regex: postalRe, regexError: "Enter a valid postal / ZIP code" },
-    { key: "country", label: "Country", regex: alphaSpaceRe, regexError: "Only letters, spaces, hyphens, and apostrophes are allowed" },
-    
-    // Office Address
     { key: "office_name", label: "Office Name", regex: addressRe, regexError: "Invalid characters" },
-    { key: "office_address_line1", label: "Address Line 1", regex: addressRe, regexError: "Invalid characters in address" },
-    { key: "office_address_line2", label: "Address Line 2", regex: addressRe, regexError: "Invalid characters in address" },
-    { key: "office_area_locality", label: "Area / Locality", regex: addressRe, regexError: "Invalid characters" },
-    { key: "office_landmark", label: "Landmark", regex: addressRe, regexError: "Invalid characters" },
-    { key: "office_city", label: "City", regex: alphaSpaceRe, regexError: "Only letters, spaces, hyphens, and apostrophes are allowed" },
-    { key: "office_state", label: "State", regex: alphaSpaceRe, regexError: "Only letters, spaces, hyphens, and apostrophes are allowed" },
-    { key: "office_province", label: "Province", regex: alphaSpaceRe, regexError: "Only letters, spaces, hyphens, and apostrophes are allowed" },
-    { key: "office_postal_code", label: "Postal Code", regex: postalRe, regexError: "Enter a valid postal / ZIP code" },
-    { key: "office_country", label: "Country", regex: alphaSpaceRe, regexError: "Only letters, spaces, hyphens, and apostrophes are allowed" },
-    { key: "office_tel", label: "Office TEL", regex: phoneRe, regexError: "Only digits, +, \u2013, ( ), and spaces are allowed" },
-    { key: "office_fax", label: "Office FAX", regex: phoneRe, regexError: "Only digits, +, \u2013, ( ), and spaces are allowed" },
-    { key: "office_phone", label: "Office Phone", regex: phoneRe, regexError: "Only digits, +, \u2013, ( ), and spaces are allowed" },
     { key: "office_location", label: "Office Location", regex: addressRe, regexError: "Invalid characters" }
   ];
 
@@ -445,33 +364,8 @@ export default function ProfilePage({
         phone: form.phone || undefined,
         office_name: form.office_name || undefined,
         office_location: form.office_location || undefined,
-        office_address_line1: form.office_address_line1 || undefined,
-        office_address_line2: form.office_address_line2 || undefined,
-        office_area_locality: form.office_area_locality || undefined,
-        office_landmark: form.office_landmark || undefined,
-        office_city: form.office_city || undefined,
-        office_state: form.office_state || undefined,
-        office_province: form.office_province || undefined,
-        office_postal_code: form.office_postal_code || undefined,
-        office_country: form.office_country || undefined,
-        office_tel: form.office_tel || undefined,
-        office_fax: form.office_fax || undefined,
-        office_phone: form.office_phone || undefined,
-        address_line1: form.address_line1 || undefined,
-        address_line2: form.address_line2 || undefined,
-        area_locality: form.area_locality || undefined,
-        landmark: form.landmark || undefined,
-        city: form.city || undefined,
-        state: form.state || undefined,
-        province: form.province || undefined,
-        postal_code: form.postal_code || undefined,
-        country: form.country || undefined,
         department: form.department || undefined, manager_name: form.manager_name || undefined,
         manager_email: form.manager_email || undefined,
-        emergency_contact_name: form.ec_name || undefined,
-        emergency_contact_relationship: form.ec_relationship || undefined,
-        emergency_contact_phone: form.ec_phone || undefined,
-        emergency_contact_email: form.ec_email || undefined,
         date_of_joining: form.date_of_joining || undefined,
       };
       const updated = await updateProfile(userEmail, payload);
@@ -683,7 +577,7 @@ export default function ProfilePage({
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
                         {profile?.department && <span className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(255,255,255,0.08)", color: "#cfece7" }}><Building2 className="h-3 w-3" />{profile.department}</span>}
-                        {(profile?.city || profile?.office_location) && <span className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(255,255,255,0.08)", color: "#cfece7" }}><MapPin className="h-3 w-3" />{profile.city ? [profile.city, profile.state, profile.country].filter(Boolean).join(", ") : profile.office_location}</span>}
+                        {profile?.office_location && <span className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(255,255,255,0.08)", color: "#cfece7" }}><MapPin className="h-3 w-3" />{profile.office_location}</span>}
                         {profile?.date_of_joining && yearsLabel(profile.date_of_joining) && <span className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(255,255,255,0.08)", color: "#cfece7" }}><Calendar className="h-3 w-3" />{yearsLabel(profile.date_of_joining)}</span>}
                       </div>
                     </div>
@@ -710,46 +604,7 @@ export default function ProfilePage({
                         {editing && <FieldRow icon={<Mail className="h-3.5 w-3.5" />} label="Manager Email" value={profile?.manager_email} editing={editing} inputValue={form.manager_email} onInputChange={(v) => setField("manager_email", v)} placeholder="e.g. r.iyer@company.com" error={formErrors.manager_email} />}
                         <FieldRow icon={<Calendar className="h-3.5 w-3.5" />} label="Date of Joining" value={profile?.date_of_joining ? fmtOnlyDate(profile.date_of_joining) : null} editing={editing} inputValue={form.date_of_joining} type="date" onInputChange={(v) => setField("date_of_joining", v)} placeholder="Select date" error={formErrors.date_of_joining} />
                       </div>
-                      
-                      {/* Office Address inside Work Info */}
-                      <div className="mt-5 border-t pt-4" style={{ borderColor: slate200 }}>
-                        <h3 className="text-sm font-semibold mb-3 flex items-center gap-1.5" style={{ color: ink }}>
-                          <MapPin className="h-4 w-4" style={{ color: slate500 }} />
-                          Office Address
-                        </h3>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5">
-                          <FieldRow icon={<Building2 className="h-3.5 w-3.5" />} label="Office Name" value={profile?.office_name} editing={editing} inputValue={form.office_name} onInputChange={(v) => setField("office_name", v)} placeholder="e.g. HQ Tower" error={formErrors.office_name} />
-                          <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Address Line 1" value={profile?.office_address_line1} editing={editing} inputValue={form.office_address_line1} onInputChange={(v) => setField("office_address_line1", v)} placeholder="e.g. 21 Marina Boulevard" error={formErrors.office_address_line1} />
-                          <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Address Line 2" value={profile?.office_address_line2} editing={editing} inputValue={form.office_address_line2} onInputChange={(v) => setField("office_address_line2", v)} placeholder="e.g. #14-02 MBFC" error={formErrors.office_address_line2} />
-                          <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Area / Locality" value={profile?.office_area_locality} editing={editing} inputValue={form.office_area_locality} onInputChange={(v) => setField("office_area_locality", v)} placeholder="e.g. Marina Bay" error={formErrors.office_area_locality} />
-                          <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Landmark" value={profile?.office_landmark} editing={editing} inputValue={form.office_landmark} onInputChange={(v) => setField("office_landmark", v)} placeholder="e.g. Near Marina Sands" error={formErrors.office_landmark} />
-                          <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="City" value={profile?.office_city} editing={editing} inputValue={form.office_city} onInputChange={(v) => setField("office_city", v)} placeholder="e.g. Singapore" error={formErrors.office_city} />
-                          <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="State" value={profile?.office_state} editing={editing} inputValue={form.office_state} onInputChange={(v) => setField("office_state", v)} placeholder="e.g. Central" error={formErrors.office_state} />
-                          <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Province" value={profile?.office_province} editing={editing} inputValue={form.office_province} onInputChange={(v) => setField("office_province", v)} placeholder="e.g. Western Province" error={formErrors.office_province} />
-                          <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Postal Code" value={profile?.office_postal_code} editing={editing} inputValue={form.office_postal_code} onInputChange={(v) => setField("office_postal_code", v)} placeholder="e.g. 018982" error={formErrors.office_postal_code} />
-                          <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Country" value={profile?.office_country} editing={editing} inputValue={form.office_country} onInputChange={(v) => setField("office_country", v)} placeholder="e.g. Singapore" error={formErrors.office_country} />
-                          <FieldRow icon={<Phone className="h-3.5 w-3.5" />} label="Office TEL" value={profile?.office_tel} editing={editing} inputValue={form.office_tel} type="tel" onInputChange={(v) => setField("office_tel", v.replace(/[^\d+\-() ]/g, ""))} placeholder="e.g. +65 6112 3456" error={formErrors.office_tel} />
-                          <FieldRow icon={<Printer className="h-3.5 w-3.5" />} label="Office FAX" value={profile?.office_fax} editing={editing} inputValue={form.office_fax} type="tel" onInputChange={(v) => setField("office_fax", v.replace(/[^\d+\-() ]/g, ""))} placeholder="e.g. +65 6112 3457" error={formErrors.office_fax} />
-                          <FieldRow icon={<Phone className="h-3.5 w-3.5" />} label="Office Phone" value={profile?.office_phone} editing={editing} inputValue={form.office_phone} type="tel" onInputChange={(v) => setField("office_phone", v.replace(/[^\d+\-() ]/g, ""))} placeholder="e.g. +65 8112 3458" error={formErrors.office_phone} />
-                        </div>
-                      </div>
                     </div>
-                  </Card>
-                  
-                  {/* 2. EMERGENCY CONTACT */}
-                  <Card title="Emergency Contact" icon={<UserCheck className="h-3.5 w-3.5" />}>
-                    <div style={{ borderTop: `1px dashed ${slate200}` }}>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5">
-                        <FieldRow icon={<Users className="h-3.5 w-3.5" />} label="Full Name"
-                          value={profile?.emergency_contact?.name ? `${profile.emergency_contact.name}${profile.emergency_contact.relationship_type ? ` \u2014 ${profile.emergency_contact.relationship_type}` : ""}` : null}
-                          editing={editing} inputValue={form.ec_name} onInputChange={(v) => setField("ec_name", v)} placeholder="e.g. Vikram Menon" error={formErrors.ec_name} />
-                        {editing && <FieldRow icon={<Users className="h-3.5 w-3.5" />} label="Relationship" value={profile?.emergency_contact?.relationship_type} editing={editing} inputValue={form.ec_relationship} onInputChange={(v) => setField("ec_relationship", v)} placeholder="e.g. Spouse, Parent, Sibling" error={formErrors.ec_relationship} />}
-                        <FieldRow icon={<Phone className="h-3.5 w-3.5" />} label="Phone" value={profile?.emergency_contact?.phone} editing={editing} inputValue={form.ec_phone} onInputChange={(v) => setField("ec_phone", v.replace(/[^\d+\-() ]/g, ""))} placeholder="e.g. +65 9027 6612" error={formErrors.ec_phone} />
-                        <FieldRow icon={<Mail className="h-3.5 w-3.5" />} label="Email" value={profile?.emergency_contact?.email} editing={editing} inputValue={form.ec_email} onInputChange={(v) => setField("ec_email", v)} placeholder="e.g. contact@gmail.com" asLink={!editing} error={formErrors.ec_email} />
-                      </div>
-                    </div>
-                    {editing && <p className="mt-3 text-xs" style={{ color: slate400 }}>Emergency contact is saved together with account fields.</p>}
-                    {!editing && !profile?.emergency_contact?.name && <p className="mt-3 text-xs" style={{ color: slate400 }}>No emergency contact on record. Click <strong>Edit Profile</strong> to add one.</p>}
                   </Card>
                 </div>
 
@@ -765,25 +620,6 @@ export default function ProfilePage({
                       <FieldRow icon={<Users className="h-3.5 w-3.5" />} label="Last Name" value={profile?.last_name} editing={editing} inputValue={form.last_name} onInputChange={(v) => setField("last_name", v)} placeholder="e.g. Menon" error={formErrors.last_name} />
                       <FieldRow icon={<Phone className="h-3.5 w-3.5" />} label="Phone" value={profile?.phone} editing={editing} inputValue={form.phone} type="tel" onInputChange={(v) => setField("phone", v.replace(/[^\d+\-() ]/g, ""))} placeholder="e.g. +65 8123 4477" error={formErrors.phone} />
                       <FieldRow icon={<Clock className="h-3.5 w-3.5" />} label="Last Login" value={fmtDate(profile?.last_login)} readOnly mono />
-                    </div>
-
-                    {/* Personal Address Details inside Personal Info Card */}
-                    <div className="mt-6 border-t pt-5" style={{ borderColor: slate200 }}>
-                      <h3 className="text-sm font-semibold mb-3 flex items-center gap-1.5" style={{ color: ink }}>
-                        <MapPin className="h-4 w-4" style={{ color: slate500 }} />
-                        Personal Address
-                      </h3>
-                      <div style={{ borderTop: `1px dashed ${slate200}` }}>
-                        <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Address Line 1" value={profile?.address_line1} editing={editing} inputValue={form.address_line1} onInputChange={(v) => setField("address_line1", v)} placeholder="e.g. 21 Marina Boulevard" error={formErrors.address_line1} />
-                        <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Address Line 2" value={profile?.address_line2} editing={editing} inputValue={form.address_line2} onInputChange={(v) => setField("address_line2", v)} placeholder="e.g. #14-02 MBFC" error={formErrors.address_line2} />
-                        <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Area / Locality" value={profile?.area_locality} editing={editing} inputValue={form.area_locality} onInputChange={(v) => setField("area_locality", v)} placeholder="e.g. Marina Bay" error={formErrors.area_locality} />
-                        <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Landmark" value={profile?.landmark} editing={editing} inputValue={form.landmark} onInputChange={(v) => setField("landmark", v)} placeholder="e.g. Near Marina Bay Sands" error={formErrors.landmark} />
-                        <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="City" value={profile?.city} editing={editing} inputValue={form.city} onInputChange={(v) => setField("city", v)} placeholder="e.g. Singapore" error={formErrors.city} />
-                        <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="State" value={profile?.state} editing={editing} inputValue={form.state} onInputChange={(v) => setField("state", v)} placeholder="e.g. Central" error={formErrors.state} />
-                        <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Province" value={profile?.province} editing={editing} inputValue={form.province} onInputChange={(v) => setField("province", v)} placeholder="e.g. Western Province" error={formErrors.province} />
-                        <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Postal Code" value={profile?.postal_code} editing={editing} inputValue={form.postal_code} onInputChange={(v) => setField("postal_code", v)} placeholder="e.g. 018982" error={formErrors.postal_code} />
-                        <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Country" value={profile?.country} editing={editing} inputValue={form.country} onInputChange={(v) => setField("country", v)} placeholder="e.g. Singapore" error={formErrors.country} />
-                      </div>
                     </div>
                   </Card>
                 </div>

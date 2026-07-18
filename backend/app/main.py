@@ -398,9 +398,6 @@ async def auth_login(payload: LoginIn):
                     row.two_factor_enabled = True
                     row.password_changed_at = now - timedelta(days=92)
 
-                    # Empty emergency contact placeholder
-                    db.add(db_models.EmergencyContact(user_email=email))
-
                     # Default folder permissions
                     for fname, level in [
                         ("Technical & Crewing", "edit"),
@@ -487,7 +484,6 @@ async def get_profile(email: str):
             with SessionLocal() as db:
                 row = db.query(db_models.UserProfile).filter_by(email=email).one_or_none()
                 if row is not None:
-                    ec = row.emergency_contact
                     perms = row.folder_permissions
                     logs = (
                         db.query(db_models.ActivityLog)
@@ -507,27 +503,6 @@ async def get_profile(email: str):
                         "phone": row.phone,
                         "office_location": row.office_location,
                         "office_name": row.office_name,
-                        "office_address_line1": row.office_address_line1,
-                        "office_address_line2": row.office_address_line2,
-                        "office_area_locality": row.office_area_locality,
-                        "office_landmark": row.office_landmark,
-                        "office_city": row.office_city,
-                        "office_state": row.office_state,
-                        "office_province": row.office_province,
-                        "office_postal_code": row.office_postal_code,
-                        "office_country": row.office_country,
-                        "office_tel": row.office_tel,
-                        "office_fax": row.office_fax,
-                        "office_phone": row.office_phone,
-                        "address_line1": row.address_line1,
-                        "address_line2": row.address_line2,
-                        "area_locality": row.area_locality,
-                        "landmark": row.landmark,
-                        "city": row.city,
-                        "state": row.state,
-                        "province": row.province,
-                        "postal_code": row.postal_code,
-                        "country": row.country,
                         "company_name": row.company_name,
                         "employee_id": row.employee_id,
                         "manager_name": row.manager_name,
@@ -539,12 +514,7 @@ async def get_profile(email: str):
                         "created_at": row.created_at.isoformat() + "Z",
                         "photo_base64": row.photo_base64,
                         "date_of_joining": row.date_of_joining.isoformat() if row.date_of_joining else None,
-                        "emergency_contact": {
-                            "name": ec.name,
-                            "relationship_type": ec.relationship_type,
-                            "phone": ec.phone,
-                            "email": ec.email,
-                        } if ec else None,
+                        "emergency_contact": None,
                         "folder_permissions": [
                             {"folder_name": p.folder_name, "permission_level": p.permission_level}
                             for p in perms
@@ -581,7 +551,6 @@ async def get_profile(email: str):
                     if cached.get("last_login"):
                         row.last_login = datetime.fromisoformat(cached["last_login"].rstrip("Z"))
                     db.add(row)
-                    db.add(db_models.EmergencyContact(user_email=email))
                     db.commit()
                     # Return the seeded profile via recursive call
                     return await get_profile(email)
@@ -602,37 +571,12 @@ class ProfileUpdateIn(BaseModel):
     phone: str | None = None
     office_location: str | None = None
     office_name: str | None = None
-    address_line1: str | None = None
-    address_line2: str | None = None
-    area_locality: str | None = None
-    landmark: str | None = None
-    city: str | None = None
-    state: str | None = None
-    province: str | None = None
-    postal_code: str | None = None
-    country: str | None = None
     department: str | None = None
     manager_name: str | None = None
     manager_email: str | None = None
     two_factor_enabled: bool | None = None
-    emergency_contact_name: str | None = None
-    emergency_contact_relationship: str | None = None
-    emergency_contact_phone: str | None = None
-    emergency_contact_email: str | None = None
     photo_base64: str | None = None
     date_of_joining: str | None = None
-    office_address_line1: str | None = None
-    office_address_line2: str | None = None
-    office_area_locality: str | None = None
-    office_landmark: str | None = None
-    office_city: str | None = None
-    office_state: str | None = None
-    office_province: str | None = None
-    office_postal_code: str | None = None
-    office_country: str | None = None
-    office_tel: str | None = None
-    office_fax: str | None = None
-    office_phone: str | None = None
 
 
 @app.patch("/api/profile")
@@ -657,16 +601,9 @@ async def patch_profile(email: str, payload: ProfileUpdateIn):
                     )
                     db.add(row)
                     db.flush()  # assign id before seeding related rows
-                    db.add(db_models.EmergencyContact(user_email=email))
 
                 for field in ("employee_id", "first_name", "last_name", "phone", "office_location",
-                              "office_name", "address_line1", "address_line2",
-                              "area_locality", "landmark", "city", "state", "province",
-                              "postal_code", "country",
-                              "department", "manager_name", "manager_email", "photo_base64",
-                              "office_address_line1", "office_address_line2", "office_area_locality",
-                              "office_landmark", "office_city", "office_state", "office_province",
-                              "office_postal_code", "office_country", "office_tel", "office_fax", "office_phone"):
+                              "office_name", "department", "manager_name", "manager_email", "photo_base64"):
                     val = getattr(payload, field)
                     if val is not None:
                         setattr(row, field, val)
@@ -680,26 +617,6 @@ async def patch_profile(email: str, payload: ProfileUpdateIn):
 
                 if payload.two_factor_enabled is not None:
                     row.two_factor_enabled = payload.two_factor_enabled
-
-                ec_any = any(v is not None for v in [
-                    payload.emergency_contact_name,
-                    payload.emergency_contact_relationship,
-                    payload.emergency_contact_phone,
-                    payload.emergency_contact_email,
-                ])
-                if ec_any:
-                    ec = db.query(db_models.EmergencyContact).filter_by(user_email=email).one_or_none()
-                    if ec is None:
-                        ec = db_models.EmergencyContact(user_email=email)
-                        db.add(ec)
-                    if payload.emergency_contact_name is not None:
-                        ec.name = payload.emergency_contact_name
-                    if payload.emergency_contact_relationship is not None:
-                        ec.relationship_type = payload.emergency_contact_relationship
-                    if payload.emergency_contact_phone is not None:
-                        ec.phone = payload.emergency_contact_phone
-                    if payload.emergency_contact_email is not None:
-                        ec.email = payload.emergency_contact_email
 
                 # Log the update activity
                 db.add(db_models.ActivityLog(
@@ -717,9 +634,7 @@ async def patch_profile(email: str, payload: ProfileUpdateIn):
         # Update in-memory cache
         p = _profile_cache.get(email, {})
         for field in ("employee_id", "first_name", "last_name", "phone", "office_location", "department",
-                      "office_name", "address_line1", "address_line2", "area_locality",
-                      "landmark", "city", "state", "postal_code", "country",
-                      "manager_name", "manager_email"):
+                      "office_name", "manager_name", "manager_email"):
             val = getattr(payload, field)
             if val is not None:
                 p[field] = val

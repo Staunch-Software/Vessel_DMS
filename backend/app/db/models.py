@@ -78,27 +78,6 @@ class UserProfile(Base):
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     office_location: Mapped[str | None] = mapped_column(String(300), nullable=True)
     office_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    office_address_line1: Mapped[str | None] = mapped_column(String(300), nullable=True)
-    office_address_line2: Mapped[str | None] = mapped_column(String(300), nullable=True)
-    office_area_locality: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    office_landmark: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    office_city: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    office_state: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    office_province: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    office_postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    office_country: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    office_tel: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    office_fax: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    office_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    address_line1: Mapped[str | None] = mapped_column(String(300), nullable=True)
-    address_line2: Mapped[str | None] = mapped_column(String(300), nullable=True)
-    area_locality: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    landmark: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    state: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    province: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    country: Mapped[str | None] = mapped_column(String(100), nullable=True)
     company_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     employee_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     manager_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -111,32 +90,12 @@ class UserProfile(Base):
     photo_base64: Mapped[str | None] = mapped_column(Text, nullable=True)
     date_of_joining: Mapped[date | None] = mapped_column(Date, nullable=True)
 
-    emergency_contact: Mapped["EmergencyContact | None"] = relationship(
-        back_populates="user", cascade="all, delete-orphan", uselist=False
-    )
     folder_permissions: Mapped[list["FolderPermission"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
     activity_logs: Mapped[list["ActivityLog"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-
-
-class EmergencyContact(Base):
-    __tablename__ = "emergency_contacts"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_email: Mapped[str] = mapped_column(
-        String(320), ForeignKey("user_profiles.email", ondelete="CASCADE"),
-        unique=True, index=True,
-    )
-    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    relationship_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-    user: Mapped["UserProfile"] = relationship(back_populates="emergency_contact")
 
 
 class FolderPermission(Base):

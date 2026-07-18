@@ -287,13 +287,6 @@ export async function getProfile(email: string): Promise<UserProfile> {
 
 // ────────────────────────── Full Profile Types ──────────────────────────
 
-export interface EmergencyContact {
-  name: string | null;
-  relationship_type: string | null;
-  phone: string | null;
-  email: string | null;
-}
-
 export interface UserProfile {
   email: string;
   display_name: string;
@@ -305,27 +298,6 @@ export interface UserProfile {
   phone: string | null;
   office_location: string | null;
   office_name: string | null;
-  office_address_line1: string | null;
-  office_address_line2: string | null;
-  office_area_locality: string | null;
-  office_landmark: string | null;
-  office_city: string | null;
-  office_state: string | null;
-  office_province: string | null;
-  office_postal_code: string | null;
-  office_country: string | null;
-  office_tel: string | null;
-  office_fax: string | null;
-  office_phone: string | null;
-  address_line1: string | null;
-  address_line2: string | null;
-  area_locality: string | null;
-  landmark: string | null;
-  city: string | null;
-  state: string | null;
-  province: string | null;
-  postal_code: string | null;
-  country: string | null;
   company_name: string | null;
   employee_id: string | null;
   manager_name: string | null;
@@ -337,7 +309,7 @@ export interface UserProfile {
   created_at: string;
   photo_base64: string | null;
   date_of_joining: string | null;
-  emergency_contact: EmergencyContact | null;
+  emergency_contact: null;
   folder_permissions: { folder_name: string; permission_level: string }[];
   recent_activity: { action: string; detail: string | null; created_at: string }[];
 }
@@ -349,37 +321,12 @@ export interface ProfileUpdatePayload {
   phone?: string;
   office_location?: string;
   office_name?: string;
-  address_line1?: string;
-  address_line2?: string;
-  area_locality?: string;
-  landmark?: string;
-  city?: string;
-  state?: string;
-  province?: string;
-  postal_code?: string;
-  country?: string;
   department?: string;
   manager_name?: string;
   manager_email?: string;
   two_factor_enabled?: boolean;
-  emergency_contact_name?: string;
-  emergency_contact_relationship?: string;
-  emergency_contact_phone?: string;
-  emergency_contact_email?: string;
   photo_base64?: string;
   date_of_joining?: string;
-  office_address_line1?: string;
-  office_address_line2?: string;
-  office_area_locality?: string;
-  office_landmark?: string;
-  office_city?: string;
-  office_state?: string;
-  office_province?: string;
-  office_postal_code?: string;
-  office_country?: string;
-  office_tel?: string;
-  office_fax?: string;
-  office_phone?: string;
 }
 
 export async function updateProfile(
