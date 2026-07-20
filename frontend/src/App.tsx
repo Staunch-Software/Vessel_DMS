@@ -3554,13 +3554,11 @@ function FileActions({
   const menuRef = useRef<HTMLDivElement>(null);
   const renewInputRef = useRef<HTMLInputElement>(null);
 
-  void onPreview;
-
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!open && btnRef.current) {
       const rect = btnRef.current.getBoundingClientRect();
-      const MENU_H = 150; // estimated menu height for fallback
+      const MENU_H = 180; // adjusted menu height to fit Preview option
       const spaceBelow = window.innerHeight - rect.bottom;
       const flipped = spaceBelow < MENU_H && rect.top > MENU_H;
       setDropPos({
@@ -3623,6 +3621,15 @@ function FileActions({
           }}
           className="w-36 rounded-lg border border-slate-200 bg-white p-1 shadow-xl flex flex-col gap-0.5"
         >
+          {isFile && onPreview && (
+            <button
+              onClick={() => { onPreview(file); setOpen(false); }}
+              className="flex items-center gap-2 w-full rounded px-2.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+            >
+              <Eye className="h-3.5 w-3.5 text-slate-400" />
+              Preview
+            </button>
+          )}
           {isFile && onDownload && (
             <button
               onClick={() => { onDownload(file); setOpen(false); }}
@@ -3674,8 +3681,7 @@ function FileCard({
   const sub = [formatSize(file.size), formatDate(file.modified)].filter(Boolean).join(" · ");
   return (
     <div
-      onClick={() => onPreview(file)}
-      className="dms-card dms-card-hover group flex cursor-pointer items-center gap-3 rounded-xl p-4"
+      className="dms-card dms-card-hover group flex items-center gap-3 rounded-xl p-4"
     >
       <span className={"flex h-11 w-11 shrink-0 items-center justify-center rounded-xl " + meta.chip}>
         <meta.Icon className={"h-5 w-5 " + meta.cls} />
@@ -3707,8 +3713,7 @@ function FileRow({
   const meta = fileMeta(file.ext);
   return (
     <div
-      onClick={() => onPreview(file)}
-      className="group flex cursor-pointer items-center gap-3 px-4 py-2.5 transition hover:bg-bg"
+      className="group flex items-center gap-3 px-4 py-2.5 transition hover:bg-bg"
     >
       <meta.Icon className={"h-4 w-4 shrink-0 " + meta.cls} />
       <span className="flex-1 truncate text-sm text-fg">{file.name}</span>
