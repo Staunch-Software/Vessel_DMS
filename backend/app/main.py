@@ -105,29 +105,74 @@ def _require_admin(
     return email
 
 
+def _ensure_database_exists(db_url: str) -> None:
+    """Connects to the default postgres database and creates target database if not exists."""
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.engine import make_url
+
+    try:
+        url = make_url(db_url)
+        target_db = url.database
+        if not target_db:
+            return
+
+        # We only run automatic database creation if using a PostgreSQL engine
+        if "postgresql" not in url.drivername:
+            return
+
+        # Connect to 'postgres' database on the same host to check/create target database
+        postgres_url = url.set(database="postgres")
+        
+        engine = create_engine(postgres_url)
+        try:
+            with engine.connect() as conn:
+                conn.execution_options(isolation_level="AUTOCOMMIT")
+                result = conn.execute(
+                    text("SELECT 1 FROM pg_database WHERE datname = :dbname"),
+                    {"dbname": target_db}
+                ).scalar()
+                
+                if not result:
+                    conn.execute(text(f'CREATE DATABASE "{target_db}"'))
+                    import logging
+                    logging.getLogger(__name__).info("Database '%s' created automatically.", target_db)
+        finally:
+            engine.dispose()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("Could not verify/create database automatically: %s", exc)
+
+
 @app.on_event("startup")
 async def _startup():
     from .scheduler import precreate_next_month, start_scheduler
 
-    # ── Run any pending Alembic migrations automatically ─────────────────────
     if settings.db_configured:
+        # 1. Automatic database creation if PostgreSQL database is missing
+        _ensure_database_exists(settings.database_url_resolved)
+
+        # 2. Run any pending Alembic migrations automatically
         try:
             import pathlib
             import alembic.config
             from alembic import command
-            from .db.base import Base, engine
 
             # Resolve alembic.ini relative to this file (backend/app/../alembic.ini)
             _alembic_ini = pathlib.Path(__file__).parent.parent / "alembic.ini"
             alembic_cfg = alembic.config.Config(str(_alembic_ini))
             command.upgrade(alembic_cfg, "head")
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Alembic automatic migration failed: %s", exc)
 
-            # Safety net: create any table that migrations may have missed
+        # 3. Safety net: make sure all tables are created via metadata
+        try:
+            from .db.base import Base, engine
             if engine is not None:
                 Base.metadata.create_all(bind=engine, checkfirst=True)
         except Exception as exc:
             import logging
-            logging.getLogger(__name__).warning("Alembic migration warning: %s", exc)
+            logging.getLogger(__name__).warning("Database safety net table creation failed: %s", exc)
 
     app.state.scheduler = start_scheduler()
     if settings.graph_configured and settings.db_configured:
@@ -201,6 +246,7 @@ def _session_db():
 async def require_session(
     request: Request,
     x_session_id: str | None = Header(default=None),
+    session_id: str | None = Query(default=None),
 ):
     """FastAPI dependency — validate the server-side session on every protected
     request.  Returns the UserSession ORM row on success; raises HTTP 401 with
@@ -214,14 +260,16 @@ async def require_session(
     if not settings.db_configured:
         return None  # stub mode — skip session checks
 
-    if not x_session_id:
+    token = x_session_id or session_id
+
+    if not token:
         # Log the invalid-access attempt before rejecting
         _write_invalid_attempt(
             session_id=None,
             email="unknown",
             ip=_get_ip(request),
             ua=request.headers.get("user-agent"),
-            detail="No X-Session-ID header",
+            detail="No Session ID in header or query param",
         )
         raise HTTPException(
             status_code=401,
@@ -234,11 +282,11 @@ async def require_session(
 
     db = SessionLocal()
     try:
-        session, reason = validate_session(db, x_session_id)
+        session, reason = validate_session(db, token)
         if session is None:
             # Write audit for failed access attempt
             _write_invalid_attempt(
-                session_id=x_session_id,
+                session_id=token,
                 email="unknown",
                 ip=_get_ip(request),
                 ua=request.headers.get("user-agent"),

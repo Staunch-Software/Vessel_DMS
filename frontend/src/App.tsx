@@ -189,10 +189,24 @@ function parseMonthFolderDate(name: string): Date | null {
   return null;
 }
 
-function sortItems(items: FolderNode[], sort: SortKey): FolderNode[] {
+function sortItems(
+  items: FolderNode[],
+  sort: SortKey,
+  vessels?: Array<{ id: string; name: string }>
+): FolderNode[] {
   const folders = items.filter((i) => i.kind !== "file");
   const files = items.filter((i) => i.kind === "file");
-  
+
+  // Build a map of vessel name -> rank for newest-first ordering.
+  // vessels array is ordered oldest-first from the backend, so reverse index = newest = lower rank.
+  const vesselRank = new Map<string, number>();
+  if (vessels) {
+    vessels.forEach((v, idx) => {
+      // Lower rank = newer (reversed index)
+      vesselRank.set(v.name.toLowerCase(), vessels.length - 1 - idx);
+    });
+  }
+
   // Sort Folders
   if (sort === "name") {
     folders.sort((a, b) => a.name.localeCompare(b.name));
@@ -204,14 +218,21 @@ function sortItems(items: FolderNode[], sort: SortKey): FolderNode[] {
     });
   } else if (sort === "newest") {
     folders.sort((a, b) => {
+      // Month-named folders (e.g. "June 2026") sort by date
       const dateA = parseMonthFolderDate(a.name);
       const dateB = parseMonthFolderDate(b.name);
-      if (dateA && dateB) {
-        return dateB.getTime() - dateA.getTime();
-      }
+      if (dateA && dateB) return dateB.getTime() - dateA.getTime();
       if (dateA && !dateB) return -1;
       if (!dateA && dateB) return 1;
-      // Fallback for non-month folders: sort by modified date if available, else alphabetically
+
+      // Ship/vessel folders: sort by creation order using the vessels list
+      if (a.kind === "ship" || b.kind === "ship") {
+        const rankA = vesselRank.get(a.name.toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
+        const rankB = vesselRank.get(b.name.toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
+        if (rankA !== rankB) return rankA - rankB;
+      }
+
+      // Non-ship folders: sort by modified date if available, else alphabetically
       const modA = a.modified ?? "";
       const modB = b.modified ?? "";
       if (modA && modB) return modB.localeCompare(modA);
@@ -228,7 +249,7 @@ function sortItems(items: FolderNode[], sort: SortKey): FolderNode[] {
   } else if (sort === "newest") {
     files.sort((a, b) => (b.modified ?? "").localeCompare(a.modified ?? ""));
   }
-  
+
   return [...folders, ...files];
 }
 
@@ -948,8 +969,8 @@ export default function App() {
     const q = fQuery.trim().toLowerCase();
     if (q) items = items.filter((c) => c.name.toLowerCase().includes(q));
     items = items.filter((c) => matchesType(c, typeKey));
-    return sortItems(items, sortKey);
-  }, [children, current, selectedVesselName, fQuery, typeKey, sortKey, archivedFolderIds]);
+    return sortItems(items, sortKey, vessels);
+  }, [children, current, selectedVesselName, fQuery, typeKey, sortKey, archivedFolderIds, vessels]);
 
   // ----- toasts -----
   const upsertToast = (t: ToastItem) =>
@@ -1366,6 +1387,42 @@ export default function App() {
     setTimeout(() => dismissToast(id), 5000);
   }, [recycleSelectIds, deletedNodes, refreshAfterMutation, user]);
 
+  const handleRestoreAll = useCallback(async () => {
+    if (deletedNodes.length === 0) return;
+    const id = Date.now();
+    upsertToast({ id, status: "processing", title: `Restoring all ${deletedNodes.length} items…`, detail: "Please wait" });
+    try {
+      for (const n of deletedNodes) {
+        await restoreDeletedItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined);
+      }
+      await getDeletedNodes().then(setDeletedNodes);
+      upsertToast({ id, status: "done", title: "All items restored", detail: "Items are visible again in the explorer" });
+    } catch (e) {
+      upsertToast({ id, status: "failed", title: "Restore failed", detail: errDetail(e, "") });
+    }
+    setTimeout(() => dismissToast(id), 5000);
+  }, [deletedNodes, user]);
+
+  const handleEmptyRecycleBin = useCallback(async () => {
+    if (deletedNodes.length === 0) return;
+    const id = Date.now();
+    upsertToast({ id, status: "processing", title: "Emptying Recycle Bin…", detail: "Please wait" });
+    try {
+      for (const n of deletedNodes) {
+        await permanentDeleteItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined);
+      }
+      await getDeletedNodes().then(setDeletedNodes);
+      upsertToast({ id, status: "done", title: "Recycle Bin emptied", detail: "All items permanently deleted" });
+    } catch (e) {
+      upsertToast({ id, status: "failed", title: "Empty failed", detail: errDetail(e, "") });
+    }
+    setTimeout(() => dismissToast(id), 5000);
+  }, [deletedNodes, user]);
+
+  const [recycleSortKey, setRecycleSortKey] = useState<"name" | "deleted_at" | "size" | "modified">("deleted_at");
+  const [recycleSortDir, setRecycleSortDir] = useState<"asc" | "desc">("desc");
+  const [recycleLayout, setRecycleLayout] = useState<"list" | "grid">("list");
+
   const handleBulkPermanentDelete = useCallback(() => {
     if (recycleSelectIds.size === 0) return;
     setShowBulkDeleteRecycleModal(true);
@@ -1393,17 +1450,71 @@ export default function App() {
   }, [recycleSelectIds, deletedNodes, refreshAfterMutation, user]);
 
   const handleCreate = async (data: import("./api").VesselInput) => {
-    await createVessel(data);
     const toastId = Date.now() + Math.floor(Math.random() * 1000);
     upsertToast({
       id: toastId,
-      status: "done",
-      title: "Vessel created",
-      detail: `Successfully created vessel "${data.name}"`,
+      status: "processing",
+      title: "Creating vessel...",
+      detail: `Provisioning SharePoint folders for "${data.name}"`,
     });
-    setTimeout(() => dismissToast(toastId), 4000);
-    await loadTop();
-    setView("explorer");
+    try {
+      await createVessel(data);
+
+      // Close the modal immediately so the user isn't stuck
+      setShowModal(false);
+
+      upsertToast({
+        id: toastId,
+        status: "done",
+        title: "Vessel created",
+        detail: `Successfully created vessel "${data.name}"`,
+      });
+
+      // Reload vessels, mains, stats, archive, deleted in parallel
+      const [freshMains, freshVessels, freshStats, archIds, archNodes, delNodes] = await Promise.all([
+        getMains(),
+        listVessels(),
+        getStats(),
+        getArchivedIds(),
+        getArchivedNodes(),
+        getDeletedNodes(),
+      ]);
+      setMains(freshMains);
+      setVessels(freshVessels);
+      setStats(freshStats);
+      setArchivedFolderIds(new Set(archIds));
+      setArchivedNodes(archNodes);
+      setDeletedNodes(delNodes);
+
+      // Now refresh current folder children
+      if (!currentId) {
+        setCurrent(null);
+        setChildren(freshMains);
+      } else {
+        try {
+          const [node, kids] = await Promise.all([
+            getFolder(currentId),
+            getChildren(currentId),
+          ]);
+          setCurrent(node);
+          setChildren(kids);
+        } catch {
+          // ignore
+        }
+      }
+
+      setView("explorer");
+    } catch (e) {
+      upsertToast({
+        id: toastId,
+        status: "failed",
+        title: "Vessel creation failed",
+        detail: errDetail(e, `Could not create vessel "${data.name}"`),
+      });
+      // Re-throw so the modal's catch block can display the inline error
+      throw e;
+    }
+    setTimeout(() => dismissToast(toastId), 5000);
   };
 
   const handleUpdateVessel = async (vesselId: string, data: Partial<import("./api").VesselInput>) => {
@@ -1841,94 +1952,309 @@ export default function App() {
               />
             </div>
           </>
-        ) : view === "recycle_bin" ? (
-          <>
-            <header className="dms-page-header flex items-center justify-between gap-4 border-b border-slate-100 bg-white dms-page-px py-4">
-              <div className="min-w-0">
-                <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-slate-800">
-                  <Trash2 className="h-5 w-5 text-rose-600 animate-pulse" />
-                  Recycle Bin
-                </h2>
-                <p className="mt-0.5 text-sm text-slate-500">
-                  Showing {deletedNodes.length} soft-deleted items
-                </p>
-              </div>
-              <div className="header-actions flex flex-wrap gap-2">
-                {deletedNodes.length > 0 && (
-                  <button
-                    onClick={() => {
-                      setRecycleSelectIds(new Set());
-                      setShowRecycleSelectModal(true);
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-500 transition cursor-pointer shadow-sm"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    <span className="dms-action-btn-text">Restore / Hard Delete</span>
-                  </button>
-                )}
-                <button
-                  onClick={() => setView("explorer")}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition cursor-pointer"
-                >
-                  Back to Explorer
-                </button>
-              </div>
-            </header>
+        ) : view === "recycle_bin" ? (() => {
+          // Sort recycle bin nodes
+          const sortedDeleted = [...deletedNodes].sort((a, b) => {
+            let cmp = 0;
+            if (recycleSortKey === "name") {
+              cmp = a.name.localeCompare(b.name);
+            } else if (recycleSortKey === "deleted_at") {
+              cmp = (a.deleted_at ?? "").localeCompare(b.deleted_at ?? "");
+            } else if (recycleSortKey === "size") {
+              cmp = (a.size ?? 0) - (b.size ?? 0);
+            } else if (recycleSortKey === "modified") {
+              cmp = (a.modified ?? "").localeCompare(b.modified ?? "");
+            }
+            return recycleSortDir === "desc" ? -cmp : cmp;
+          });
 
-            <div className="flex-1 overflow-y-auto bg-slate-50 dms-page-px dms-page-py">
-              {deletedNodes.length === 0 ? (
-                <div className="flex h-full flex-col items-center justify-center py-20 text-center">
-                  <Trash2 className="h-10 w-10 text-slate-300 mb-3" />
-                  <h3 className="text-sm font-semibold text-slate-700">Recycle Bin is empty</h3>
-                  <p className="mt-1 text-xs text-slate-500">Folders and files you delete will show up here.</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {deletedNodes.map((n) => {
-                    const isFile = n.kind === "file";
-                    const iconInfo = iconFor(n);
-                    const IconComponent = isFile ? (iconInfo?.Icon || FileText) : Trash2;
-                    const iconColorClass = isFile ? (iconInfo?.cls || "text-slate-500") : "text-rose-600 font-semibold";
-                    return (
-                      <div 
-                        key={n.id} 
-                        onClick={() => {
-                          setRecycleSelectIds(new Set([n.id]));
-                          setShowRecycleSelectModal(true);
-                        }}
-                        className="group flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md relative cursor-pointer"
-                      >
-                        <div className="flex items-start gap-4">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-50">
-                            <IconComponent className={`h-5 w-5 ${iconColorClass}`} />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <h3 className="truncate text-sm font-semibold text-slate-800" title={n.name}>
-                              {n.name}
-                            </h3>
-                            <p className="mt-0.5 text-xs text-slate-400 font-medium">
-                              {isFile ? "Soft-deleted File" : "Soft-deleted Folder"}
-                            </p>
-                            {n.main_folder && (
-                              <p className="mt-1 text-[11px] font-semibold text-rose-500 uppercase tracking-wider bg-rose-50/50 px-2 py-0.5 rounded border border-rose-100 inline-block">
-                                {n.main_folder}
-                              </p>
+          const handleRecycleSort = (key: typeof recycleSortKey) => {
+            if (recycleSortKey === key) {
+              setRecycleSortDir(d => d === "asc" ? "desc" : "asc");
+            } else {
+              setRecycleSortKey(key);
+              setRecycleSortDir("desc");
+            }
+          };
+
+          const SortIcon = ({ col }: { col: typeof recycleSortKey }) =>
+            recycleSortKey === col ? (
+              recycleSortDir === "desc"
+                ? <ChevronDown className="inline h-3.5 w-3.5 ml-0.5 text-brand-600" />
+                : <ChevronUp className="inline h-3.5 w-3.5 ml-0.5 text-brand-600" />
+            ) : null;
+
+          const fmtBytes = (n?: number | null) => {
+            if (n == null) return "—";
+            if (n < 1024) return `${n} B`;
+            if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+            return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+          };
+
+          const fmtDate = (s?: string | null) => {
+            if (!s) return "—";
+            try {
+              return new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
+            } catch { return s; }
+          };
+
+          return (
+            <>
+              {/* Header */}
+              <div className="dms-top-chrome border-b border-slate-200 bg-white">
+                <div className="dms-page-px py-3 flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 mr-1">
+                    <Trash2 className="h-5 w-5 text-rose-500" />
+                    <span className="font-semibold text-slate-800 text-base">Recycle Bin</span>
+                  </div>
+
+                  {/* Toolbar buttons */}
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {/* Sort dropdown */}
+                    <div className="relative group">
+                      <button className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition">
+                        <ChevronUp className="h-3.5 w-3.5" />
+                        Sort
+                        <ChevronDown className="h-3 w-3 text-slate-400" />
+                      </button>
+                      <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-slate-200 rounded-lg shadow-xl z-50 py-1 hidden group-hover:block">
+                        {(["name", "deleted_at", "size", "modified"] as const).map(k => (
+                          <button
+                            key={k}
+                            onClick={() => handleRecycleSort(k)}
+                            className={`w-full text-left px-3 py-2 text-xs transition hover:bg-slate-50 flex items-center justify-between ${recycleSortKey === k ? "font-semibold text-brand-600" : "text-slate-700"}`}
+                          >
+                            {{ name: "Name", deleted_at: "Date Deleted", size: "Size", modified: "Date Modified" }[k]}
+                            {recycleSortKey === k && (
+                              recycleSortDir === "desc" ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />
                             )}
-                            {n.original_path && (
-                              <p className="mt-1.5 text-[11px] text-slate-500 truncate" title={n.original_path}>
-                                Path: {n.original_path}
-                              </p>
-                            )}
-                          </div>
-                        </div>
+                          </button>
+                        ))}
                       </div>
-                    );
-                  })}
+                    </div>
+
+                    {/* View toggle */}
+                    <div className="flex items-center gap-0.5 border border-slate-200 rounded px-1 py-1">
+                      <button
+                        onClick={() => setRecycleLayout("list")}
+                        className={`rounded p-1 transition ${recycleLayout === "list" ? "bg-brand-100 text-brand-600" : "text-slate-400 hover:text-slate-600"}`}
+                        title="List view"
+                      >
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                          <line x1="2" y1="4" x2="14" y2="4" /><line x1="2" y1="8" x2="14" y2="8" /><line x1="2" y1="12" x2="14" y2="12" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => setRecycleLayout("grid")}
+                        className={`rounded p-1 transition ${recycleLayout === "grid" ? "bg-brand-100 text-brand-600" : "text-slate-400 hover:text-slate-600"}`}
+                        title="Grid view"
+                      >
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                          <rect x="1" y="1" width="6" height="6" rx="1" /><rect x="9" y="1" width="6" height="6" rx="1" />
+                          <rect x="1" y="9" width="6" height="6" rx="1" /><rect x="9" y="9" width="6" height="6" rx="1" />
+                        </svg>
+                      </button>
+                    </div>
+
+                    <div className="w-px h-6 bg-slate-200 mx-1" />
+
+                    {/* Empty Recycle Bin */}
+                    <button
+                      onClick={() => {
+                        if (deletedNodes.length > 0 && window.confirm(`Permanently delete all ${deletedNodes.length} item(s)? This cannot be undone.`)) {
+                          void handleEmptyRecycleBin();
+                        }
+                      }}
+                      disabled={deletedNodes.length === 0}
+                      className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+                      Empty Recycle Bin
+                    </button>
+
+                    {/* Restore all items */}
+                    <button
+                      onClick={() => {
+                        if (deletedNodes.length > 0) void handleRestoreAll();
+                      }}
+                      disabled={deletedNodes.length === 0}
+                      className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <ArchiveRestore className="h-3.5 w-3.5 text-emerald-600" />
+                      Restore all items
+                    </button>
+                  </div>
+
+                  <div className="ml-auto text-xs text-slate-400">
+                    {deletedNodes.length} item{deletedNodes.length !== 1 ? "s" : ""}
+                  </div>
                 </div>
-              )}
-            </div>
-          </>
-        ) : view === "archive" ? (
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-y-auto bg-white dms-page-px">
+                {deletedNodes.length === 0 ? (
+                  <div className="flex h-full flex-col items-center justify-center py-28 text-center">
+                    <Trash2 className="h-16 w-16 text-slate-200 mb-4" />
+                    <h3 className="text-base font-semibold text-slate-600">Recycle Bin is empty</h3>
+                    <p className="mt-1.5 text-sm text-slate-400">Items you delete will appear here before being permanently removed.</p>
+                  </div>
+                ) : recycleLayout === "list" ? (
+                  /* ── LIST / TABLE VIEW ── */
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50">
+                          <th className="w-8 px-3 py-2.5" />
+                          <th
+                            className="text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-800 select-none whitespace-nowrap"
+                            onClick={() => handleRecycleSort("name")}
+                          >
+                            Name <SortIcon col="name" />
+                          </th>
+                          <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                            Original Location
+                          </th>
+                          <th
+                            className="text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-800 select-none whitespace-nowrap"
+                            onClick={() => handleRecycleSort("deleted_at")}
+                          >
+                            Date Deleted <SortIcon col="deleted_at" />
+                          </th>
+                          <th
+                            className="text-right px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-800 select-none whitespace-nowrap"
+                            onClick={() => handleRecycleSort("size")}
+                          >
+                            Size <SortIcon col="size" />
+                          </th>
+                          <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                            Item Type
+                          </th>
+                          <th
+                            className="text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-800 select-none whitespace-nowrap"
+                            onClick={() => handleRecycleSort("modified")}
+                          >
+                            Date Modified <SortIcon col="modified" />
+                          </th>
+                          <th className="px-3 py-2.5" />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {sortedDeleted.map((n) => {
+                          const isFile = n.kind === "file";
+                          const iconInfo = iconFor(n);
+                          const IconComponent = isFile ? (iconInfo?.Icon || FileText) : FolderOpen;
+                          const iconCls = isFile ? (iconInfo?.cls || "text-slate-400") : "text-amber-500";
+                          return (
+                            <tr
+                              key={n.id}
+                              className="group hover:bg-slate-50 transition cursor-default"
+                            >
+                              <td className="px-3 py-2.5">
+                                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 group-hover:bg-white transition">
+                                  <IconComponent className={`h-4 w-4 ${iconCls}`} />
+                                </div>
+                              </td>
+                              <td className="px-3 py-2.5 font-medium text-slate-800 max-w-[200px]">
+                                <span className="block truncate" title={n.name}>{n.name}</span>
+                              </td>
+                              <td className="px-3 py-2.5 text-slate-500 max-w-[220px]">
+                                <span className="block truncate text-xs" title={n.original_path || "—"}>{n.original_path || "—"}</span>
+                              </td>
+                              <td className="px-3 py-2.5 text-slate-500 text-xs whitespace-nowrap">
+                                {fmtDate(n.deleted_at)}
+                              </td>
+                              <td className="px-3 py-2.5 text-slate-500 text-xs text-right whitespace-nowrap">
+                                {fmtBytes(n.size)}
+                              </td>
+                              <td className="px-3 py-2.5 text-slate-500 text-xs whitespace-nowrap">
+                                {n.item_type ?? (isFile ? "File" : "File folder")}
+                              </td>
+                              <td className="px-3 py-2.5 text-slate-500 text-xs whitespace-nowrap">
+                                {fmtDate(n.modified)}
+                              </td>
+                              <td className="px-3 py-2.5">
+                                <button
+                                  onClick={() => {
+                                    if (window.confirm(`Restore "${n.name}" to its original location?`)) {
+                                      const id = Date.now();
+                                      upsertToast({ id, status: "processing", title: "Restoring…", detail: n.name });
+                                      restoreDeletedItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined)
+                                        .then(() => getDeletedNodes().then(setDeletedNodes))
+                                        .then(() => upsertToast({ id, status: "done", title: "Restored", detail: `"${n.name}" restored` }))
+                                        .catch(e => upsertToast({ id, status: "failed", title: "Restore failed", detail: errDetail(e, "") }))
+                                        .finally(() => setTimeout(() => dismissToast(id), 4000));
+                                    }
+                                  }}
+                                  className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition"
+                                  title="Restore"
+                                >
+                                  <ArchiveRestore className="h-3 w-3" />
+                                  Restore
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  /* ── GRID VIEW ── */
+                  <div className="grid grid-cols-1 gap-3 py-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {sortedDeleted.map((n) => {
+                      const isFile = n.kind === "file";
+                      const iconInfo = iconFor(n);
+                      const IconComponent = isFile ? (iconInfo?.Icon || FileText) : FolderOpen;
+                      const iconCls = isFile ? (iconInfo?.cls || "text-slate-400") : "text-amber-500";
+                      return (
+                        <div
+                          key={n.id}
+                          className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md transition"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-50">
+                              <IconComponent className={`h-5 w-5 ${iconCls}`} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-semibold text-slate-800" title={n.name}>{n.name}</p>
+                              <p className="mt-0.5 text-[11px] text-slate-400">{n.item_type ?? (isFile ? "File" : "File folder")}</p>
+                            </div>
+                          </div>
+                          <div className="space-y-1 text-[11px] text-slate-500">
+                            <div><span className="font-medium text-slate-600">Location:</span> <span className="truncate block" title={n.original_path}>{n.original_path || "—"}</span></div>
+                            <div className="flex justify-between">
+                              <span><span className="font-medium text-slate-600">Deleted:</span> {fmtDate(n.deleted_at)}</span>
+                              <span>{fmtBytes(n.size)}</span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              if (window.confirm(`Restore "${n.name}"?`)) {
+                                const id = Date.now();
+                                upsertToast({ id, status: "processing", title: "Restoring…", detail: n.name });
+                                restoreDeletedItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined)
+                                  .then(() => getDeletedNodes().then(setDeletedNodes))
+                                  .then(() => upsertToast({ id, status: "done", title: "Restored", detail: `"${n.name}" restored` }))
+                                  .catch(e => upsertToast({ id, status: "failed", title: "Restore failed", detail: errDetail(e, "") }))
+                                  .finally(() => setTimeout(() => dismissToast(id), 4000));
+                              }
+                            }}
+                            className="mt-1 w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition"
+                          >
+                            <ArchiveRestore className="h-3.5 w-3.5" />
+                            Restore
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+          );
+        })()
+        : view === "archive" ? (
           (() => {
             const firstArchivedIdx = path.findIndex(crumb => archivedFolderIds.has(crumb.id) || archivedNodes.some(n => n.id === crumb.id));
             const isBrowsingArchivedSubfolder = current && firstArchivedIdx !== -1;
@@ -3172,7 +3498,7 @@ function FolderCard({
         <Icon className={`${isBig ? "h-6 w-6" : "h-5 w-5"} ${cls}`} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className={`block truncate font-semibold text-fg ${isBig ? "text-base" : "text-sm"}`}>{node.name}</span>
+        <span className={`block font-semibold text-fg break-words whitespace-normal ${isBig ? "text-base" : "text-sm"}`} title={node.name}>{node.name}</span>
         <span className="mt-0.5 block text-xs text-muted">{folderSubtitle(node)}</span>
       </span>
       {node.month_driven && (
@@ -3203,7 +3529,7 @@ function FolderRow({
       <span className={"flex h-8 w-8 shrink-0 items-center justify-center rounded-lg " + accent.chip}>
         <Icon className={"h-4 w-4 " + cls} />
       </span>
-      <span className="flex-1 truncate text-sm font-medium text-fg">{node.name}</span>
+      <span className="flex-1 text-sm font-medium text-fg break-words whitespace-normal" title={node.name}>{node.name}</span>
       <span className="text-xs text-subtle">{folderSubtitle(node)}</span>
       <ChevronRight className="h-4 w-4 text-subtle group-hover:text-primary" />
     </button>

@@ -169,7 +169,7 @@ export function Sidebar({
                     className={"h-3.5 w-3.5 " + (accent ? accent.text : "text-sidebar-icon")}
                   />
                 </span>
-                <span className="truncate text-left">{m.name}</span>
+                <span className="truncate text-left" title={m.name}>{m.name}</span>
               </button>
             );
           })}

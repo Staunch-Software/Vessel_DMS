@@ -19,6 +19,8 @@ export interface FolderNode {
   ext?: string;
   size?: number | null;
   modified?: string | null;
+  deleted_at?: string | null;
+  item_type?: string | null;
   categories?: string[];
   children?: FolderNode[];
   main_folder?: string;
@@ -223,6 +225,10 @@ export async function logActivity(email: string, action: string, detail?: string
 }
 
 export function fileContentUrl(fileId: string): string {
+  const sessionId = typeof sessionStorage !== "undefined" ? sessionStorage.getItem("session_id") : null;
+  if (sessionId) {
+    return `/api/files/${fileId}/content?session_id=${encodeURIComponent(sessionId)}`;
+  }
   return `/api/files/${fileId}/content`;
 }
 

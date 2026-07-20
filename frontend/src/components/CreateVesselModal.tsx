@@ -82,7 +82,7 @@ export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
         hull_number: hull.trim(),
         vessel_type: vesselType || undefined,
       });
-      onClose();
+      // Modal is closed by the parent (App.tsx) on success — no need to call onClose() here
     } catch (e: unknown) {
       const data = (e as { response?: { data?: { detail?: string; message?: string } } })?.response?.data;
       const msg = data?.message || data?.detail || "Could not create vessel.";
@@ -91,6 +91,7 @@ export function CreateVesselModal({ onClose, onCreate, vessels }: Props) {
       } else {
         setError(msg);
       }
+    } finally {
       setBusy(false);
     }
   };
