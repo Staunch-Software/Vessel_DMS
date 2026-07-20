@@ -511,9 +511,14 @@ export default function App() {
               email: email,
             });
           } else {
-            setAuthError(
-              "Signed in with Microsoft, but the server rejected the session. Please try again."
-            );
+            // Try to extract a meaningful message from the response body
+            let errMsg = "Signed in with Microsoft, but the server rejected the session. Please try again.";
+            try {
+              const errBody = await res.json();
+              if (errBody?.detail?.message) errMsg = errBody.detail.message;
+              else if (typeof errBody?.detail === "string") errMsg = errBody.detail;
+            } catch {}
+            setAuthError(errMsg);
           }
         } catch (e) {
           if (active) {
@@ -584,8 +589,15 @@ export default function App() {
               setAuthError(null);
             } else {
               const body = await res.text();
+              // Try to extract a structured error message
+              let errMsg = `Signed in with Microsoft, but the server rejected the session (Code ${res.status}). Please try again.`;
+              try {
+                const errBody = JSON.parse(body);
+                if (errBody?.detail?.message) errMsg = errBody.detail.message;
+                else if (typeof errBody?.detail === "string") errMsg = errBody.detail;
+              } catch {}
               console.error("Backend validation failed during auto-login:", res.status, body);
-              setAuthError(`Signed in with Microsoft, but the server rejected the session (Code ${res.status}). Details: ${body}`);
+              setAuthError(errMsg);
             }
           } catch (e) {
             console.error("Backend login sync failed during auto-login", e);
