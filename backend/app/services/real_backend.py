@@ -27,7 +27,33 @@ from .errors import BadRequest, Conflict, NotFound, InternalServerError
 from .normalize import normalize_vessel_name
 from .notify import notify_email
 
+import logging
+log = logging.getLogger(__name__)
+
 STAGING_FOLDER_NAME = "Pending Approvals"
+
+
+def _get_template_node_for_path(main_folder: str, rel_path: list[str]) -> dict | None:
+    """Find a node inside the SHIP_TEMPLATE hierarchy matching the given relative path."""
+    if main_folder not in template.SHIP_TEMPLATE:
+        return None
+    
+    # Root of ship tree
+    nodes = template.SHIP_TEMPLATE[main_folder]
+    current_node = {"kind": "folder", "children": nodes}
+    
+    for segment in rel_path:
+        found = None
+        children = current_node.get("children", [])
+        for child in children:
+            if child.get("name", "").lower() == segment.lower():
+                found = child
+                break
+        if not found:
+            return None
+        current_node = found
+        
+    return current_node
 
 
 def sanitize_folder_name(name: str) -> str:
@@ -492,12 +518,6 @@ class RealBackend:
             with SessionLocal() as db:
                 self._upsert(db, ship_path, name, "ship", ship["id"], False, vessel_id)
                 db.commit()
-            await asyncio.gather(
-                *(
-                    self._ensure_node(drive_id, ship["id"], ship_path, spec, vessel_id)
-                    for spec in template.SHIP_TEMPLATE[main]
-                )
-            )
 
         try:
             await asyncio.gather(*(provision_main(m) for m in template.MAIN_FOLDERS))
@@ -819,6 +839,47 @@ class RealBackend:
                     "Please navigate back and refresh."
                 )
             raise
+
+        # Check if parent_path corresponds to a ship template node, and dynamically
+        # create any missing subfolders on demand.
+        parts = parent_path.split("/") if parent_path else []
+        if len(parts) >= 2:
+            main_folder = parts[0]
+            rel_path = parts[2:]
+            node_spec = _get_template_node_for_path(main_folder, rel_path)
+            if node_spec and "children" in node_spec:
+                expected_specs = node_spec["children"]
+                existing_names = {it["name"].lower() for it in items}
+                missing_specs = [
+                    spec for spec in expected_specs
+                    if spec["name"].lower() not in existing_names
+                ]
+                
+                if missing_specs:
+                    with SessionLocal() as db:
+                        parent_row = self._folder_by_item(db, folder_id)
+                        vessel_id = parent_row.vessel_id if parent_row else None
+
+                    async def create_missing(spec):
+                        try:
+                            item = await gd.ensure_folder(drive_id, folder_id, spec["name"])
+                            path = f"{parent_path}/{spec['name']}"
+                            with SessionLocal() as db:
+                                self._upsert(
+                                    db, path, spec["name"], spec["kind"], item["id"],
+                                    spec["kind"] == "month_driven", vessel_id
+                                )
+                                db.commit()
+                            return item
+                        except Exception as create_err:
+                            log.warning("On-demand folder creation failed for %s: %s", spec["name"], create_err)
+                            return None
+
+                    created_items = await asyncio.gather(*(create_missing(spec) for spec in missing_specs))
+                    for item in created_items:
+                        if item:
+                            items.append(item)
+
         parent_parts = parent_path.split("/") if parent_path else []
         out = []
         with SessionLocal() as db:
@@ -1717,6 +1778,13 @@ class RealBackend:
                     else:
                         main_folder = rel_part
 
+                # Derive item_type label for display
+                if is_folder:
+                    item_type = "File folder"
+                else:
+                    ext = name.rsplit(".", 1)[-1].upper() if "." in name else ""
+                    item_type = f"{ext} File" if ext else "File"
+
                 node = {
                     "id": it["id"],
                     "name": name,
@@ -1726,11 +1794,12 @@ class RealBackend:
                     "has_children": False,
                     "main_folder": main_folder,
                     "original_path": original_path,
+                    "size": it.get("size"),
+                    "deleted_at": it.get("deletedDateTime"),
+                    "modified": it.get("lastModifiedDateTime"),
+                    "item_type": item_type,
+                    "ext": name.rsplit(".", 1)[-1].lower() if "." in name else "",
                 }
-                if not is_folder:
-                    node["ext"] = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-                    node["size"] = it.get("size")
-                    node["modified"] = it.get("deletedDateTime") or it.get("lastModifiedDateTime")
                 out.append(node)
             return out
         except Exception as e:

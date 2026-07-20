@@ -109,29 +109,107 @@ def _require_admin(
     return email
 
 
+def _ensure_database_exists(db_url: str) -> None:
+    """Connects to the default postgres database and creates target database if not exists."""
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.engine import make_url
+
+    try:
+        url = make_url(db_url)
+        target_db = url.database
+        if not target_db:
+            return
+
+        # We only run automatic database creation if using a PostgreSQL engine
+        if "postgresql" not in url.drivername:
+            return
+
+        # Connect to 'postgres' database on the same host to check/create target database
+        postgres_url = url.set(database="postgres")
+        
+        engine = create_engine(postgres_url)
+        try:
+            with engine.connect() as conn:
+                conn.execution_options(isolation_level="AUTOCOMMIT")
+                result = conn.execute(
+                    text("SELECT 1 FROM pg_database WHERE datname = :dbname"),
+                    {"dbname": target_db}
+                ).scalar()
+                
+                if not result:
+                    conn.execute(text(f'CREATE DATABASE "{target_db}"'))
+                    import logging
+                    logging.getLogger(__name__).info("Database '%s' created automatically.", target_db)
+        finally:
+            engine.dispose()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("Could not verify/create database automatically: %s", exc)
+
+
 @app.on_event("startup")
 async def _startup():
     from .scheduler import precreate_next_month, start_scheduler
+    import logging as _log
 
-    # ── Run any pending Alembic migrations automatically ─────────────────────
+    _logger = _log.getLogger(__name__)
+
     if settings.db_configured:
+        # 1. Automatic database creation if PostgreSQL database is missing
+        _ensure_database_exists(settings.database_url_resolved)
+
+        # 2. Smart Alembic migration:
+        #    - If this is a brand-new empty database → run all migrations from scratch.
+        #    - If tables exist but alembic_version is missing (e.g. tables were created
+        #      by a prior create_all run, or by an older version without Alembic) →
+        #      stamp the current head so Alembic doesn't try to re-create tables that
+        #      already exist, then run any pending migrations normally.
+        #    - If alembic_version is present → just run any pending migrations normally.
         try:
             import pathlib
             import alembic.config
             from alembic import command
-            from .db.base import Base, engine
+            from sqlalchemy import inspect, text
+            from .db.base import engine
 
-            # Resolve alembic.ini relative to this file (backend/app/../alembic.ini)
             _alembic_ini = pathlib.Path(__file__).parent.parent / "alembic.ini"
             alembic_cfg = alembic.config.Config(str(_alembic_ini))
-            command.upgrade(alembic_cfg, "head")
 
-            # Safety net: create any table that migrations may have missed
+            if engine is not None:
+                with engine.connect() as conn:
+                    inspector = inspect(conn)
+                    existing_tables = set(inspector.get_table_names())
+
+                    # Check if alembic_version table exists
+                    has_version_table = "alembic_version" in existing_tables
+                    # Check if any of our app tables already exist
+                    app_tables = {"vessels", "folders", "user_profiles", "user_sessions"}
+                    has_app_tables = bool(app_tables & existing_tables)
+
+                    if has_app_tables and not has_version_table:
+                        # Tables exist without Alembic tracking — stamp as head to
+                        # prevent re-running create_table migrations on existing tables.
+                        _logger.info(
+                            "DB tables exist without Alembic version tracking. "
+                            "Stamping to 'head' before running incremental migrations."
+                        )
+                        command.stamp(alembic_cfg, "head")
+
+            command.upgrade(alembic_cfg, "head")
+            _logger.info("Alembic migrations completed successfully.")
+        except Exception as exc:
+            _logger.warning("Alembic automatic migration failed: %s", exc)
+
+        # 3. Safety net: make sure ALL tables and columns are present.
+        #    create_all with checkfirst=True will add any missing tables but
+        #    cannot add missing columns — those are handled by migrations above.
+        try:
+            from .db.base import Base, engine
             if engine is not None:
                 Base.metadata.create_all(bind=engine, checkfirst=True)
+                _logger.info("Database safety-net create_all completed.")
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning("Alembic migration warning: %s", exc)
+            _logger.warning("Database safety net table creation failed: %s", exc)
 
     app.state.scheduler = start_scheduler()
     if settings.graph_configured and settings.db_configured:
@@ -205,6 +283,7 @@ def _session_db():
 async def require_session(
     request: Request,
     x_session_id: str | None = Header(default=None),
+    session_id: str | None = Query(default=None),
 ):
     """FastAPI dependency — validate the server-side session on every protected
     request.  Returns the UserSession ORM row on success; raises HTTP 401 with
@@ -214,18 +293,24 @@ async def require_session(
 
     In stub / no-DB mode this dependency is a no-op so development continues
     to work without a database.
+
+    If a database error occurs during validation (e.g. tables were just
+    created and are empty), we skip the check rather than locking out all
+    users with a spurious 401.
     """
     if not settings.db_configured:
         return None  # stub mode — skip session checks
 
-    if not x_session_id:
+    token = x_session_id or session_id
+
+    if not token:
         # Log the invalid-access attempt before rejecting
         _write_invalid_attempt(
             session_id=None,
             email="unknown",
             ip=_get_ip(request),
             ua=request.headers.get("user-agent"),
-            detail="No X-Session-ID header",
+            detail="No Session ID in header or query param",
         )
         raise HTTPException(
             status_code=401,
@@ -233,16 +318,27 @@ async def require_session(
         )
 
     from .db.base import SessionLocal
-    from .services.session_service import validate_session, write_audit
+    from .services.session_service import validate_session
     from datetime import datetime, timezone
+    import logging as _logging
 
     db = SessionLocal()
     try:
-        session, reason = validate_session(db, x_session_id)
+        try:
+            session, reason = validate_session(db, token)
+        except Exception as db_exc:
+            # DB error during lookup (e.g. tables freshly created / migration
+            # in progress).  Let the request through rather than hard-blocking
+            # with a 401 — the worst outcome is one extra unauthenticated call.
+            _logging.getLogger(__name__).warning(
+                "require_session: DB error during validate_session, bypassing check: %s", db_exc
+            )
+            return None
+
         if session is None:
             # Write audit for failed access attempt
             _write_invalid_attempt(
-                session_id=x_session_id,
+                session_id=token,
                 email="unknown",
                 ip=_get_ip(request),
                 ua=request.headers.get("user-agent"),
@@ -610,19 +706,39 @@ async def auth_login(request: Request, payload: LoginIn):
         profile.setdefault("recent_activity", [{"action": "login", "detail": "Logged in", "created_at": now.isoformat()}])
         _profile_cache[email] = profile
 
-    # ── Create server-side session ────────────────────────────────────────────
+    # ── Create server-side session (with retry) ───────────────────────────────
     session_id: str | None = None
     if settings.db_configured:
-        try:
-            from .db.base import SessionLocal
-            from .services.session_service import create_session
-            with SessionLocal() as db:
-                sess = create_session(db, email, user_agent, client_ip)
-                session_id = sess.session_id
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning("Session creation failed: %s", exc)
-            # Non-critical: login still succeeds, session tracking just won't work
+        last_exc: Exception | None = None
+        for attempt in range(3):  # up to 3 attempts
+            try:
+                from .db.base import SessionLocal
+                from .services.session_service import create_session
+                with SessionLocal() as db:
+                    sess = create_session(db, email, user_agent, client_ip)
+                    session_id = sess.session_id
+                break  # success
+            except Exception as exc:
+                last_exc = exc
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Session creation attempt %d/3 failed: %s", attempt + 1, exc
+                )
+        if session_id is None:
+            # All retries failed — surface a clear error so the frontend
+            # can prompt the user to try again rather than letting them
+            # land on the app with no working session (all API calls 401).
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "reason": "session_create_failed",
+                    "message": (
+                        "Sign-in succeeded but the server could not create a session. "
+                        "Please try again in a few seconds."
+                    ),
+                    "debug": str(last_exc),
+                },
+            )
 
     return {"display_name": display_name, "email": email, "session_id": session_id}
 

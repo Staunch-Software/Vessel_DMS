@@ -19,6 +19,8 @@ export interface FolderNode {
   ext?: string;
   size?: number | null;
   modified?: string | null;
+  deleted_at?: string | null;
+  item_type?: string | null;
   categories?: string[];
   children?: FolderNode[];
   main_folder?: string;
@@ -61,6 +63,25 @@ export interface Job {
 }
 
 const api = axios.create({ baseURL: "/api" });
+
+// ── Restore session from sessionStorage on module load ───────────────────────
+// MSAL's redirect flow causes a full page reload, so the in-memory axios
+// header is cleared. Restoring it here (before any component renders) ensures
+// every API call — including those triggered immediately by useEffect — carries
+// the correct X-Session-ID header without a race condition.
+(function restoreSessionHeader() {
+  try {
+    const storedSessionId =
+      typeof sessionStorage !== "undefined"
+        ? sessionStorage.getItem("session_id")
+        : null;
+    if (storedSessionId) {
+      api.defaults.headers.common["X-Session-ID"] = storedSessionId;
+    }
+  } catch {
+    // sessionStorage may be blocked in some privacy-hardened browsers — safe to ignore.
+  }
+})();
 
 /** Call once after login to attach the user's email to every request. */
 export function setApiEmail(email: string) {
@@ -272,6 +293,10 @@ export async function logActivity(email: string, action: string, detail?: string
 }
 
 export function fileContentUrl(fileId: string): string {
+  const sessionId = typeof sessionStorage !== "undefined" ? sessionStorage.getItem("session_id") : null;
+  if (sessionId) {
+    return `/api/files/${fileId}/content?session_id=${encodeURIComponent(sessionId)}`;
+  }
   return `/api/files/${fileId}/content`;
 }
 
