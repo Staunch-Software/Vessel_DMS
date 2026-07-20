@@ -323,7 +323,10 @@ export default function App() {
   const [deletedNodes, setDeletedNodes] = useState<FolderNode[]>([]);
   const [showRecycleSelectModal, setShowRecycleSelectModal] = useState(false);
   const [recycleSelectIds, setRecycleSelectIds] = useState<Set<string>>(new Set());
-  const [showBulkDeleteRecycleModal, setShowBulkDeleteRecycleModal] = useState(false);
+  const [showRestoreSelectedModal, setShowRestoreSelectedModal] = useState(false);
+  const [showDeleteSelectedModal, setShowDeleteSelectedModal] = useState(false);
+  // Recycle Bin confirm modals (replaces window.confirm)
+  const [showEmptyRecycleBinModal, setShowEmptyRecycleBinModal] = useState(false);
   const [selectedVesselByPage, setSelectedVesselByPage] = useState<Record<string, string | null>>({});
   const [searchQueryByPage, setSearchQueryByPage] = useState<Record<string, string>>({});
   const [pendingApprovalRequests, setPendingApprovalRequests] = useState<ApprovalResultItem[]>([]);
@@ -1392,7 +1395,7 @@ export default function App() {
       await refreshAfterMutation();
       upsertToast({ id, status: "done", title: "Selected items restored", detail: "Items are visible again" });
       setRecycleSelectIds(new Set());
-      setShowRecycleSelectModal(false);
+      setShowRestoreSelectedModal(false);
     } catch (e) {
       upsertToast({ id, status: "failed", title: "Restore failed", detail: errDetail(e, "") });
     }
@@ -1437,11 +1440,11 @@ export default function App() {
 
   const handleBulkPermanentDelete = useCallback(() => {
     if (recycleSelectIds.size === 0) return;
-    setShowBulkDeleteRecycleModal(true);
+    setShowDeleteSelectedModal(true);
   }, [recycleSelectIds]);
 
   const executeBulkPermanentDelete = useCallback(async () => {
-    setShowBulkDeleteRecycleModal(false);
+    setShowDeleteSelectedModal(false);
     if (recycleSelectIds.size === 0) return;
     const id = Date.now();
     upsertToast({ id, status: "processing", title: "Permanently deleting selected items…", detail: "Please wait" });
@@ -1454,7 +1457,6 @@ export default function App() {
       await refreshAfterMutation();
       upsertToast({ id, status: "done", title: "Selected items permanently deleted", detail: "Items removed forever" });
       setRecycleSelectIds(new Set());
-      setShowRecycleSelectModal(false);
     } catch (e) {
       upsertToast({ id, status: "failed", title: "Delete failed", detail: errDetail(e, "") });
     }
@@ -2070,31 +2072,64 @@ export default function App() {
 
                     <div className="w-px h-6 bg-slate-200 mx-1" />
 
-                    {/* Empty Recycle Bin */}
-                    <button
-                      onClick={() => {
-                        if (deletedNodes.length > 0 && window.confirm(`Permanently delete all ${deletedNodes.length} item(s)? This cannot be undone.`)) {
-                          void handleEmptyRecycleBin();
-                        }
-                      }}
-                      disabled={deletedNodes.length === 0}
-                      className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      <Trash2 className="h-3.5 w-3.5 text-rose-500" />
-                      Empty Recycle Bin
-                    </button>
+                    {/* Context-aware action buttons */}
+                    {recycleSelectIds.size > 0 ? (
+                      // ── SELECTION MODE: show per-selection actions ──
+                      <>
+                        <span className="text-xs font-medium text-brand-600 px-1">
+                          {recycleSelectIds.size} selected
+                        </span>
+                        <button
+                          onClick={() => setShowRestoreSelectedModal(true)}
+                          className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition"
+                        >
+                          <ArchiveRestore className="h-3.5 w-3.5" />
+                          Restore Selected
+                        </button>
+                        <button
+                          onClick={() => setShowDeleteSelectedModal(true)}
+                          className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Delete Selected
+                        </button>
+                        <button
+                          onClick={() => setRecycleSelectIds(new Set())}
+                          className="inline-flex items-center gap-1 rounded px-2 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition"
+                        >
+                          ✕ Clear
+                        </button>
+                      </>
+                    ) : (
+                      // ── NORMAL MODE: show global actions ──
+                      <>
+                        {/* Empty Recycle Bin */}
+                        <button
+                          onClick={() => {
+                            if (deletedNodes.length > 0) {
+                              setShowEmptyRecycleBinModal(true);
+                            }
+                          }}
+                          disabled={deletedNodes.length === 0}
+                          className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+                          Empty Recycle Bin
+                        </button>
 
-                    {/* Restore all items */}
-                    <button
-                      onClick={() => {
-                        if (deletedNodes.length > 0) void handleRestoreAll();
-                      }}
-                      disabled={deletedNodes.length === 0}
-                      className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      <ArchiveRestore className="h-3.5 w-3.5 text-emerald-600" />
-                      Restore all items
-                    </button>
+                        {/* Restore all items */}
+                        <button
+                          onClick={() => {
+                            if (deletedNodes.length > 0) void handleRestoreAll();
+                          }}
+                          disabled={deletedNodes.length === 0}
+                          className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <ArchiveRestore className="h-3.5 w-3.5 text-emerald-600" />
+                          Restore all items
+                        </button>
+                      </>
+                    )}
                   </div>
 
                   <div className="ml-auto text-xs text-slate-400">
@@ -2117,6 +2152,23 @@ export default function App() {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-slate-200 bg-slate-50">
+                          {/* Select-all checkbox */}
+                          <th className="w-10 px-3 py-2.5">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded accent-brand-600 cursor-pointer"
+                              checked={sortedDeleted.length > 0 && sortedDeleted.every(n => recycleSelectIds.has(n.id))}
+                              ref={el => { if (el) el.indeterminate = recycleSelectIds.size > 0 && !sortedDeleted.every(n => recycleSelectIds.has(n.id)); }}
+                              onChange={e => {
+                                if (e.target.checked) {
+                                  setRecycleSelectIds(new Set(sortedDeleted.map(n => n.id)));
+                                } else {
+                                  setRecycleSelectIds(new Set());
+                                }
+                              }}
+                              title="Select all"
+                            />
+                          </th>
                           <th className="w-8 px-3 py-2.5" />
                           <th
                             className="text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-800 select-none whitespace-nowrap"
@@ -2148,7 +2200,6 @@ export default function App() {
                           >
                             Date Modified <SortIcon col="modified" />
                           </th>
-                          <th className="px-3 py-2.5" />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -2157,11 +2208,32 @@ export default function App() {
                           const iconInfo = iconFor(n);
                           const IconComponent = isFile ? (iconInfo?.Icon || FileText) : FolderOpen;
                           const iconCls = isFile ? (iconInfo?.cls || "text-slate-400") : "text-amber-500";
+                          const isChecked = recycleSelectIds.has(n.id);
                           return (
                             <tr
                               key={n.id}
-                              className="group hover:bg-slate-50 transition cursor-default"
+                              className={`group transition cursor-default ${isChecked ? "bg-brand-50" : "hover:bg-slate-50"}`}
+                              onClick={e => {
+                                // row click toggles checkbox (but not if the click was on the checkbox itself)
+                                if ((e.target as HTMLElement).tagName === "INPUT") return;
+                                const next = new Set(recycleSelectIds);
+                                if (next.has(n.id)) next.delete(n.id); else next.add(n.id);
+                                setRecycleSelectIds(next);
+                              }}
                             >
+                              {/* Checkbox cell */}
+                              <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4 rounded accent-brand-600 cursor-pointer"
+                                  checked={isChecked}
+                                  onChange={e => {
+                                    const next = new Set(recycleSelectIds);
+                                    if (e.target.checked) next.add(n.id); else next.delete(n.id);
+                                    setRecycleSelectIds(next);
+                                  }}
+                                />
+                              </td>
                               <td className="px-3 py-2.5">
                                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 group-hover:bg-white transition">
                                   <IconComponent className={`h-4 w-4 ${iconCls}`} />
@@ -2185,26 +2257,6 @@ export default function App() {
                               <td className="px-3 py-2.5 text-slate-500 text-xs whitespace-nowrap">
                                 {fmtDate(n.modified)}
                               </td>
-                              <td className="px-3 py-2.5">
-                                <button
-                                  onClick={() => {
-                                    if (window.confirm(`Restore "${n.name}" to its original location?`)) {
-                                      const id = Date.now();
-                                      upsertToast({ id, status: "processing", title: "Restoring…", detail: n.name });
-                                      restoreDeletedItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined)
-                                        .then(() => getDeletedNodes().then(setDeletedNodes))
-                                        .then(() => upsertToast({ id, status: "done", title: "Restored", detail: `"${n.name}" restored` }))
-                                        .catch(e => upsertToast({ id, status: "failed", title: "Restore failed", detail: errDetail(e, "") }))
-                                        .finally(() => setTimeout(() => dismissToast(id), 4000));
-                                    }
-                                  }}
-                                  className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition"
-                                  title="Restore"
-                                >
-                                  <ArchiveRestore className="h-3 w-3" />
-                                  Restore
-                                </button>
-                              </td>
                             </tr>
                           );
                         })}
@@ -2219,16 +2271,35 @@ export default function App() {
                       const iconInfo = iconFor(n);
                       const IconComponent = isFile ? (iconInfo?.Icon || FileText) : FolderOpen;
                       const iconCls = isFile ? (iconInfo?.cls || "text-slate-400") : "text-amber-500";
+                      const isChecked = recycleSelectIds.has(n.id);
                       return (
                         <div
                           key={n.id}
-                          className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md transition"
+                          className={`group relative flex flex-col gap-2 rounded-xl border p-4 shadow-sm hover:shadow-md transition cursor-pointer ${isChecked ? "border-brand-400 bg-brand-50" : "border-slate-200 bg-white"}`}
+                          onClick={() => {
+                            const next = new Set(recycleSelectIds);
+                            if (next.has(n.id)) next.delete(n.id); else next.add(n.id);
+                            setRecycleSelectIds(next);
+                          }}
                         >
+                          {/* Checkbox top-right */}
+                          <input
+                            type="checkbox"
+                            className="absolute top-3 right-3 h-4 w-4 rounded accent-brand-600 cursor-pointer"
+                            checked={isChecked}
+                            onChange={e => {
+                              e.stopPropagation();
+                              const next = new Set(recycleSelectIds);
+                              if (e.target.checked) next.add(n.id); else next.delete(n.id);
+                              setRecycleSelectIds(next);
+                            }}
+                            onClick={e => e.stopPropagation()}
+                          />
                           <div className="flex items-start gap-3">
                             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-50">
                               <IconComponent className={`h-5 w-5 ${iconCls}`} />
                             </div>
-                            <div className="min-w-0 flex-1">
+                            <div className="min-w-0 flex-1 pr-6">
                               <p className="truncate text-sm font-semibold text-slate-800" title={n.name}>{n.name}</p>
                               <p className="mt-0.5 text-[11px] text-slate-400">{n.item_type ?? (isFile ? "File" : "File folder")}</p>
                             </div>
@@ -2240,23 +2311,6 @@ export default function App() {
                               <span>{fmtBytes(n.size)}</span>
                             </div>
                           </div>
-                          <button
-                            onClick={() => {
-                              if (window.confirm(`Restore "${n.name}"?`)) {
-                                const id = Date.now();
-                                upsertToast({ id, status: "processing", title: "Restoring…", detail: n.name });
-                                restoreDeletedItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined)
-                                  .then(() => getDeletedNodes().then(setDeletedNodes))
-                                  .then(() => upsertToast({ id, status: "done", title: "Restored", detail: `"${n.name}" restored` }))
-                                  .catch(e => upsertToast({ id, status: "failed", title: "Restore failed", detail: errDetail(e, "") }))
-                                  .finally(() => setTimeout(() => dismissToast(id), 4000));
-                              }
-                            }}
-                            className="mt-1 w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition"
-                          >
-                            <ArchiveRestore className="h-3.5 w-3.5" />
-                            Restore
-                          </button>
                         </div>
                       );
                     })}
@@ -2849,10 +2903,10 @@ export default function App() {
         </div>
       )}
 
-      {/* ── Bulk Recycle Hard Delete Confirmation Modal ────────── */}
-      {showBulkDeleteRecycleModal && (
+      {/* ── Bulk Delete Selected Confirmation Modal ────────── */}
+      {showDeleteSelectedModal && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="absolute inset-0" onClick={() => setShowBulkDeleteRecycleModal(false)} />
+          <div className="absolute inset-0" onClick={() => setShowDeleteSelectedModal(false)} />
           <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-50">
@@ -2864,10 +2918,10 @@ export default function App() {
               </div>
             </div>
             <div className="mb-6 rounded-xl border border-rose-100 bg-rose-50/30 p-4 text-xs text-slate-600 leading-relaxed">
-              You are about to permanently delete <strong className="text-rose-700">{recycleSelectIds.size} selected item(s)</strong> using SharePoint Embedded Hard Delete API. They will be removed forever and cannot be restored from the Recycle Bin.
+              You are about to permanently delete <strong className="text-rose-700">{recycleSelectIds.size} selected item(s)</strong>. They will be removed forever and cannot be restored from the Recycle Bin.
             </div>
             <div className="flex gap-3">
-              <button onClick={() => setShowBulkDeleteRecycleModal(false)}
+              <button onClick={() => setShowDeleteSelectedModal(false)}
                 className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition cursor-pointer">
                 Cancel
               </button>
@@ -2882,7 +2936,77 @@ export default function App() {
         </div>
       )}
 
-      {/* ── Delete Folders Modal ──────────────────────────────────────────── */}
+      {/* ── Bulk Restore Selected Confirmation Modal ────────── */}
+      {showRestoreSelectedModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="absolute inset-0" onClick={() => setShowRestoreSelectedModal(false)} />
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50">
+                <ArchiveRestore className="h-5 w-5 text-emerald-600" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-slate-800">Restore Selected Items?</h2>
+                <p className="text-xs text-slate-500">The items will be returned to their original locations</p>
+              </div>
+            </div>
+            <div className="mb-6 rounded-xl border border-emerald-100 bg-emerald-50/30 p-4 text-xs text-slate-600 leading-relaxed">
+              You are about to restore <strong className="text-emerald-700">{recycleSelectIds.size} selected item(s)</strong> to their original folders.
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setShowRestoreSelectedModal(false)}
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition cursor-pointer">
+                Cancel
+              </button>
+              <button
+                onClick={handleBulkRestoreDeleted}
+                className="flex-1 rounded-lg bg-emerald-600 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500 cursor-pointer"
+              >
+                Restore Items
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Empty Recycle Bin Confirmation Modal ─────────────────────────── */}
+      {showEmptyRecycleBinModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="absolute inset-0" onClick={() => setShowEmptyRecycleBinModal(false)} />
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-50">
+                <Trash2 className="h-5 w-5 text-rose-600" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-slate-800">Empty Recycle Bin?</h2>
+                <p className="text-xs text-rose-500 font-medium">This action cannot be undone!</p>
+              </div>
+            </div>
+            <div className="mb-6 rounded-xl border border-rose-100 bg-rose-50/30 p-4 text-xs text-slate-600 leading-relaxed">
+              You are about to <strong className="text-rose-700">permanently delete all {deletedNodes.length} item(s)</strong> from the Recycle Bin. They will be removed forever and cannot be restored.
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowEmptyRecycleBinModal(false)}
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowEmptyRecycleBinModal(false);
+                  void handleEmptyRecycleBin();
+                }}
+                className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-500 cursor-pointer"
+              >
+                Delete Permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showDeleteModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
           <div className="absolute inset-0" onClick={() => setShowDeleteModal(false)} />

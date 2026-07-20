@@ -6,7 +6,7 @@ import {
   Building2, Activity, RefreshCw, UserCheck,
   AlertCircle, Upload, FolderOpen, Trash2, FolderPlus, LogIn,
   Settings, Shield, Monitor, Smartphone, Tablet, Globe,
-  XCircle, Timer, LogIn as LoginIcon,
+  XCircle, Timer, LogIn as LoginIcon, Briefcase, Key, Lock,
 } from "lucide-react";
 
 import type { FolderNode, UserProfile, ProfileUpdatePayload, SessionInfo, SessionAuditEntry } from "../api";
@@ -625,8 +625,9 @@ export default function ProfilePage({
                     <div style={{ borderTop: "1px dashed var(--color-border)" }}>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5">
                         <FieldRow icon={<Hash className="h-3.5 w-3.5" />} label="Employee ID" value={profile?.employee_id} editing={editing} inputValue={form.employee_id} onInputChange={(v) => setField("employee_id", v)} placeholder="e.g. EMP-4471" mono error={formErrors.employee_id} />
-                        <FieldRow icon={<Mail className="h-3.5 w-3.5" />} label="Work Email" value={profile?.email} readOnly />
                         <FieldRow icon={<Building2 className="h-3.5 w-3.5" />} label="Department" value={profile?.department} editing={editing} inputValue={form.department} onInputChange={(v) => setField("department", v)} placeholder="e.g. Documentation & Compliance" error={formErrors.department} />
+                        <FieldRow icon={<Building2 className="h-3.5 w-3.5" />} label="Office Name" value={profile?.office_name} editing={editing} inputValue={form.office_name} onInputChange={(v) => setField("office_name", v)} placeholder="e.g. Nissen HQ" error={formErrors.office_name} />
+                        <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Office Location" value={profile?.office_location} editing={editing} inputValue={form.office_location} onInputChange={(v) => setField("office_location", v)} placeholder="e.g. Singapore" error={formErrors.office_location} />
                         <FieldRow icon={<Users className="h-3.5 w-3.5" />} label="Reports To (Manager)" value={profile?.manager_name ? `${profile.manager_name}${profile.manager_email ? ` \u2014 ${profile.manager_email}` : ""}` : null} editing={editing} inputValue={form.manager_name} onInputChange={(v) => setField("manager_name", v)} placeholder="e.g. Rakesh Iyer (Fleet Manager)" error={formErrors.manager_name} />
                         {editing && <FieldRow icon={<Mail className="h-3.5 w-3.5" />} label="Manager Email" value={profile?.manager_email} editing={editing} inputValue={form.manager_email} onInputChange={(v) => setField("manager_email", v)} placeholder="e.g. r.iyer@company.com" error={formErrors.manager_email} />}
                         <FieldRow icon={<Calendar className="h-3.5 w-3.5" />} label="Date of Joining" value={profile?.date_of_joining ? fmtOnlyDate(profile.date_of_joining) : null} editing={editing} inputValue={form.date_of_joining} type="date" onInputChange={(v) => setField("date_of_joining", v)} placeholder="Select date" error={formErrors.date_of_joining} />
@@ -645,8 +646,49 @@ export default function ProfilePage({
                     <div style={{ borderTop: "1px dashed var(--color-border)" }}>
                       <FieldRow icon={<Users className="h-3.5 w-3.5" />} label="First Name" value={profile?.first_name} editing={editing} inputValue={form.first_name} onInputChange={(v) => setField("first_name", v)} placeholder="e.g. Anjali" error={formErrors.first_name} />
                       <FieldRow icon={<Users className="h-3.5 w-3.5" />} label="Last Name" value={profile?.last_name} editing={editing} inputValue={form.last_name} onInputChange={(v) => setField("last_name", v)} placeholder="e.g. Menon" error={formErrors.last_name} />
+                      <FieldRow icon={<Mail className="h-3.5 w-3.5" />} label="Email" value={profile?.email} readOnly asLink />
+                      <FieldRow icon={<Briefcase className="h-3.5 w-3.5" />} label="Job Title" value={profile?.job_title} readOnly />
+                      <FieldRow icon={<Building2 className="h-3.5 w-3.5" />} label="Company" value={profile?.company_name} readOnly />
                       <FieldRow icon={<Phone className="h-3.5 w-3.5" />} label="Phone" value={profile?.phone} editing={editing} inputValue={form.phone} type="tel" onInputChange={(v) => setField("phone", v.replace(/[^\d+\-() ]/g, ""))} placeholder="e.g. +65 8123 4477" error={formErrors.phone} />
                       <FieldRow icon={<Clock className="h-3.5 w-3.5" />} label="Last Login" value={fmtDate(profile?.last_login)} readOnly mono />
+                      <FieldRow icon={<Calendar className="h-3.5 w-3.5" />} label="Account Created" value={fmtOnlyDate(profile?.created_at)} readOnly mono />
+                    </div>
+                  </Card>
+
+                  {/* 2. ACCOUNT & SECURITY */}
+                  <Card title="Account & Security" icon={<Shield className="h-3.5 w-3.5" />} eyebrow="Identity">
+                    <div style={{ borderTop: "1px dashed var(--color-border)" }}>
+                      <FieldRow
+                        icon={<Lock className="h-3.5 w-3.5" />}
+                        label="Two-Factor Auth"
+                        value={profile?.two_factor_enabled ? "Enabled" : "Disabled"}
+                        readOnly
+                      />
+                      <FieldRow
+                        icon={<Key className="h-3.5 w-3.5" />}
+                        label="Password Last Changed"
+                        value={fmtDate(profile?.password_changed_at)}
+                        readOnly
+                        mono
+                      />
+                      {profile?.azure_oid && (
+                        <FieldRow
+                          icon={<Hash className="h-3.5 w-3.5" />}
+                          label="Azure Object ID"
+                          value={profile.azure_oid}
+                          readOnly
+                          mono
+                        />
+                      )}
+                      {profile?.tenant_id && (
+                        <FieldRow
+                          icon={<Hash className="h-3.5 w-3.5" />}
+                          label="Tenant ID"
+                          value={profile.tenant_id}
+                          readOnly
+                          mono
+                        />
+                      )}
                     </div>
                   </Card>
                 </div>
@@ -762,28 +804,26 @@ export default function ProfilePage({
                 </div>
 
               </div>
+
+              {/* ── Session Security Dashboard ──────────────────────────── */}
+              <div className="dms-page-px pb-8">
+                <SessionSecurityCard
+                  sessions={sessions}
+                  auditLog={auditLog}
+                  loading={sessionsLoading}
+                  currentSessionId={currentSessionId}
+                  revokingId={revokingId}
+                  onRevoke={async (sid) => {
+                    setRevokingId(sid);
+                    try { await revokeSession(sid); await loadSessions(); } catch { /* ignore */ }
+                    finally { setRevokingId(null); }
+                  }}
+                  onRefresh={loadSessions}
+                />
+              </div>
             </>
           )}
         </div>
-
-        {/* ── Session Security Dashboard ──────────────────────────── */}
-        {!loading && !fetchError && (
-          <div className="dms-page-px pb-8">
-            <SessionSecurityCard
-              sessions={sessions}
-              auditLog={auditLog}
-              loading={sessionsLoading}
-              currentSessionId={currentSessionId}
-              revokingId={revokingId}
-              onRevoke={async (sid) => {
-                setRevokingId(sid);
-                try { await revokeSession(sid); await loadSessions(); } catch { /* ignore */ }
-                finally { setRevokingId(null); }
-              }}
-              onRefresh={loadSessions}
-            />
-          </div>
-        )}
 
         {/* Full Photo Modal */}
         {showFullPhoto && profile?.photo_base64 && (
