@@ -8,6 +8,7 @@
   via `classify`, so the UI renders identically to stub mode.
 """
 import asyncio
+import json
 import uuid
 from datetime import date, datetime
 from sqlalchemy import func, or_ as sa_or
@@ -159,6 +160,157 @@ class RealBackend:
         rel = ref.split("root:", 1)[1].lstrip("/") if "root:" in ref else ""
         return f"{rel}/{item['name']}".strip("/") if rel else item["name"]
 
+    # ---------------------------------------------------------- admin/activity
+    def _is_admin(self, email: str | None) -> bool:
+        return (email or "").strip().lower() in settings.admin_email_set
+
+    def _display(self, email: str | None, name: str | None) -> str:
+        if name:
+            return name
+        if email:
+            return email.split("@")[0]
+        return "A user"
+
+    async def _resolve_department_vessel(self, folder_id: str):
+        """(department, vessel_id, vessel_name, folder_name) for a folder in
+        the template hierarchy, derived from its cached path + vessel_id."""
+        with SessionLocal() as db:
+            row = self._folder_by_item(db, folder_id)
+            if row is not None:
+                department = row.path.split("/")[0] if row.path else "All Departments"
+                vessel_name = None
+                if row.vessel_id:
+                    v = db.query(models.Vessel).filter_by(id=row.vessel_id).one_or_none()
+                    vessel_name = v.name if v else None
+                return department, row.vessel_id, vessel_name, row.name
+        drive_id = await self._drive()
+        path = await self._folder_path(drive_id, folder_id)
+        parts = path.split("/") if path else []
+        department = parts[0] if parts else "All Departments"
+        name = parts[-1] if parts else folder_id
+        return department, None, None, name
+
+    async def _admin_or_pending(
+        self,
+        *,
+        action_type: str,
+        requesting_email: str | None,
+        requesting_name: str | None,
+        department: str | None,
+        vessel_id=None,
+        vessel_name: str | None = None,
+        target_id: str | None = None,
+        target_description: str | None = None,
+        payload: dict,
+        changes: list[dict] | None = None,
+        pending_message: str,
+        activity_message: str,
+        execute,
+    ) -> dict:
+        """Gate a mutating action on admin status.
+
+        SPE Admins: run `execute()` immediately and record it as a completed
+        activity notification. Everyone else: create a pending approval and
+        defer `execute()`-equivalent work until an admin approves it (see
+        approve_request's action_type branching below).
+        """
+        if self._is_admin(requesting_email):
+            result = await execute()
+            await self._create_activity(
+                action_type=action_type,
+                requesting_email=requesting_email or "",
+                requesting_name=requesting_name,
+                department=department,
+                vessel_id=vessel_id,
+                vessel_name=vessel_name,
+                target_id=target_id,
+                target_description=target_description,
+                payload=payload,
+                changes=changes,
+                message=activity_message,
+            )
+            return {"status": "completed", "message": activity_message, "result": result}
+        approval = await self._create_pending_action(
+            action_type=action_type,
+            requesting_email=requesting_email or "",
+            requesting_name=requesting_name,
+            department=department,
+            vessel_id=vessel_id,
+            vessel_name=vessel_name,
+            target_id=target_id,
+            target_description=target_description,
+            payload=payload,
+            changes=changes,
+            message=pending_message,
+        )
+        return {"status": "pending", "approval_id": approval["id"], "message": pending_message}
+
+    async def _create_activity(
+        self, *, action_type, requesting_email, requesting_name=None,
+        department=None, vessel_id=None, vessel_name=None, target_id=None,
+        target_description=None, payload=None, changes=None, message=None,
+        filename=None, content_type=None, destination_folder_id=None,
+        destination_path=None, is_month_upload=False, category=None,
+        detected_month=None, final_path=None, size=0,
+    ):
+        with SessionLocal() as db:
+            row = models.ApprovalRequest(
+                filename=filename,
+                content_type=content_type,
+                size=size,
+                uploaded_by_email=requesting_email,
+                uploaded_by_name=requesting_name or "",
+                destination_folder_id=destination_folder_id,
+                destination_path=destination_path,
+                is_month_upload=is_month_upload,
+                category=category,
+                detected_month=detected_month,
+                status="completed",
+                entry_kind="activity",
+                action_type=action_type,
+                department=department,
+                vessel_id=int(vessel_id) if vessel_id else None,
+                vessel_name=vessel_name,
+                target_id=target_id,
+                target_description=target_description,
+                payload_json=json.dumps(payload or {}),
+                changes_json=json.dumps(changes or []),
+                message=message,
+                decided_by_email=requesting_email,
+                decided_at=datetime.utcnow(),
+                final_path=final_path,
+            )
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            return self._approval_public(row)
+
+    async def _create_pending_action(
+        self, *, action_type, requesting_email, requesting_name=None,
+        department=None, vessel_id=None, vessel_name=None, target_id=None,
+        target_description=None, payload=None, changes=None, message=None,
+    ):
+        with SessionLocal() as db:
+            row = models.ApprovalRequest(
+                uploaded_by_email=requesting_email,
+                uploaded_by_name=requesting_name or "",
+                status="pending",
+                entry_kind="approval",
+                action_type=action_type,
+                department=department,
+                vessel_id=int(vessel_id) if vessel_id else None,
+                vessel_name=vessel_name,
+                target_id=target_id,
+                target_description=target_description,
+                payload_json=json.dumps(payload or {}),
+                changes_json=json.dumps(changes or []),
+                message=message,
+            )
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            return self._approval_public(row)
+
     # --------------------------------------------------------- provisioning
     async def _ensure_node(self, drive_id, parent_id, parent_path, spec, vessel_id):
         """Create a folder + its subtree via Graph. Siblings are created
@@ -238,7 +390,7 @@ class RealBackend:
     # Characters that SharePoint / OneDrive forbid in folder names.
     _ILLEGAL_NAME_CHARS = set('/\\:*?"<>|')
 
-    async def create_vessel(self, name, imo, shipyard=None, hull_number=None, vessel_type=None):
+    def _validate_vessel_input(self, name, imo, exclude_vessel_id=None):
         name = (name or "").strip()
         name = sanitize_folder_name(name)
         imo = (imo or "").strip()
@@ -250,7 +402,7 @@ class RealBackend:
             raise BadRequest("IMO number must be exactly 7 digits")
         normalized_name = normalize_vessel_name(name)
         with SessionLocal() as db:
-            existing = db.query(models.Vessel).filter(
+            q = db.query(models.Vessel).filter(
                 func.lower(
                     func.replace(
                         func.replace(
@@ -263,11 +415,55 @@ class RealBackend:
                         '"', ''
                     )
                 ) == normalized_name
-            ).first()
-            if existing:
+            )
+            if exclude_vessel_id:
+                q = q.filter(models.Vessel.id != int(exclude_vessel_id))
+            if q.first():
                 raise Conflict("Vessel name already exists.")
-            if db.query(models.Vessel).filter_by(imo=imo).first():
+            imo_q = db.query(models.Vessel).filter_by(imo=imo)
+            if exclude_vessel_id:
+                imo_q = imo_q.filter(models.Vessel.id != int(exclude_vessel_id))
+            if imo_q.first():
                 raise Conflict("A vessel with that IMO number already exists")
+        return name, imo
+
+    async def create_vessel(
+        self, name, imo, shipyard=None, hull_number=None, vessel_type=None,
+        requesting_email=None, requesting_name=None,
+    ):
+        """Creating a vessel never requires approval — for anyone, admin or
+        not. It always executes immediately and is always recorded as a
+        completed activity entry for audit purposes."""
+        clean_name, clean_imo = self._validate_vessel_input(name, imo)
+        payload = {
+            "name": clean_name, "imo": clean_imo, "shipyard": shipyard,
+            "hull_number": hull_number, "vessel_type": vessel_type,
+        }
+        display = self._display(requesting_email, requesting_name)
+        vessel = await self._provision_vessel(payload)
+        activity_message = (
+            f"{display} ({requesting_email}) created vessel '{clean_name}'. "
+            f"No approval was required."
+        )
+        await self._create_activity(
+            action_type="create_vessel",
+            requesting_email=requesting_email or "",
+            requesting_name=requesting_name,
+            department="All Departments",
+            target_description=clean_name,
+            payload=payload,
+            message=activity_message,
+        )
+        return {"status": "completed", "message": activity_message, "result": vessel}
+
+    async def _provision_vessel(self, payload):
+        # Re-validate at execution time — covers the approve-time path, where
+        # the name/IMO may have been taken by someone else since the request
+        # was filed.
+        name, imo = self._validate_vessel_input(payload["name"], payload["imo"])
+        shipyard = payload.get("shipyard")
+        hull_number = payload.get("hull_number")
+        vessel_type = payload.get("vessel_type")
 
         await self.ensure_base_structure()
         drive_id = await self._drive()
@@ -326,13 +522,16 @@ class RealBackend:
             "vessel_type": vtype,
         }
 
-    async def update_vessel(self, vessel_id: str, name: str | None = None, imo: str | None = None, shipyard: str | None = None, hull_number: str | None = None, vessel_type: str | None = None):
+    def _validate_vessel_update(self, vessel_id, name, imo, shipyard, hull_number, vessel_type):
         with SessionLocal() as db:
             vessel = db.query(models.Vessel).filter_by(id=int(vessel_id)).first()
             if not vessel:
                 raise NotFound("Vessel not found")
-            old_name = vessel.name
-            old_imo = vessel.imo
+            old_values = {
+                "name": vessel.name, "imo": vessel.imo, "shipyard": vessel.shipyard,
+                "hull_number": vessel.hull_number, "vessel_type": vessel.vessel_type,
+            }
+        old_name, old_imo = old_values["name"], old_values["imo"]
 
         new_name = name.strip() if name is not None else None
         if new_name is not None:
@@ -361,15 +560,82 @@ class RealBackend:
                             ),
                             '"', ''
                         )
-                    ) == normalized_name
+                    ) == normalized_name,
+                    models.Vessel.id != int(vessel_id),
                 ).first()
                 if existing:
                     raise Conflict("Vessel name already exists.")
 
         if new_imo and new_imo != old_imo:
             with SessionLocal() as db:
-                if db.query(models.Vessel).filter_by(imo=new_imo).first():
+                if db.query(models.Vessel).filter(
+                    models.Vessel.imo == new_imo, models.Vessel.id != int(vessel_id)
+                ).first():
                     raise Conflict("A vessel with that IMO number already exists")
+
+        return old_values, new_name, new_imo
+
+    async def update_vessel(
+        self, vessel_id: str, name: str | None = None, imo: str | None = None,
+        shipyard: str | None = None, hull_number: str | None = None, vessel_type: str | None = None,
+        requesting_email=None, requesting_name=None,
+    ):
+        old_values, new_name, new_imo = self._validate_vessel_update(
+            vessel_id, name, imo, shipyard, hull_number, vessel_type
+        )
+        changes = []
+        if new_name and new_name != old_values["name"]:
+            changes.append({"field": "Name", "old": old_values["name"], "new": new_name})
+        if new_imo and new_imo != old_values["imo"]:
+            changes.append({"field": "IMO", "old": old_values["imo"], "new": new_imo})
+        if shipyard is not None and (shipyard.strip() or None) != old_values["shipyard"]:
+            changes.append({"field": "Shipyard", "old": old_values["shipyard"], "new": shipyard.strip() or None})
+        if hull_number is not None and (hull_number.strip() or None) != old_values["hull_number"]:
+            changes.append({"field": "Hull Number", "old": old_values["hull_number"], "new": hull_number.strip() or None})
+        if vessel_type is not None and (vessel_type.strip() or None) != old_values["vessel_type"]:
+            changes.append({"field": "Vessel Type", "old": old_values["vessel_type"], "new": vessel_type.strip() or None})
+
+        payload = {
+            "vessel_id": vessel_id, "name": new_name, "imo": new_imo,
+            "shipyard": shipyard, "hull_number": hull_number, "vessel_type": vessel_type,
+        }
+        display = self._display(requesting_email, requesting_name)
+        change_summary = (
+            ", ".join(f"{c['field']} ('{c['old']}' → '{c['new']}')" for c in changes)
+            or "no field changes"
+        )
+        return await self._admin_or_pending(
+            action_type="update_vessel",
+            requesting_email=requesting_email,
+            requesting_name=requesting_name,
+            department="All Departments",
+            vessel_id=vessel_id,
+            vessel_name=old_values["name"],
+            target_id=vessel_id,
+            target_description=old_values["name"],
+            payload=payload,
+            changes=changes,
+            pending_message=(
+                f"{display} ({requesting_email}) is requesting approval to update the "
+                f"vessel details for {old_values['name']} ({change_summary})."
+            ),
+            activity_message=(
+                f"SPE Admin ({requesting_email}) updated the vessel details for "
+                f"{old_values['name']}. No approval was required."
+            ),
+            execute=lambda: self._execute_update_vessel(payload),
+        )
+
+    async def _execute_update_vessel(self, payload):
+        vessel_id = payload["vessel_id"]
+        old_values, new_name, new_imo = self._validate_vessel_update(
+            vessel_id, payload["name"], payload["imo"],
+            payload["shipyard"], payload["hull_number"], payload["vessel_type"],
+        )
+        old_name = old_values["name"]
+        shipyard, hull_number, vessel_type = (
+            payload["shipyard"], payload["hull_number"], payload["vessel_type"]
+        )
 
         sp_success = True
         sp_errors = []
@@ -718,10 +984,9 @@ class RealBackend:
                     raise Conflict(msg)
 
     async def upload(self, folder_id, filename, content, content_type, uploaded_by_email, uploaded_by_name):
-        """Uploads no longer land directly — this stages the file and creates a
-        pending approval request for the admin. Returns the same Job shape the
-        frontend already polls (status "pending" is terminal, so no polling
-        occurs)."""
+        """Non-admin uploads stage a pending approval exactly as before.
+        SPE Admin uploads are filed immediately and recorded as an activity
+        notification instead."""
         drive_id = await self._drive()
         path = await self._folder_path(drive_id, folder_id)
         flags = classify(path.split("/"))
@@ -753,14 +1018,82 @@ class RealBackend:
             raise Conflict(msg)
         # Pass the folder's own path so _check_global_duplicate can scope by vessel
         await self._check_global_duplicate(drive_id, filename, folder_id, path)
+
+        department, vessel_id, vessel_name, _ = await self._resolve_department_vessel(target_id)
+        display = self._display(uploaded_by_email, uploaded_by_name)
+
+        if self._is_admin(uploaded_by_email):
+            item = await gd.upload_file(drive_id, target_id, filename, content, content_type)
+            approval = await self._create_activity(
+                action_type="upload",
+                requesting_email=uploaded_by_email or "",
+                requesting_name=uploaded_by_name,
+                department=department,
+                vessel_id=vessel_id,
+                vessel_name=vessel_name,
+                target_id=item["id"],
+                target_description=filename,
+                payload={},
+                message=(
+                    f"SPE Admin ({uploaded_by_email}) uploaded '{filename}' to {dest_path}. "
+                    f"No approval was required."
+                ),
+                filename=filename,
+                content_type=content_type,
+                destination_folder_id=target_id,
+                destination_path=dest_path,
+                final_path=f"{dest_path}/{filename}",
+                size=len(content),
+            )
+            return _approval_as_job(approval, completed=True)
+
         approval = await self._create_approval(
             drive_id, target_id, dest_path, filename, content, content_type,
             uploaded_by_email, uploaded_by_name,
+            department=department, vessel_id=vessel_id, vessel_name=vessel_name,
+            message=(
+                f"{display} ({uploaded_by_email}) is requesting approval to upload "
+                f"'{filename}' to {dest_path}."
+            ),
         )
         return _approval_as_job(approval)
 
 
-    async def delete_folder(self, folder_id: str) -> bool:
+    async def delete_folder(
+        self, folder_id: str, requesting_email=None, requesting_name=None,
+    ) -> dict:
+        drive_id = await self._drive()
+        try:
+            await gd.get_item(drive_id, folder_id)
+        except GraphError as e:
+            if e.status == 404:
+                raise NotFound("Folder not found")
+            raise
+        department, vessel_id, vessel_name, folder_name = await self._resolve_department_vessel(folder_id)
+        display = self._display(requesting_email, requesting_name)
+        vessel_clause = f" from vessel {vessel_name}" if vessel_name else ""
+        return await self._admin_or_pending(
+            action_type="delete_folder",
+            requesting_email=requesting_email,
+            requesting_name=requesting_name,
+            department=department,
+            vessel_id=vessel_id,
+            vessel_name=vessel_name,
+            target_id=folder_id,
+            target_description=folder_name,
+            payload={},
+            pending_message=(
+                f"{display} ({requesting_email}) is requesting approval to delete the "
+                f"folder '{folder_name}'{vessel_clause}."
+            ),
+            activity_message=(
+                f"SPE Admin ({requesting_email}) deleted the folder '{folder_name}'"
+                f"{vessel_clause}. No approval was required."
+            ),
+            execute=lambda: self._execute_delete_folder(folder_id),
+        )
+
+    async def _execute_delete_folder(self, folder_id: str) -> bool:
         """Delete a folder and all its contents via Graph API."""
         drive_id = await self._drive()
         from ..graph import drive as _gd
@@ -791,23 +1124,68 @@ class RealBackend:
             db.commit()
         return True
 
-    async def create_subfolder(self, folder_id: str, name: str) -> dict:
-        """Manually create a named sub-folder inside a month_driven folder,
-        then provision its category children from the template."""
+    async def create_subfolder(
+        self, folder_id: str, name: str, requesting_email=None, requesting_name=None,
+    ) -> dict:
+        """Manually create a named sub-folder inside a month_driven folder."""
         from .normalize import clean_folder_name
-        name = clean_folder_name(name)
-        if not name:
+        cleaned = clean_folder_name(name)
+        if not cleaned:
             raise BadRequest("Folder name is required")
-        if not any(c.isalpha() for c in name):
+        if not any(c.isalpha() for c in cleaned):
             raise BadRequest("Folder name must contain alphabetic characters (letters)")
-        name = sanitize_folder_name(name)
+        cleaned = sanitize_folder_name(cleaned)
         drive_id = await self._drive()
         parent_path = await self._folder_path(drive_id, folder_id)
         parent_parts = parent_path.split("/") if parent_path else []
         parent_flags = classify(parent_parts)
         if not parent_flags.get("month_driven"):
             raise BadRequest("Can only create sub-folders inside month-driven folders")
-        
+
+        department = parent_parts[0] if parent_parts else "All Departments"
+        parent_name = parent_parts[-1] if parent_parts else folder_id
+        with SessionLocal() as db:
+            parent_row = self._folder_by_item(db, folder_id)
+            vessel_id = parent_row.vessel_id if parent_row else None
+            vessel_name = None
+            if vessel_id:
+                v = db.query(models.Vessel).filter_by(id=vessel_id).one_or_none()
+                vessel_name = v.name if v else None
+
+        display = self._display(requesting_email, requesting_name)
+        vessel_clause = f" for vessel {vessel_name}" if vessel_name else ""
+        payload = {"parent_folder_id": folder_id, "name": cleaned}
+        return await self._admin_or_pending(
+            action_type="create_folder",
+            requesting_email=requesting_email,
+            requesting_name=requesting_name,
+            department=department,
+            vessel_id=vessel_id,
+            vessel_name=vessel_name,
+            target_id=folder_id,
+            target_description=cleaned,
+            payload=payload,
+            pending_message=(
+                f"{display} ({requesting_email}) is requesting approval to create the "
+                f"folder '{cleaned}' inside '{parent_name}'{vessel_clause}."
+            ),
+            activity_message=(
+                f"SPE Admin ({requesting_email}) created the folder '{cleaned}' inside "
+                f"'{parent_name}'{vessel_clause}. No approval was required."
+            ),
+            execute=lambda: self._execute_create_subfolder(payload),
+        )
+
+    async def _execute_create_subfolder(self, payload) -> dict:
+        """Manually create a named sub-folder inside a month_driven folder,
+        then provision its category children from the template."""
+        folder_id = payload["parent_folder_id"]
+        name = payload["name"]
+        drive_id = await self._drive()
+        parent_path = await self._folder_path(drive_id, folder_id)
+        parent_parts = parent_path.split("/") if parent_path else []
+        parent_flags = classify(parent_parts)
+
         # Check for duplicate folder names (case-insensitive and normalized)
         from .normalize import normalize_folder_name
         normalized_new_name = normalize_folder_name(name)
@@ -942,10 +1320,47 @@ class RealBackend:
             else:
                 msg = f"Duplicate files upload, '{filename}' already exists in this folder"
             raise Conflict(msg)
+
+        department, vessel_id, vessel_name, _ = await self._resolve_department_vessel(target_id)
+        display = self._display(uploaded_by_email, uploaded_by_name)
+
+        if self._is_admin(uploaded_by_email):
+            item = await gd.upload_file(drive_id, target_id, filename, content, content_type)
+            approval = await self._create_activity(
+                action_type="upload",
+                requesting_email=uploaded_by_email or "",
+                requesting_name=uploaded_by_name,
+                department=department,
+                vessel_id=vessel_id,
+                vessel_name=vessel_name,
+                target_id=item["id"],
+                target_description=filename,
+                payload={},
+                message=(
+                    f"SPE Admin ({uploaded_by_email}) uploaded '{filename}' to {dest_path}. "
+                    f"No approval was required."
+                ),
+                filename=filename,
+                content_type=content_type,
+                destination_folder_id=target_id,
+                destination_path=dest_path,
+                is_month_upload=True,
+                category=category,
+                detected_month=detected_label,
+                final_path=f"{dest_path}/{filename}",
+                size=len(content),
+            )
+            return _approval_as_job(approval, completed=True)
+
         approval = await self._create_approval(
             drive_id, target_id, dest_path, filename, content, content_type,
             uploaded_by_email, uploaded_by_name,
             is_month_upload=True, category=category, detected_month=detected_label,
+            department=department, vessel_id=vessel_id, vessel_name=vessel_name,
+            message=(
+                f"{display} ({uploaded_by_email}) is requesting approval to upload "
+                f"'{filename}' to {dest_path}."
+            ),
         )
         return _approval_as_job(approval)
 
@@ -957,7 +1372,48 @@ class RealBackend:
         except GraphError:
             return None
 
-    async def delete_file(self, file_id):
+    async def delete_file(self, file_id: str, requesting_email=None, requesting_name=None, reason=None):
+        drive_id = await self._drive()
+        try:
+            item = await gd.get_item(drive_id, file_id)
+        except GraphError as e:
+            if e.status == 404:
+                raise NotFound("File not found")
+            raise
+        clean_reason = (reason or "").strip()
+        if not self._is_admin(requesting_email) and not clean_reason:
+            raise BadRequest("A reason for deletion is required")
+        parent_id = (item.get("parentReference") or {}).get("id")
+        filename = item.get("name") or file_id
+        if parent_id:
+            department, vessel_id, vessel_name, _ = await self._resolve_department_vessel(parent_id)
+        else:
+            department, vessel_id, vessel_name = "All Departments", None, None
+        display = self._display(requesting_email, requesting_name)
+        vessel_clause = f" from vessel {vessel_name}" if vessel_name else ""
+        reason_clause = f" Reason: \"{clean_reason}\"" if clean_reason else ""
+        return await self._admin_or_pending(
+            action_type="delete_document",
+            requesting_email=requesting_email,
+            requesting_name=requesting_name,
+            department=department,
+            vessel_id=vessel_id,
+            vessel_name=vessel_name,
+            target_id=file_id,
+            target_description=filename,
+            payload={"reason": clean_reason} if clean_reason else {},
+            pending_message=(
+                f"{display} ({requesting_email}) is requesting approval to delete the "
+                f"document '{filename}'{vessel_clause}.{reason_clause}"
+            ),
+            activity_message=(
+                f"SPE Admin ({requesting_email}) deleted the document '{filename}'"
+                f"{vessel_clause}. No approval was required."
+            ),
+            execute=lambda: self._execute_delete_file(file_id),
+        )
+
+    async def _execute_delete_file(self, file_id):
         drive_id = await self._drive()
         try:
             await gd.delete_item(drive_id, file_id)
@@ -1082,20 +1538,112 @@ class RealBackend:
             "detected_month": job.detected_month,
         }
 
-    async def archive_item(self, item_id: str, item_type: str):
+    async def _resolve_item_context(
+        self, item_id, item_type, item_name=None, department=None, vessel_name=None,
+    ):
+        """Best-effort name/department/vessel resolution for archive/restore
+        actions. Frontend-supplied overrides win (needed for recycle-bin
+        items that Graph may no longer resolve); otherwise try a live Graph
+        lookup, degrading gracefully to defaults on any failure."""
+        if item_name and department:
+            return item_name, department, vessel_name
+        try:
+            drive_id = await self._drive()
+            item = await gd.get_item(drive_id, item_id)
+            if not item_name:
+                item_name = item.get("name", item_id)
+            if not department or not vessel_name:
+                if item_type == "folder":
+                    dept, _, vess, _ = await self._resolve_department_vessel(item_id)
+                else:
+                    parent_id = (item.get("parentReference") or {}).get("id")
+                    dept, _, vess, _ = (
+                        await self._resolve_department_vessel(parent_id)
+                        if parent_id else ("All Departments", None, None, None)
+                    )
+                department = department or dept
+                vessel_name = vessel_name or vess
+        except Exception:
+            pass
+        return item_name or item_id, department or "All Departments", vessel_name
+
+    async def archive_item(
+        self, item_id: str, item_type: str, requesting_email=None, requesting_name=None,
+        item_name=None, department=None, vessel_name=None, reason=None,
+    ):
+        name, dept, vessel = await self._resolve_item_context(item_id, item_type, item_name, department, vessel_name)
+        clean_reason = (reason or "").strip()
+        if item_type == "file" and not self._is_admin(requesting_email) and not clean_reason:
+            raise BadRequest("A reason for archiving is required")
+        display = self._display(requesting_email, requesting_name)
+        vessel_clause = f" from vessel {vessel}" if vessel else ""
+        reason_clause = f" Reason: \"{clean_reason}\"" if clean_reason else ""
+        payload = {"item_type": item_type}
+        if clean_reason:
+            payload["reason"] = clean_reason
+        return await self._admin_or_pending(
+            action_type="archive_item",
+            requesting_email=requesting_email,
+            requesting_name=requesting_name,
+            department=dept,
+            vessel_name=vessel,
+            target_id=item_id,
+            target_description=name,
+            payload=payload,
+            pending_message=(
+                f"{display} ({requesting_email}) is requesting approval to archive "
+                f"'{name}'{vessel_clause}.{reason_clause}"
+            ),
+            activity_message=(
+                f"SPE Admin ({requesting_email}) archived '{name}'{vessel_clause}. "
+                f"No approval was required."
+            ),
+            execute=lambda: self._execute_archive(item_id, item_type),
+        )
+
+    async def _execute_archive(self, item_id, item_type):
         with SessionLocal() as db:
             row = db.query(models.ArchivedItem).filter_by(item_id=item_id).one_or_none()
             if not row:
                 row = models.ArchivedItem(item_id=item_id, item_type=item_type)
                 db.add(row)
                 db.commit()
+        return {"archived": True}
 
-    async def restore_item(self, item_id: str):
+    async def restore_item(
+        self, item_id: str, item_type: str = "folder", requesting_email=None, requesting_name=None,
+        item_name=None, department=None, vessel_name=None,
+    ):
+        name, dept, vessel = await self._resolve_item_context(item_id, item_type, item_name, department, vessel_name)
+        display = self._display(requesting_email, requesting_name)
+        vessel_clause = f" from vessel {vessel}" if vessel else ""
+        return await self._admin_or_pending(
+            action_type="restore_item",
+            requesting_email=requesting_email,
+            requesting_name=requesting_name,
+            department=dept,
+            vessel_name=vessel,
+            target_id=item_id,
+            target_description=name,
+            payload={},
+            pending_message=(
+                f"{display} ({requesting_email}) is requesting approval to restore "
+                f"'{name}'{vessel_clause}."
+            ),
+            activity_message=(
+                f"SPE Admin ({requesting_email}) restored '{name}'{vessel_clause}. "
+                f"No approval was required."
+            ),
+            execute=lambda: self._execute_restore(item_id),
+        )
+
+    async def _execute_restore(self, item_id):
         with SessionLocal() as db:
             row = db.query(models.ArchivedItem).filter_by(item_id=item_id).one_or_none()
             if row:
                 db.delete(row)
                 db.commit()
+        return {"restored": True}
 
     async def get_archived_ids(self) -> list[str]:
         with SessionLocal() as db:
@@ -1190,31 +1738,86 @@ class RealBackend:
             logging.getLogger(__name__).error(f"Failed to get deleted nodes: {e}")
             return []
 
-    async def restore_deleted_item(self, item_id: str) -> bool:
+    async def restore_deleted_item(
+        self, item_id: str, item_type: str = "folder", requesting_email=None, requesting_name=None,
+        item_name=None, department=None, vessel_name=None,
+    ):
+        name, dept, vessel = await self._resolve_item_context(item_id, item_type, item_name, department, vessel_name)
+        display = self._display(requesting_email, requesting_name)
+        vessel_clause = f" from vessel {vessel}" if vessel else ""
+        return await self._admin_or_pending(
+            action_type="restore_from_recycle_bin",
+            requesting_email=requesting_email,
+            requesting_name=requesting_name,
+            department=dept,
+            vessel_name=vessel,
+            target_id=item_id,
+            target_description=name,
+            payload={"item_type": item_type},
+            pending_message=(
+                f"{display} ({requesting_email}) is requesting approval to restore "
+                f"'{name}' from the Recycle Bin{vessel_clause}."
+            ),
+            activity_message=(
+                f"SPE Admin ({requesting_email}) restored '{name}' from the Recycle Bin"
+                f"{vessel_clause}. No approval was required."
+            ),
+            execute=lambda: self._execute_restore_deleted(item_id),
+        )
+
+    async def _execute_restore_deleted(self, item_id):
         url = f"/storage/fileStorage/containers/{settings.container_id}/recycleBin/items/restore"
         try:
             await graph().post(url, json={"ids": [item_id]})
-            return True
+            return {"restored": True}
         except Exception as e:
             import logging
             logging.getLogger(__name__).error(f"Failed to restore deleted item {item_id}: {e}")
-            return False
+            return {"restored": False}
 
-    async def permanent_delete_item(self, item_id: str, item_type: str) -> bool:
+    async def permanent_delete_item(
+        self, item_id: str, item_type: str, requesting_email=None, requesting_name=None,
+        item_name=None, department=None, vessel_name=None,
+    ):
+        name, dept, vessel = await self._resolve_item_context(item_id, item_type, item_name, department, vessel_name)
+        display = self._display(requesting_email, requesting_name)
+        vessel_clause = f" from vessel {vessel}" if vessel else ""
+        return await self._admin_or_pending(
+            action_type="permanent_delete",
+            requesting_email=requesting_email,
+            requesting_name=requesting_name,
+            department=dept,
+            vessel_name=vessel,
+            target_id=item_id,
+            target_description=name,
+            payload={"item_type": item_type},
+            pending_message=(
+                f"{display} ({requesting_email}) is requesting approval to permanently "
+                f"delete '{name}'{vessel_clause}."
+            ),
+            activity_message=(
+                f"SPE Admin ({requesting_email}) permanently deleted '{name}'"
+                f"{vessel_clause}. No approval was required."
+            ),
+            execute=lambda: self._execute_permanent_delete(item_id, item_type),
+        )
+
+    async def _execute_permanent_delete(self, item_id, item_type):
         url = f"/storage/fileStorage/containers/{settings.container_id}/recycleBin/items/delete"
         try:
             await graph().post(url, json={"ids": [item_id]})
-            return True
+            return {"deleted": True}
         except Exception as e:
             import logging
             logging.getLogger(__name__).error(f"Failed to permanently delete item {item_id}: {e}")
-            return False
+            return {"deleted": False}
 
     # -------------------------------------------------------------- approvals
     async def _create_approval(
         self, drive_id, destination_folder_id, destination_path, filename, content,
         content_type, uploaded_by_email, uploaded_by_name, *,
         is_month_upload=False, category=None, detected_month=None,
+        department=None, vessel_id=None, vessel_name=None, message=None,
     ):
         staged_item_id = await self._stage_file(drive_id, filename, content, content_type)
         try:
@@ -1231,6 +1834,12 @@ class RealBackend:
                     category=category,
                     detected_month=detected_month,
                     drive_item_id=staged_item_id,
+                    entry_kind="approval",
+                    action_type="upload",
+                    department=department,
+                    vessel_id=int(vessel_id) if vessel_id else None,
+                    vessel_name=vessel_name,
+                    message=message,
                 )
                 db.add(row)
                 db.commit()
@@ -1263,6 +1872,9 @@ class RealBackend:
                         models.ApprovalRequest.filename.ilike(ql),
                         models.ApprovalRequest.uploaded_by_email.ilike(ql),
                         models.ApprovalRequest.destination_path.ilike(ql),
+                        models.ApprovalRequest.target_description.ilike(ql),
+                        models.ApprovalRequest.vessel_name.ilike(ql),
+                        models.ApprovalRequest.message.ilike(ql),
                     )
                 )
             rows = query.order_by(models.ApprovalRequest.uploaded_at.desc()).all()
@@ -1311,11 +1923,14 @@ class RealBackend:
             row.decided_at = datetime.utcnow()
             db.commit()
             return {
+                "action_type": row.action_type or "upload",
                 "filename": row.filename,
                 "content_type": row.content_type,
                 "drive_item_id": row.drive_item_id,
                 "destination_folder_id": row.destination_folder_id,
                 "uploaded_by_email": row.uploaded_by_email,
+                "target_id": row.target_id,
+                "payload": json.loads(row.payload_json) if row.payload_json else {},
             }
 
     def _revert_to_pending(self, request_id: str):
@@ -1339,53 +1954,133 @@ class RealBackend:
             db.refresh(row)
             return self._approval_public(row)
 
+    def _mark_approved_row(self, request_id: str, decided_by_email: str):
+        """Non-upload actions: the claim already flipped status to 'approved'
+        — this just records who decided it, after the deferred mutation has
+        already run successfully."""
+        with SessionLocal() as db:
+            row = db.get(models.ApprovalRequest, int(request_id))
+            row.decided_by_email = decided_by_email
+            db.commit()
+            db.refresh(row)
+            return self._approval_public(row)
+
+    def _mark_rejected_row(self, request_id: str, decided_by_email: str, reason=None):
+        with SessionLocal() as db:
+            row = db.get(models.ApprovalRequest, int(request_id))
+            row.status = "rejected"
+            row.decided_by_email = decided_by_email
+            row.rejection_reason = reason
+            db.commit()
+            db.refresh(row)
+            return self._approval_public(row)
+
     async def approve_request(self, request_id, decided_by_email):
         claimed = self._claim_pending(request_id, "approved")
-        drive_id = await self._drive()
-        try:
-            existing = await gd.find_child(drive_id, claimed["destination_folder_id"], claimed["filename"])
-            if existing and "file" in existing:
-                raise Conflict(f"'{claimed['filename']}' already exists in the destination folder")
-            await gd.move_item(
-                drive_id, claimed["drive_item_id"], claimed["destination_folder_id"],
-                new_name=claimed["filename"],
+        action_type = claimed.get("action_type") or "upload"
+
+        if action_type == "upload":
+            drive_id = await self._drive()
+            try:
+                existing = await gd.find_child(drive_id, claimed["destination_folder_id"], claimed["filename"])
+                if existing and "file" in existing:
+                    raise Conflict(f"'{claimed['filename']}' already exists in the destination folder")
+                await gd.move_item(
+                    drive_id, claimed["drive_item_id"], claimed["destination_folder_id"],
+                    new_name=claimed["filename"],
+                )
+            except Exception:
+                self._revert_to_pending(request_id)
+                raise
+            dest_path = await self._folder_path(drive_id, claimed["destination_folder_id"])
+            result = self._finalize(request_id, decided_by_email, f"{dest_path}/{claimed['filename']}")
+            await notify_email(
+                claimed["uploaded_by_email"],
+                f"Your document '{claimed['filename']}' was approved",
+                f"'{claimed['filename']}' has been approved and filed to {result['final_path']}.",
             )
+            return result
+
+        # Non-upload actions: re-validate the target still exists, execute
+        # the deferred mutation, then finalize. If the target vanished in the
+        # meantime, resolve the request as rejected rather than erroring.
+        payload = claimed.get("payload") or {}
+        target_id = claimed.get("target_id")
+        try:
+            if action_type == "delete_document":
+                drive_id = await self._drive()
+                try:
+                    await gd.get_item(drive_id, target_id)
+                except GraphError as e:
+                    if e.status == 404:
+                        return self._mark_rejected_row(request_id, decided_by_email, "Target no longer exists")
+                    raise
+                await self._execute_delete_file(target_id)
+            elif action_type == "delete_folder":
+                drive_id = await self._drive()
+                try:
+                    await gd.get_item(drive_id, target_id)
+                except GraphError as e:
+                    if e.status == 404:
+                        return self._mark_rejected_row(request_id, decided_by_email, "Target no longer exists")
+                    raise
+                await self._execute_delete_folder(target_id)
+            elif action_type == "create_folder":
+                await self._execute_create_subfolder(payload)
+            elif action_type == "create_vessel":
+                await self._provision_vessel(payload)
+            elif action_type == "update_vessel":
+                with SessionLocal() as db:
+                    exists = db.query(models.Vessel).filter_by(id=int(payload["vessel_id"])).one_or_none()
+                if not exists:
+                    return self._mark_rejected_row(request_id, decided_by_email, "Target no longer exists")
+                await self._execute_update_vessel(payload)
+            elif action_type == "archive_item":
+                await self._execute_archive(target_id, payload.get("item_type", "folder"))
+            elif action_type == "restore_item":
+                await self._execute_restore(target_id)
+            elif action_type == "restore_from_recycle_bin":
+                await self._execute_restore_deleted(target_id)
+            elif action_type == "permanent_delete":
+                await self._execute_permanent_delete(target_id, payload.get("item_type", "folder"))
+            else:
+                raise BadRequest(f"Unknown action type: {action_type}")
         except Exception:
             self._revert_to_pending(request_id)
             raise
-        dest_path = await self._folder_path(drive_id, claimed["destination_folder_id"])
-        result = self._finalize(request_id, decided_by_email, f"{dest_path}/{claimed['filename']}")
-        await notify_email(
-            claimed["uploaded_by_email"],
-            f"Your document '{claimed['filename']}' was approved",
-            f"'{claimed['filename']}' has been approved and filed to {result['final_path']}.",
-        )
-        return result
+        return self._mark_approved_row(request_id, decided_by_email)
 
     async def reject_request(self, request_id, decided_by_email, reason=None):
         claimed = self._claim_pending(request_id, "rejected")
-        drive_id = await self._drive()
-        try:
-            target_id = await self._resolve_reject_target(drive_id, claimed["destination_folder_id"])
-            existing = await gd.find_child(drive_id, target_id, claimed["filename"])
-            if existing and "file" in existing:
-                raise Conflict(f"'{claimed['filename']}' already exists in the To be Classified folder")
-            await gd.move_item(drive_id, claimed["drive_item_id"], target_id, new_name=claimed["filename"])
-        except Exception:
-            self._revert_to_pending(request_id)
-            raise
-        target_path = await self._folder_path(drive_id, target_id)
-        result = self._finalize(
-            request_id, decided_by_email, f"{target_path}/{claimed['filename']}", reason
-        )
-        await notify_email(
-            claimed["uploaded_by_email"],
-            f"Your document '{claimed['filename']}' was rejected",
-            f"'{claimed['filename']}' was rejected"
-            + (f" ({reason})" if reason else "")
-            + f" and moved to {result['final_path']}.",
-        )
-        return result
+        action_type = claimed.get("action_type") or "upload"
+
+        if action_type == "upload":
+            drive_id = await self._drive()
+            try:
+                target_id = await self._resolve_reject_target(drive_id, claimed["destination_folder_id"])
+                existing = await gd.find_child(drive_id, target_id, claimed["filename"])
+                if existing and "file" in existing:
+                    raise Conflict(f"'{claimed['filename']}' already exists in the To be Classified folder")
+                await gd.move_item(drive_id, claimed["drive_item_id"], target_id, new_name=claimed["filename"])
+            except Exception:
+                self._revert_to_pending(request_id)
+                raise
+            target_path = await self._folder_path(drive_id, target_id)
+            result = self._finalize(
+                request_id, decided_by_email, f"{target_path}/{claimed['filename']}", reason
+            )
+            await notify_email(
+                claimed["uploaded_by_email"],
+                f"Your document '{claimed['filename']}' was rejected",
+                f"'{claimed['filename']}' was rejected"
+                + (f" ({reason})" if reason else "")
+                + f" and moved to {result['final_path']}.",
+            )
+            return result
+
+        # Non-upload actions: nothing was staged/created, so rejection is
+        # just a state transition (the claim already flipped status).
+        return self._mark_rejected_row(request_id, decided_by_email, reason)
 
     @staticmethod
     def _approval_public(row):
@@ -1407,16 +2102,28 @@ class RealBackend:
             "decided_at": row.decided_at.isoformat() if row.decided_at else None,
             "rejection_reason": row.rejection_reason,
             "final_path": row.final_path,
+            "entry_kind": row.entry_kind,
+            "action_type": row.action_type,
+            "department": row.department,
+            "vessel_id": str(row.vessel_id) if row.vessel_id else None,
+            "vessel_name": row.vessel_name,
+            "target_id": row.target_id,
+            "target_description": row.target_description,
+            "payload": json.loads(row.payload_json) if row.payload_json else {},
+            "changes": json.loads(row.changes_json) if row.changes_json else [],
+            "message": row.message,
         }
 
 
-def _approval_as_job(approval):
+def _approval_as_job(approval, completed=False):
     """Shape an approval request like the existing Job contract so the
-    frontend's upload-toast + polling code needs no structural changes."""
+    frontend's upload-toast + polling code needs no structural changes.
+    completed=True (SPE Admin bypass) reports "done" so the frontend shows
+    its normal immediate-success toast instead of "Awaiting approval"."""
     return {
         "id": approval["id"],
         "filename": approval["filename"],
-        "status": "pending",
-        "destination": approval["destination_path"],
+        "status": "done" if completed else "pending",
+        "destination": (approval.get("final_path") or approval["destination_path"]),
         "detected_month": approval["detected_month"],
     }

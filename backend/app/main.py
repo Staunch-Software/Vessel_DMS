@@ -86,6 +86,10 @@ class RejectIn(BaseModel):
     reason: str | None = None
 
 
+def _is_admin_email(email: str | None) -> bool:
+    return (email or "").strip().lower() in settings.admin_email_set
+
+
 def _require_admin(
     x_user_email: str | None = Header(default=None), admin_email: str | None = None
 ) -> str:
@@ -100,7 +104,7 @@ def _require_admin(
     param instead — same admin-list check either way.
     """
     email = (x_user_email or admin_email or "").strip().lower()
-    if not email or email not in settings.admin_email_set:
+    if not email or not _is_admin_email(email):
         raise HTTPException(403, "Administrator access required")
     return email
 
@@ -839,18 +843,35 @@ async def list_vessels(_session: object = Depends(require_session)):
 
 
 @app.post("/api/vessels", status_code=201)
-async def create_vessel(payload: VesselIn, _session: object = Depends(require_session)):
+async def create_vessel(
+    payload: VesselIn,
+    x_user_email: str | None = Header(default=None),
+    _session: object = Depends(require_session),
+):
     vtype = (payload.vessel_type or "").strip() or None
     if vtype and vtype not in VESSEL_TYPES:
         raise HTTPException(400, "Invalid vessel type")
+    email = (x_user_email or "").strip().lower()
+    display_name = email.split("@")[0] if email else None
     try:
-        return await get_backend().create_vessel(
+        result = await get_backend().create_vessel(
             payload.name,
             payload.imo,
             shipyard=(payload.shipyard or "").strip() or None,
             hull_number=(payload.hull_number or "").strip() or None,
             vessel_type=vtype,
+            requesting_email=email,
+            requesting_name=display_name,
         )
+        if result.get("status") == "pending":
+            return JSONResponse(status_code=202, content={
+                "status": "pending",
+                "action_type": "create_vessel",
+                "approval_id": result.get("approval_id"),
+                "message": result.get("message"),
+            })
+        vessel = result.get("result") or {}
+        return {**vessel, "status": "completed", "message": result.get("message")}
     except Conflict as e:
         if str(e) == "Vessel name already exists.":
             return JSONResponse(status_code=409, content={"message": str(e)})
@@ -869,60 +890,38 @@ async def update_vessel(
     vtype = (payload.vessel_type or "").strip() or None
     if vtype and vtype not in VESSEL_TYPES:
         raise HTTPException(400, "Invalid vessel type")
-    
-    # 1. Get before state
-    v_before = None
-    try:
-        vessels = await get_backend().list_vessels()
-        for v in vessels:
-            if str(v.get("id")) == str(vessel_id):
-                v_before = v
-                break
-    except Exception:
-        pass
+
+    user_email = (x_user_email or "").strip().lower()
+    display_name = user_email.split("@")[0] if user_email else None
 
     try:
-        # 2. Perform update
-        v_after = await get_backend().update_vessel(
+        result = await get_backend().update_vessel(
             vessel_id,
             name=payload.name,
             imo=payload.imo,
             shipyard=payload.shipyard,
             hull_number=payload.hull_number,
             vessel_type=vtype,
+            requesting_email=user_email,
+            requesting_name=display_name,
         )
-        
-        # 3. Compare changes & compile message
-        changes = []
-        if v_before:
-            if v_before.get("name") != v_after.get("name"):
-                changes.append(f"Name ('{v_before.get('name')}' ➔ '{v_after.get('name')}')")
-            if v_before.get("imo") != v_after.get("imo"):
-                changes.append(f"IMO ('{v_before.get('imo')}' ➔ '{v_after.get('imo')}')")
-            if v_before.get("shipyard") != v_after.get("shipyard"):
-                changes.append(f"Shipyard ('{v_before.get('shipyard')}' ➔ '{v_after.get('shipyard')}')")
-            if v_before.get("hull_number") != v_after.get("hull_number"):
-                changes.append(f"Hull Number ('{v_before.get('hull_number')}' ➔ '{v_after.get('hull_number')}')")
-            if v_before.get("vessel_type") != v_after.get("vessel_type"):
-                changes.append(f"Vessel Type ('{v_before.get('vessel_type')}' ➔ '{v_after.get('vessel_type')}')")
-        
-        detail_msg = ""
-        if changes:
-            detail_msg = f"Updated vessel '{v_after.get('name')}': " + ", ".join(changes)
-        else:
-            detail_msg = f"Saved vessel '{v_after.get('name')}' with no changes."
+        if result.get("status") == "pending":
+            return JSONResponse(status_code=202, content={
+                "status": "pending",
+                "action_type": "update_vessel",
+                "approval_id": result.get("approval_id"),
+                "message": result.get("message"),
+            })
 
-        # Include SharePoint rename result if available
+        v_after = result.get("result") or {}
+        detail_msg = result.get("message") or f"Saved vessel '{v_after.get('name')}'."
         sp_success = v_after.get("sp_success", True)
         if not sp_success:
             detail_msg += " (Note: some SharePoint folders failed to rename)"
 
-        # 4. Log activity
-        user_email = (x_user_email or "").strip().lower()
         if user_email:
             _log_activity(user_email, "update_vessel", detail_msg)
 
-        # 5. Return success result with message
         return {
             "id": v_after.get("id"),
             "name": v_after.get("name"),
@@ -930,7 +929,8 @@ async def update_vessel(
             "shipyard": v_after.get("shipyard"),
             "hull_number": v_after.get("hull_number"),
             "vessel_type": v_after.get("vessel_type"),
-            "message": detail_msg
+            "message": detail_msg,
+            "status": "completed",
         }
     except Conflict as e:
         return JSONResponse(status_code=409, content={"message": str(e)})
@@ -1025,31 +1025,50 @@ class CreateSubfolderIn(BaseModel):
     user_email: str | None = None
 
 
-@app.delete("/api/folders/{folder_id}", status_code=204)
+@app.delete("/api/folders/{folder_id}")
 async def delete_folder(folder_id: str, user_email: str | None = Query(None), folder_name: str | None = Query(None), x_user_email: str | None = Header(default=None), _session: object = Depends(require_session)):
-    """Delete a folder and all its contents."""
-    email = user_email or x_user_email
+    """Delete a folder and all its contents (or stage a pending approval for
+    non-admin users)."""
+    email = (user_email or x_user_email or "").strip().lower()
+    display_name = email.split("@")[0] if email else None
     try:
-        result = await get_backend().delete_folder(folder_id)
-        if not result:
-            raise HTTPException(404, "Folder not found")
-    except HTTPException:
-        raise
+        result = await get_backend().delete_folder(
+            folder_id, requesting_email=email, requesting_name=display_name
+        )
     except (NotFound, BadRequest) as e:
         _raise(e)
+    if result.get("status") == "pending":
+        return JSONResponse(status_code=202, content={
+            "status": "pending",
+            "action_type": "delete_folder",
+            "approval_id": result.get("approval_id"),
+            "message": result.get("message"),
+        })
     detail = f"Deleted folder: {folder_name}" if folder_name else f"Deleted folder: {folder_id}"
     _log_activity(email, "delete_folder", detail)
-    return Response(status_code=204)
+    return {"status": "completed", "message": result.get("message")}
 
 
-@app.post("/api/folders/{folder_id}/subfolder", status_code=201)
+@app.post("/api/folders/{folder_id}/subfolder")
 async def create_subfolder(folder_id: str, payload: CreateSubfolderIn, x_user_email: str | None = Header(default=None), _session: object = Depends(require_session)):
-    """Manually create a named sub-folder inside a month_driven folder."""
-    email = payload.user_email or x_user_email
+    """Manually create a named sub-folder inside a month_driven folder (or
+    stage a pending approval for non-admin users)."""
+    email = (payload.user_email or x_user_email or "").strip().lower()
+    display_name = email.split("@")[0] if email else None
     try:
-        result = await get_backend().create_subfolder(folder_id, payload.name.strip())
+        result = await get_backend().create_subfolder(
+            folder_id, payload.name.strip(), requesting_email=email, requesting_name=display_name
+        )
+        if result.get("status") == "pending":
+            return JSONResponse(status_code=202, content={
+                "status": "pending",
+                "action_type": "create_folder",
+                "approval_id": result.get("approval_id"),
+                "message": result.get("message"),
+            })
         _log_activity(email, "create_folder", f"Created folder: {payload.name.strip()}")
-        return result
+        folder = result.get("result") or {}
+        return {**folder, "status": "completed", "message": result.get("message")}
     except (NotFound, BadRequest, Conflict) as e:
         _raise(e)
 
@@ -1100,12 +1119,28 @@ async def file_content(file_id: str, _session: object = Depends(require_session)
     )
 
 
-@app.delete("/api/files/{file_id}", status_code=204)
-async def delete_file(file_id: str, user_email: str | None = Query(None), x_user_email: str | None = Header(default=None), _session: object = Depends(require_session)):
-    if not await get_backend().delete_file(file_id):
-        raise HTTPException(404, "File not found")
-    _log_activity(user_email or x_user_email, "delete_file", f"Deleted file: {file_id}")
-    return Response(status_code=204)
+@app.delete("/api/files/{file_id}")
+async def delete_file(
+    file_id: str, user_email: str | None = Query(None), reason: str | None = Query(None),
+    x_user_email: str | None = Header(default=None), _session: object = Depends(require_session),
+):
+    email = (user_email or x_user_email or "").strip().lower()
+    display_name = email.split("@")[0] if email else None
+    try:
+        result = await get_backend().delete_file(
+            file_id, requesting_email=email, requesting_name=display_name, reason=reason
+        )
+    except (NotFound, BadRequest) as e:
+        _raise(e)
+    if result.get("status") == "pending":
+        return JSONResponse(status_code=202, content={
+            "status": "pending",
+            "action_type": "delete_document",
+            "approval_id": result.get("approval_id"),
+            "message": result.get("message"),
+        })
+    _log_activity(email, "delete_file", f"Deleted file: {file_id}")
+    return {"status": "completed", "message": result.get("message")}
 
 
 @app.get("/api/search")
@@ -1150,24 +1185,58 @@ async def get_archived_nodes(_session: object = Depends(require_session)):
         raise HTTPException(500, f"Failed to get archived nodes: {e}")
 
 
-@app.post("/api/archive/{item_id}", status_code=204)
-async def archive_item(item_id: str, type: str = Query("folder"), user_email: str | None = Query(None), x_user_email: str | None = Header(default=None), _session: object = Depends(require_session)):
+@app.post("/api/archive/{item_id}")
+async def archive_item(
+    item_id: str, type: str = Query("folder"), user_email: str | None = Query(None),
+    item_name: str | None = Query(None), department: str | None = Query(None),
+    vessel_name: str | None = Query(None), reason: str | None = Query(None),
+    x_user_email: str | None = Header(default=None), _session: object = Depends(require_session),
+):
+    email = (user_email or x_user_email or "").strip().lower()
+    display_name = email.split("@")[0] if email else None
     try:
-        await get_backend().archive_item(item_id, type)
-        _log_activity(user_email or x_user_email, "archive_folder" if type == "folder" else "archive_file", f"Archived {type}: {item_id}")
-        return Response(status_code=204)
+        result = await get_backend().archive_item(
+            item_id, type, requesting_email=email, requesting_name=display_name,
+            item_name=item_name, department=department, vessel_name=vessel_name, reason=reason,
+        )
+    except (NotFound, BadRequest) as e:
+        _raise(e)
     except Exception as e:
         raise HTTPException(500, f"Failed to archive item: {e}")
+    if result.get("status") == "pending":
+        return JSONResponse(status_code=202, content={
+            "status": "pending", "action_type": "archive_item",
+            "approval_id": result.get("approval_id"), "message": result.get("message"),
+        })
+    _log_activity(email, "archive_folder" if type == "folder" else "archive_file", f"Archived {type}: {item_id}")
+    return {"status": "completed", "message": result.get("message")}
 
 
-@app.post("/api/restore/{item_id}", status_code=204)
-async def restore_item(item_id: str, user_email: str | None = Query(None), x_user_email: str | None = Header(default=None), _session: object = Depends(require_session)):
+@app.post("/api/restore/{item_id}")
+async def restore_item(
+    item_id: str, type: str = Query("folder"), user_email: str | None = Query(None),
+    item_name: str | None = Query(None), department: str | None = Query(None),
+    vessel_name: str | None = Query(None),
+    x_user_email: str | None = Header(default=None), _session: object = Depends(require_session),
+):
+    email = (user_email or x_user_email or "").strip().lower()
+    display_name = email.split("@")[0] if email else None
     try:
-        await get_backend().restore_item(item_id)
-        _log_activity(user_email or x_user_email, "restore_folder", f"Restored item: {item_id}")
-        return Response(status_code=204)
+        result = await get_backend().restore_item(
+            item_id, type, requesting_email=email, requesting_name=display_name,
+            item_name=item_name, department=department, vessel_name=vessel_name,
+        )
+    except (NotFound, BadRequest) as e:
+        _raise(e)
     except Exception as e:
         raise HTTPException(500, f"Failed to restore item: {e}")
+    if result.get("status") == "pending":
+        return JSONResponse(status_code=202, content={
+            "status": "pending", "action_type": "restore_item",
+            "approval_id": result.get("approval_id"), "message": result.get("message"),
+        })
+    _log_activity(email, "restore_folder", f"Restored item: {item_id}")
+    return {"status": "completed", "message": result.get("message")}
 
 
 @app.get("/api/recycle-bin/ids")
@@ -1186,32 +1255,58 @@ async def get_deleted_nodes(_session: object = Depends(require_session)):
         raise HTTPException(500, f"Failed to get deleted nodes: {e}")
 
 
-@app.post("/api/recycle-bin/restore/{item_id}", status_code=204)
-async def restore_deleted_item(item_id: str, type: str = Query("folder"), user_email: str | None = Query(None), x_user_email: str | None = Header(default=None), _session: object = Depends(require_session)):
+@app.post("/api/recycle-bin/restore/{item_id}")
+async def restore_deleted_item(
+    item_id: str, type: str = Query("folder"), user_email: str | None = Query(None),
+    item_name: str | None = Query(None), department: str | None = Query(None),
+    vessel_name: str | None = Query(None),
+    x_user_email: str | None = Header(default=None), _session: object = Depends(require_session),
+):
+    email = (user_email or x_user_email or "").strip().lower()
+    display_name = email.split("@")[0] if email else None
     try:
-        result = await get_backend().restore_deleted_item(item_id)
-        if not result:
-            raise HTTPException(404, "Item not found in Recycle Bin")
-        _log_activity(user_email or x_user_email, "restore_folder" if type == "folder" else "restore_file", f"Restored {type}: {item_id}")
-        return Response(status_code=204)
-    except HTTPException:
-        raise
+        result = await get_backend().restore_deleted_item(
+            item_id, type, requesting_email=email, requesting_name=display_name,
+            item_name=item_name, department=department, vessel_name=vessel_name,
+        )
+    except (NotFound, BadRequest) as e:
+        _raise(e)
     except Exception as e:
         raise HTTPException(500, f"Failed to restore deleted item: {e}")
+    if result.get("status") == "pending":
+        return JSONResponse(status_code=202, content={
+            "status": "pending", "action_type": "restore_from_recycle_bin",
+            "approval_id": result.get("approval_id"), "message": result.get("message"),
+        })
+    _log_activity(email, "restore_folder" if type == "folder" else "restore_file", f"Restored {type}: {item_id}")
+    return {"status": "completed", "message": result.get("message")}
 
 
-@app.delete("/api/recycle-bin/{item_id}", status_code=204)
-async def permanent_delete_item(item_id: str, type: str = Query("folder"), user_email: str | None = Query(None), x_user_email: str | None = Header(default=None), _session: object = Depends(require_session)):
+@app.delete("/api/recycle-bin/{item_id}")
+async def permanent_delete_item(
+    item_id: str, type: str = Query("folder"), user_email: str | None = Query(None),
+    item_name: str | None = Query(None), department: str | None = Query(None),
+    vessel_name: str | None = Query(None),
+    x_user_email: str | None = Header(default=None), _session: object = Depends(require_session),
+):
+    email = (user_email or x_user_email or "").strip().lower()
+    display_name = email.split("@")[0] if email else None
     try:
-        result = await get_backend().permanent_delete_item(item_id, type)
-        if not result:
-            raise HTTPException(404, "Item not found")
-        _log_activity(user_email or x_user_email, "permanent_delete_folder" if type == "folder" else "permanent_delete_file", f"Permanently deleted {type}: {item_id}")
-        return Response(status_code=204)
-    except HTTPException:
-        raise
+        result = await get_backend().permanent_delete_item(
+            item_id, type, requesting_email=email, requesting_name=display_name,
+            item_name=item_name, department=department, vessel_name=vessel_name,
+        )
+    except (NotFound, BadRequest) as e:
+        _raise(e)
     except Exception as e:
         raise HTTPException(500, f"Failed to permanently delete item: {e}")
+    if result.get("status") == "pending":
+        return JSONResponse(status_code=202, content={
+            "status": "pending", "action_type": "permanent_delete",
+            "approval_id": result.get("approval_id"), "message": result.get("message"),
+        })
+    _log_activity(email, "permanent_delete_folder" if type == "folder" else "permanent_delete_file", f"Permanently deleted {type}: {item_id}")
+    return {"status": "completed", "message": result.get("message")}
 
 
 # ---------------------------------------------------------------------------
@@ -1247,7 +1342,7 @@ async def get_approval(
     if not approval:
         raise HTTPException(404, "Approval request not found")
     
-    is_admin = email in settings.admin_email_set
+    is_admin = _is_admin_email(email)
     is_uploader = approval.get("uploaded_by_email", "").strip().lower() == email
     if not (is_admin or is_uploader):
         raise HTTPException(403, "Access denied")
@@ -1267,7 +1362,7 @@ async def approval_preview(
     if not approval:
         raise HTTPException(404, "Approval request not found")
     
-    is_admin = email in settings.admin_email_set
+    is_admin = _is_admin_email(email)
     is_uploader = approval.get("uploaded_by_email", "").strip().lower() == email
     if not (is_admin or is_uploader):
         raise HTTPException(403, "Administrator access required")
@@ -1295,8 +1390,11 @@ async def approve_approval(request_id: str, admin: str = Depends(_require_admin)
 async def reject_approval(
     request_id: str, payload: RejectIn, admin: str = Depends(_require_admin), _session: object = Depends(require_session)
 ):
+    reason = (payload.reason or "").strip()
+    if not reason:
+        raise HTTPException(400, "A rejection reason is required")
     try:
-        return await get_backend().reject_request(request_id, admin, payload.reason)
+        return await get_backend().reject_request(request_id, admin, reason)
     except (NotFound, BadRequest, Conflict) as e:
         _raise(e)
 
@@ -1373,7 +1471,7 @@ async def revoke_session_endpoint(
             if target is None:
                 raise HTTPException(404, "Session not found")
 
-            is_admin = email in settings.admin_email_set
+            is_admin = _is_admin_email(email)
             is_owner = target.email.lower() == email
             if not (is_owner or is_admin):
                 raise HTTPException(403, "You can only revoke your own sessions")

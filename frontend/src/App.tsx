@@ -296,6 +296,9 @@ export default function App() {
   const [archiveSelectIds, setArchiveSelectIds] = useState<Set<string>>(new Set());
   const [_selectedVessel, _setSelectedVessel] = useState<string | null>(null);
   const [deleteFileNode, setDeleteFileNode] = useState<FolderNode | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
+  const [showArchiveReasonModal, setShowArchiveReasonModal] = useState(false);
+  const [archiveReason, setArchiveReason] = useState("");
   const [preview, setPreview] = useState<FolderNode | null>(null);
   const [showDeleteFilesModal, setShowDeleteFilesModal] = useState(false);
   const [deleteFileIds, setDeleteFileIds] = useState<Set<string>>(new Set());
@@ -630,22 +633,29 @@ export default function App() {
           rawApprovals = await listMyApprovals();
         }
         const items: NotificationItem[] = rawApprovals.map((a: any) => {
+          const displayName = a.filename || a.target_description || "";
           let message = "";
           let timestamp = a.uploaded_at;
           if (a.status === "pending") {
-            message = isAdmin
-              ? `New document awaiting reviewer approval: ${a.filename} (uploaded by ${a.uploaded_by_name || a.uploaded_by_email})`
-              : `File "${a.filename}" has been uploaded successfully and is awaiting reviewer approval.`;
+            // Backend already composes the exact "X is requesting approval to..."
+            // sentence with full context (requester, department, vessel, target).
+            message = a.message || `Awaiting reviewer approval: ${displayName}`;
+          } else if (a.entry_kind === "activity") {
+            // SPE Admin action that bypassed approval — not something the
+            // acting admin needs a personal "your request was decided" toast
+            // for, but it still belongs in the activity feed.
+            message = a.message || `"${displayName}" — completed, no approval required.`;
+            timestamp = a.decided_at || a.uploaded_at;
           } else if (a.status === "approved") {
-            message = `File "${a.filename}" has been approved`;
+            message = `"${displayName}" has been approved`;
             timestamp = a.decided_at || a.uploaded_at;
           } else if (a.status === "rejected") {
-            message = `File "${a.filename}" was rejected` + (a.rejection_reason ? `: ${a.rejection_reason}` : "");
+            message = `"${displayName}" was rejected` + (a.rejection_reason ? `: ${a.rejection_reason}` : "");
             timestamp = a.decided_at || a.uploaded_at;
           }
           return {
             id: a.id,
-            filename: a.filename,
+            filename: displayName,
             status: a.status,
             timestamp,
             message,
@@ -659,7 +669,11 @@ export default function App() {
         console.error("Failed to fetch notifications feed", err);
       }
 
-      // Fetch decided approvals for personal toast alerts
+      // Fetch decided approvals for personal toast alerts. Admin-activity
+      // rows are never "approved"/"rejected" (they're inserted already
+      // "completed"), so this naturally excludes them — the acting admin
+      // doesn't need a personal "your request was decided" toast for
+      // something they already did themselves.
       const myApprovals = await listMyApprovals();
       const decided = myApprovals.filter(a => a.status === "approved" || a.status === "rejected");
       
@@ -679,7 +693,7 @@ export default function App() {
       if (newDecided.length > 0) {
         const itemsToShow: ApprovalResultItem[] = newDecided.map(a => ({
           id: a.id,
-          filename: a.filename,
+          filename: a.filename || a.target_description || "",
           status: a.status as "approved" | "rejected",
           decidedAt: a.decided_at,
           rejectionReason: a.rejection_reason,
@@ -1101,19 +1115,23 @@ export default function App() {
   );
 
   const confirmDeleteFile = useCallback(
-    async () => {
+    async (reason?: string) => {
       if (!deleteFileNode) return;
       const node = deleteFileNode;
       setDeleteFileNode(null);
+      setDeleteReason("");
       const id = Date.now() + Math.floor(Math.random() * 1000);
       try {
-        if (node.kind === "file") {
-          await deleteFile(node.id, user?.email);
+        const result =
+          node.kind === "file"
+            ? await deleteFile(node.id, user?.email, reason)
+            : await deleteFolder(node.id, user?.email, node.name);
+        if (result.status === "pending") {
+          upsertToast({ id, status: "pending", title: "Awaiting approval", detail: result.message || node.name });
         } else {
-          await deleteFolder(node.id, user?.email, node.name);
+          await refreshAfterMutation();
+          upsertToast({ id, status: "done", title: "Moved to Recycle Bin", detail: node.name });
         }
-        await refreshAfterMutation();
-        upsertToast({ id, status: "done", title: "Moved to Recycle Bin", detail: node.name });
       } catch (e) {
         upsertToast({ id, status: "failed", title: "Delete failed", detail: errDetail(e, node.name) });
       }
@@ -1221,59 +1239,88 @@ export default function App() {
     [current, refreshAfterMutation]
   );
 
-  const handleBulkFolderArchive = useCallback(async () => {
+  const handleBulkFolderArchive = useCallback(async (reason?: string) => {
     if (archiveSelectIds.size === 0) return;
     const nodesToArchive = children.filter((c) => archiveSelectIds.has(c.id));
-    
+    const completedNodes: FolderNode[] = [];
+    let pendingCount = 0;
+
     try {
-      await Promise.all(
+      const results = await Promise.all(
         nodesToArchive.map((n) =>
-          archiveItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined)
+          archiveItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined, {
+            itemName: n.name,
+            reason,
+          })
         )
       );
+      results.forEach((r, i) => {
+        if (r.status === "pending") pendingCount++;
+        else completedNodes.push(nodesToArchive[i]);
+      });
     } catch (e) {
       console.error("Failed to archive items in DB:", e);
     }
 
-    setArchivedFolderIds((prev) => {
-      const next = new Set(prev);
-      archiveSelectIds.forEach((id) => next.add(id));
-      return next;
-    });
-    setArchivedNodes((prev) => {
-      const existingIds = new Set(prev.map((n) => n.id));
-      return [...prev, ...nodesToArchive.filter((n) => !existingIds.has(n.id))];
-    });
-    setShowArchiveSelectModal(false);
-    setArchiveSelectIds(new Set());
-    // Log activity
-    if (user?.email) {
-      nodesToArchive.forEach((n) =>
-        logActivity(user.email, n.kind === "file" ? "archive_file" : "archive_folder", `Archived ${n.kind === "file" ? "file" : "folder"}: ${n.name}`)
-      );
+    if (completedNodes.length > 0) {
+      setArchivedFolderIds((prev) => {
+        const next = new Set(prev);
+        completedNodes.forEach((n) => next.add(n.id));
+        return next;
+      });
+      setArchivedNodes((prev) => {
+        const existingIds = new Set(prev.map((n) => n.id));
+        return [...prev, ...completedNodes.filter((n) => !existingIds.has(n.id))];
+      });
+      if (user?.email) {
+        completedNodes.forEach((n) =>
+          logActivity(user.email, n.kind === "file" ? "archive_file" : "archive_folder", `Archived ${n.kind === "file" ? "file" : "folder"}: ${n.name}`)
+        );
+      }
     }
-    // Success toast
+    setShowArchiveSelectModal(false);
+    setShowArchiveReasonModal(false);
+    setArchiveReason("");
+    setArchiveSelectIds(new Set());
+
     const tid = Date.now() + Math.floor(Math.random() * 1000);
+    const detail =
+      pendingCount > 0
+        ? completedNodes.length > 0
+          ? `${completedNodes.length} archived, ${pendingCount} awaiting approval`
+          : `${pendingCount} item(s) awaiting approval`
+        : nodesToArchive.map((n) => n.name).join(", ");
     upsertToast({
       id: tid,
-      status: "done",
-      title: `${nodesToArchive.length} item${nodesToArchive.length !== 1 ? "s" : ""} archived`,
-      detail: nodesToArchive.map((n) => n.name).join(", "),
+      status: pendingCount > 0 && completedNodes.length === 0 ? "pending" : "done",
+      title: pendingCount > 0 ? "Archive requested" : `${nodesToArchive.length} item${nodesToArchive.length !== 1 ? "s" : ""} archived`,
+      detail,
     });
     setTimeout(() => dismissToast(tid), 4000);
   }, [archiveSelectIds, children, user]);
 
   const handleFolderArchive = useCallback(async (node: FolderNode) => {
     const isRestoring = archivedNodes.some((n) => n.id === node.id);
-    
+    let result: { status: "completed" | "pending"; message?: string } | null = null;
+
     try {
-      if (isRestoring) {
-        await restoreItem(node.id, user?.email || undefined);
-      } else {
-        await archiveItem(node.id, node.kind === "file" ? "file" : "folder", user?.email || undefined);
-      }
+      result = isRestoring
+        ? await restoreItem(node.id, user?.email || undefined, node.kind === "file" ? "file" : "folder", { itemName: node.name })
+        : await archiveItem(node.id, node.kind === "file" ? "file" : "folder", user?.email || undefined, { itemName: node.name });
     } catch (e) {
       console.error("Failed to archive/restore item in DB:", e);
+    }
+
+    const tid2 = Date.now() + Math.floor(Math.random() * 1000);
+    if (result?.status === "pending") {
+      upsertToast({
+        id: tid2,
+        status: "pending",
+        title: "Awaiting approval",
+        detail: result.message || node.name,
+      });
+      setTimeout(() => dismissToast(tid2), 6000);
+      return;
     }
 
     setArchivedFolderIds((prev) => {
@@ -1295,7 +1342,6 @@ export default function App() {
       );
     }
     // Success toast
-    const tid2 = Date.now() + Math.floor(Math.random() * 1000);
     upsertToast({
       id: tid2,
       status: "done",
@@ -1314,11 +1360,26 @@ export default function App() {
     upsertToast({ id, status: "processing", title: `Moving ${idsToDelete.length} folder(s) to Recycle Bin…`, detail: "Please wait" });
     try {
       // Execute sequentially to prevent SQLite write conflicts and SharePoint API throttling
+      let completed = 0;
+      let pending = 0;
       for (const fid of idsToDelete) {
-        await deleteFolder(fid, user?.email, nameMap.get(fid));
+        const result = await deleteFolder(fid, user?.email, nameMap.get(fid));
+        if (result.status === "pending") pending++;
+        else completed++;
       }
-      await refreshAfterMutation();
-      upsertToast({ id, status: "done", title: "Folders soft-deleted", detail: `${idsToDelete.length} folder(s) moved to Recycle Bin` });
+      if (completed > 0) await refreshAfterMutation();
+      const detail =
+        pending > 0
+          ? completed > 0
+            ? `${completed} deleted, ${pending} awaiting approval`
+            : `${pending} folder(s) awaiting approval`
+          : `${idsToDelete.length} folder(s) moved to Recycle Bin`;
+      upsertToast({
+        id,
+        status: pending > 0 && completed === 0 ? "pending" : "done",
+        title: pending > 0 ? "Delete requested" : "Folders soft-deleted",
+        detail,
+      });
     } catch (e) {
       upsertToast({ id, status: "failed", title: "Delete failed", detail: errDetail(e, "") });
     }
@@ -1334,11 +1395,26 @@ export default function App() {
     upsertToast({ id, status: "processing", title: `Moving ${idsToDelete.length} file(s) to Recycle Bin…`, detail: "Please wait" });
     try {
       // Execute sequentially to prevent SQLite write conflicts and SharePoint API throttling
+      let completed = 0;
+      let pending = 0;
       for (const fid of idsToDelete) {
-        await deleteFile(fid, user?.email);
+        const result = await deleteFile(fid, user?.email);
+        if (result.status === "pending") pending++;
+        else completed++;
       }
-      await refreshAfterMutation();
-      upsertToast({ id, status: "done", title: "Files soft-deleted", detail: `${idsToDelete.length} file(s) moved to Recycle Bin` });
+      if (completed > 0) await refreshAfterMutation();
+      const detail =
+        pending > 0
+          ? completed > 0
+            ? `${completed} deleted, ${pending} awaiting approval`
+            : `${pending} file(s) awaiting approval`
+          : `${idsToDelete.length} file(s) moved to Recycle Bin`;
+      upsertToast({
+        id,
+        status: pending > 0 && completed === 0 ? "pending" : "done",
+        title: pending > 0 ? "Delete requested" : "Files soft-deleted",
+        detail,
+      });
     } catch (e) {
       upsertToast({ id, status: "failed", title: "Delete failed", detail: errDetail(e, "") });
     }
@@ -1353,11 +1429,29 @@ export default function App() {
     try {
       const selected = deletedNodes.filter(n => recycleSelectIds.has(n.id));
       // Execute sequentially to prevent SQLite write conflicts and SharePoint API throttling
+      let completed = 0;
+      let pending = 0;
       for (const n of selected) {
-        await restoreDeletedItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined);
+        const result = await restoreDeletedItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined, {
+          itemName: n.name,
+          department: n.main_folder,
+        });
+        if (result.status === "pending") pending++;
+        else completed++;
       }
-      await refreshAfterMutation();
-      upsertToast({ id, status: "done", title: "Selected items restored", detail: "Items are visible again" });
+      if (completed > 0) await refreshAfterMutation();
+      const detail =
+        pending > 0
+          ? completed > 0
+            ? `${completed} restored, ${pending} awaiting approval`
+            : `${pending} item(s) awaiting approval`
+          : "Items are visible again";
+      upsertToast({
+        id,
+        status: pending > 0 && completed === 0 ? "pending" : "done",
+        title: pending > 0 ? "Restore requested" : "Selected items restored",
+        detail,
+      });
       setRecycleSelectIds(new Set());
       setShowRecycleSelectModal(false);
     } catch (e) {
@@ -1379,11 +1473,29 @@ export default function App() {
     try {
       const selected = deletedNodes.filter(n => recycleSelectIds.has(n.id));
       // Execute sequentially to prevent SQLite write conflicts and SharePoint API throttling
+      let completed = 0;
+      let pending = 0;
       for (const n of selected) {
-        await permanentDeleteItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined);
+        const result = await permanentDeleteItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined, {
+          itemName: n.name,
+          department: n.main_folder,
+        });
+        if (result.status === "pending") pending++;
+        else completed++;
       }
-      await refreshAfterMutation();
-      upsertToast({ id, status: "done", title: "Selected items permanently deleted", detail: "Items removed forever" });
+      if (completed > 0) await refreshAfterMutation();
+      const detail =
+        pending > 0
+          ? completed > 0
+            ? `${completed} deleted, ${pending} awaiting approval`
+            : `${pending} item(s) awaiting approval`
+          : "Items removed forever";
+      upsertToast({
+        id,
+        status: pending > 0 && completed === 0 ? "pending" : "done",
+        title: pending > 0 ? "Delete requested" : "Selected items permanently deleted",
+        detail,
+      });
       setRecycleSelectIds(new Set());
       setShowRecycleSelectModal(false);
     } catch (e) {
@@ -1393,8 +1505,18 @@ export default function App() {
   }, [recycleSelectIds, deletedNodes, refreshAfterMutation, user]);
 
   const handleCreate = async (data: import("./api").VesselInput) => {
-    await createVessel(data);
+    const result = await createVessel(data);
     const toastId = Date.now() + Math.floor(Math.random() * 1000);
+    if (result.status === "pending") {
+      upsertToast({
+        id: toastId,
+        status: "pending",
+        title: "Awaiting approval",
+        detail: result.message || `Vessel "${data.name}" is awaiting approval`,
+      });
+      setTimeout(() => dismissToast(toastId), 6000);
+      return;
+    }
     upsertToast({
       id: toastId,
       status: "done",
@@ -1415,8 +1537,19 @@ export default function App() {
       detail: "Please wait",
     });
     try {
-      const result = await updateVessel(vesselId, data) as { message: string };
-      
+      const result = await updateVessel(vesselId, data);
+
+      if (result.status === "pending") {
+        upsertToast({
+          id: toastId,
+          status: "pending",
+          title: "Awaiting approval",
+          detail: result.message || `Vessel update for "${data.name || ""}" is awaiting approval`,
+        });
+        setTimeout(() => dismissToast(toastId), 6000);
+        return;
+      }
+
       // Reload vessels, mains, stats, archive, deleted in parallel
       const [freshMains, freshVessels, freshStats, archIds, archNodes, delNodes] = await Promise.all([
         getMains(),
@@ -1477,10 +1610,21 @@ export default function App() {
     setCreateFolderLoading(true);
     setCreateFolderError(null);
     try {
-      await createSubfolder(current.id, cleaned, user?.email);
+      const result = await createSubfolder(current.id, cleaned, user?.email);
       setShowCreateFolderModal(false);
       setCreateFolderName("");
-      await loadCurrent();
+      if (result.status === "pending") {
+        const toastId = Date.now() + Math.floor(Math.random() * 1000);
+        upsertToast({
+          id: toastId,
+          status: "pending",
+          title: "Awaiting approval",
+          detail: result.message || `Folder "${cleaned}" is awaiting approval`,
+        });
+        setTimeout(() => dismissToast(toastId), 6000);
+      } else {
+        await loadCurrent();
+      }
     } catch (e) {
       setCreateFolderError(errDetail(e, "Failed to create folder. Please try again."));
     } finally {
@@ -2388,13 +2532,75 @@ export default function App() {
                   Cancel
                 </button>
                 <button
-                  onClick={() => handleBulkFolderArchive()}
+                  onClick={() => {
+                    const selected = children.filter((c) => archiveSelectIds.has(c.id));
+                    const includesFile = selected.some((n) => n.kind === "file");
+                    const isAdminUser = ADMIN_EMAILS.includes((user?.email || "").toLowerCase());
+                    if (includesFile && !isAdminUser) {
+                      setShowArchiveSelectModal(false);
+                      setShowArchiveReasonModal(true);
+                    } else {
+                      void handleBulkFolderArchive();
+                    }
+                  }}
                   disabled={archiveSelectIds.size === 0}
                   className="flex-1 rounded-lg bg-amber-600 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Archive {archiveSelectIds.size > 0 ? `(${archiveSelectIds.size})` : ""} Selected
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Archive File Request Modal (non-admin, mandatory reason) ──── */}
+      {showArchiveReasonModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div
+            className="absolute inset-0"
+            onClick={() => { setShowArchiveReasonModal(false); setArchiveReason(""); }}
+          />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-black/5">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50">
+                <Archive className="h-5 w-5 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-slate-800">Archive File Request</h3>
+              </div>
+            </div>
+
+            <p className="mb-2 text-xs text-slate-500">
+              Please provide the reason for archiving this file. This reason will be included in the
+              approval request for the SPE Admin to review.
+            </p>
+            <label className="mb-1 block text-xs font-medium text-slate-700">
+              Reason for Archiving <span className="text-rose-500">*</span>
+            </label>
+            <textarea
+              value={archiveReason}
+              onChange={(e) => setArchiveReason(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="Explain why this file should be archived…"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
+            />
+
+            <div className="mt-5 flex gap-3">
+              <button
+                onClick={() => { setShowArchiveReasonModal(false); setArchiveReason(""); }}
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => archiveReason.trim() && void handleBulkFolderArchive(archiveReason.trim())}
+                disabled={!archiveReason.trim()}
+                className="flex-1 rounded-lg bg-amber-600 py-2.5 text-sm font-semibold text-white hover:bg-amber-500 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Submit Request
+              </button>
             </div>
           </div>
         </div>
@@ -2826,7 +3032,61 @@ export default function App() {
       )}
 
       {/* ── Delete File Confirmation Modal ──────────────────────── */}
-      {deleteFileNode && (
+      {deleteFileNode && deleteFileNode.kind === "file" && !ADMIN_EMAILS.includes((user?.email || "").toLowerCase()) ? (
+        // Non-admin deleting a file: mandatory reason, becomes a pending approval request.
+        <div className="fixed inset-0 z-[70] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => { setDeleteFileNode(null); setDeleteReason(""); }} />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-black/5">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50">
+                <Trash2 className="h-5 w-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-slate-800">Delete File Request</h3>
+              </div>
+            </div>
+
+            <div className="mb-3 rounded-lg border border-slate-100 bg-slate-50 px-4 py-3">
+              <p className="truncate text-sm font-medium text-slate-700" title={deleteFileNode.name}>
+                {deleteFileNode.name}
+              </p>
+            </div>
+
+            <p className="mb-2 text-xs text-slate-500">
+              Please provide the reason for deleting this file. This reason will be included in the
+              approval request for the SPE Admin to review.
+            </p>
+            <label className="mb-1 block text-xs font-medium text-slate-700">
+              Reason for Deletion <span className="text-rose-500">*</span>
+            </label>
+            <textarea
+              value={deleteReason}
+              onChange={(e) => setDeleteReason(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="Explain why this file should be deleted…"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-rose-400 focus:outline-none focus:ring-2 focus:ring-rose-100"
+            />
+
+            <div className="mt-5 flex gap-3">
+              <button
+                onClick={() => { setDeleteFileNode(null); setDeleteReason(""); }}
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteReason.trim() && void confirmDeleteFile(deleteReason.trim())}
+                disabled={!deleteReason.trim()}
+                className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white hover:bg-rose-700 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Submit Request
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : deleteFileNode && (
+        // Admin, or a folder: existing immediate-confirmation flow, unchanged.
         <div className="fixed inset-0 z-[70] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setDeleteFileNode(null)} />
           <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-black/5">

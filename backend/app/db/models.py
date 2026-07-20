@@ -135,38 +135,64 @@ class ArchivedItem(Base):
 
 
 class ApprovalRequest(Base):
-    """Pending / decided upload-approval requests.
+    """Pending approval requests AND completed admin-activity notifications.
 
-    When a user uploads a file to a month-driven or approval-gated folder the
-    file is placed in a temporary "Pending Approvals" area (SharePoint) and a
-    row is inserted here.  An admin then approves or rejects via the
-    /approvals/* endpoints; on approval the file is moved to its final
-    destination and the row is updated accordingly.
+    Originally upload-only: a user uploads to a month-driven or
+    approval-gated folder, the file is placed in a temporary "Pending
+    Approvals" area (SharePoint) and a row is inserted here; an admin then
+    approves or rejects via the /approvals/* endpoints.
+
+    Generalized to cover non-upload mutating actions too (delete document,
+    delete folder, create folder, create vessel, update vessel):
+    - entry_kind='approval': a non-admin's request, status starts 'pending',
+      the underlying mutation is deferred until an admin approves it.
+    - entry_kind='activity': an SPE Admin's action, executed immediately;
+      the row is inserted already 'completed', purely for audit visibility.
+
+    filename/content_type/size/destination_folder_id/destination_path/
+    drive_item_id are upload-specific and nullable for non-upload rows.
+    action_type/department/vessel_*/target_*/payload_json/changes_json/
+    message are generic and apply to every action type.
     """
 
     __tablename__ = "approval_requests"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    filename: Mapped[str] = mapped_column(String(400))
-    content_type: Mapped[str] = mapped_column(
-        String(200), default="application/octet-stream"
+    filename: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    content_type: Mapped[str | None] = mapped_column(
+        String(200), default="application/octet-stream", nullable=True
     )
-    size: Mapped[int] = mapped_column(default=0)
+    size: Mapped[int | None] = mapped_column(default=0, nullable=True)
     uploaded_by_email: Mapped[str] = mapped_column(String(320), index=True)
     uploaded_by_name: Mapped[str] = mapped_column(String(200), default="")
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    destination_folder_id: Mapped[str] = mapped_column(String(256))
-    destination_path: Mapped[str] = mapped_column(String(1024))
+    destination_folder_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    destination_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     is_month_upload: Mapped[bool] = mapped_column(Boolean, default=False)
     category: Mapped[str | None] = mapped_column(String(200), nullable=True)
     detected_month: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    drive_item_id: Mapped[str] = mapped_column(String(256))
-    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/approved/rejected
+    drive_item_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/approved/rejected/completed
     decided_by_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    # --- Generic approval/activity fields (added for the admin-bypass +
+    # activity-notification workflow; apply to every action_type) ---
+    entry_kind: Mapped[str] = mapped_column(String(20), default="approval")  # approval/activity
+    action_type: Mapped[str] = mapped_column(String(40), default="upload")
+    department: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    vessel_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vessels.id", ondelete="SET NULL"), nullable=True
+    )
+    vessel_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    target_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    target_description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    changes_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class UserSession(Base):

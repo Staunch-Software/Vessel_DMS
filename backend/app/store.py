@@ -211,9 +211,10 @@ class Store:
         return month_node
 
     # ----------------------------------------------------------------- uploads
-    def create_subfolder(self, parent_id: str, name: str):
-        """Manually create a named sub-folder inside a month_driven folder,
-        including its category children."""
+    def _validate_subfolder_name(self, parent_id: str, name: str) -> str:
+        """Validate + clean a proposed sub-folder name without creating it.
+        Split out of create_subfolder so callers can validate up front
+        (before an approval decision is made) and create later."""
         from .services.errors import BadRequest, Conflict
         parent = self.nodes.get(parent_id)
         if parent is None:
@@ -227,7 +228,7 @@ class Store:
             raise BadRequest("Folder name is required")
         if not any(c.isalpha() for c in name):
             raise BadRequest("Folder name must contain alphabetic characters (letters)")
-        
+
         # Replace slashes/backslashes/colons with hyphens, and * ? " < > | with underscores
         name = name.replace("/", "-").replace("\\", "-").replace(":", "-")
         for c in '*?"<>|':
@@ -236,6 +237,13 @@ class Store:
         matching_name = self._has_child_named(parent_id, name)
         if matching_name:
             raise Conflict(f"A folder with a similar name '{matching_name}' already exists here (ignoring casing, spaces, and special characters)")
+        return name
+
+    def create_subfolder(self, parent_id: str, name: str):
+        """Manually create a named sub-folder inside a month_driven folder,
+        including its category children."""
+        name = self._validate_subfolder_name(parent_id, name)
+        parent = self.nodes[parent_id]
         month_node = self._make_node(name, "month", parent_id)
         month_node["is_month"] = True
         for cat in parent.get("month_children", []):
@@ -500,6 +508,70 @@ class Store:
         return results[:50]
 
     # ------------------------------------------------------------- approvals
+    def _base_entry(
+        self,
+        *,
+        entry_kind,
+        action_type,
+        status,
+        requesting_email,
+        requesting_name=None,
+        department=None,
+        vessel_id=None,
+        vessel_name=None,
+        target_id=None,
+        target_description=None,
+        payload=None,
+        changes=None,
+        message=None,
+        filename=None,
+        content=b"",
+        content_type=None,
+        destination_folder_id=None,
+        destination_path=None,
+        is_month_upload=False,
+        category=None,
+        detected_month=None,
+        decided_by_email=None,
+        decided_at=None,
+        final_path=None,
+    ):
+        now = datetime.now().isoformat()
+        req = {
+            "id": str(next(self._approval_ids)),
+            "filename": filename,
+            "content": content,
+            "content_type": content_type,
+            "size": len(content) if content else 0,
+            "uploaded_by_email": requesting_email,
+            "uploaded_by_name": requesting_name or "",
+            "uploaded_at": now,
+            "destination_folder_id": destination_folder_id,
+            "destination_path": destination_path,
+            "is_month_upload": is_month_upload,
+            "category": category,
+            "detected_month": detected_month,
+            "drive_item_id": None,
+            "status": status,
+            "decided_by_email": decided_by_email,
+            "decided_at": decided_at,
+            "rejection_reason": None,
+            "final_path": final_path,
+            "created_at": now,
+            "entry_kind": entry_kind,
+            "action_type": action_type,
+            "department": department,
+            "vessel_id": vessel_id,
+            "vessel_name": vessel_name,
+            "target_id": target_id,
+            "target_description": target_description,
+            "payload": payload or {},
+            "changes": changes or [],
+            "message": message,
+        }
+        self.approvals[req["id"]] = req
+        return req
+
     def create_approval(
         self,
         destination_id,
@@ -513,39 +585,130 @@ class Store:
         is_month_upload=False,
         category=None,
         detected_month=None,
+        department=None,
+        vessel_name=None,
+        message=None,
     ):
+        """Create a pending upload-approval request (entry_kind='approval',
+        action_type='upload')."""
         for a in self.approvals.values():
             if (
                 a["status"] == "pending"
                 and a["destination_folder_id"] == destination_id
-                and a["filename"].lower() == filename.lower()
+                and (a.get("filename") or "").lower() == filename.lower()
             ):
                 raise Conflict(
                     f"A request for '{filename}' in this folder is already pending approval"
                 )
         if self._has_child_named(destination_id, filename):
             raise DuplicateFile(filename)
-        req = {
-            "id": str(next(self._approval_ids)),
-            "filename": filename,
-            "content": content,
-            "content_type": content_type or "application/octet-stream",
-            "size": len(content),
-            "uploaded_by_email": uploaded_by_email,
-            "uploaded_by_name": uploaded_by_name or "",
-            "uploaded_at": datetime.now().isoformat(),
-            "destination_folder_id": destination_id,
-            "destination_path": destination_path,
-            "is_month_upload": is_month_upload,
-            "category": category,
-            "detected_month": detected_month,
-            "status": "pending",
-            "decided_by_email": None,
-            "decided_at": None,
-            "rejection_reason": None,
-            "final_path": None,
-        }
-        self.approvals[req["id"]] = req
+        req = self._base_entry(
+            entry_kind="approval",
+            action_type="upload",
+            status="pending",
+            requesting_email=uploaded_by_email,
+            requesting_name=uploaded_by_name,
+            department=department,
+            vessel_name=vessel_name,
+            message=message,
+            filename=filename,
+            content=content,
+            content_type=content_type or "application/octet-stream",
+            destination_folder_id=destination_id,
+            destination_path=destination_path,
+            is_month_upload=is_month_upload,
+            category=category,
+            detected_month=detected_month,
+        )
+        return self.public_approval(req)
+
+    def create_activity(
+        self,
+        *,
+        action_type,
+        requesting_email,
+        requesting_name=None,
+        department=None,
+        vessel_id=None,
+        vessel_name=None,
+        target_id=None,
+        target_description=None,
+        payload=None,
+        changes=None,
+        message=None,
+        filename=None,
+        content_type=None,
+        destination_folder_id=None,
+        destination_path=None,
+        is_month_upload=False,
+        category=None,
+        detected_month=None,
+        final_path=None,
+    ):
+        """Record an already-completed SPE Admin action (entry_kind='activity',
+        status='completed') — the mutation itself has already run by the time
+        this is called; this is purely the audit-trail row."""
+        now = datetime.now().isoformat()
+        req = self._base_entry(
+            entry_kind="activity",
+            action_type=action_type,
+            status="completed",
+            requesting_email=requesting_email,
+            requesting_name=requesting_name,
+            department=department,
+            vessel_id=vessel_id,
+            vessel_name=vessel_name,
+            target_id=target_id,
+            target_description=target_description,
+            payload=payload,
+            changes=changes,
+            message=message,
+            filename=filename,
+            content_type=content_type,
+            destination_folder_id=destination_folder_id,
+            destination_path=destination_path,
+            is_month_upload=is_month_upload,
+            category=category,
+            detected_month=detected_month,
+            decided_by_email=requesting_email,
+            decided_at=now,
+            final_path=final_path,
+        )
+        return self.public_approval(req)
+
+    def create_pending_action(
+        self,
+        *,
+        action_type,
+        requesting_email,
+        requesting_name=None,
+        department=None,
+        vessel_id=None,
+        vessel_name=None,
+        target_id=None,
+        target_description=None,
+        payload=None,
+        changes=None,
+        message=None,
+    ):
+        """Create a pending approval for a non-upload action (delete/create
+        folder, create/update vessel). No mutation has happened yet — it's
+        deferred until an admin approves."""
+        req = self._base_entry(
+            entry_kind="approval",
+            action_type=action_type,
+            status="pending",
+            requesting_email=requesting_email,
+            requesting_name=requesting_name,
+            department=department,
+            vessel_id=vessel_id,
+            vessel_name=vessel_name,
+            target_id=target_id,
+            target_description=target_description,
+            payload=payload,
+            changes=changes,
+            message=message,
+        )
         return self.public_approval(req)
 
     def list_approvals(self, status=None, q=None):
@@ -554,13 +717,13 @@ class Store:
             items = [a for a in items if a["status"] == status]
         if q:
             ql = q.lower().strip()
-            items = [
-                a
-                for a in items
-                if ql in a["filename"].lower()
-                or ql in a["uploaded_by_email"].lower()
-                or ql in a["destination_path"].lower()
-            ]
+            def _match(a):
+                haystacks = (
+                    a.get("filename"), a.get("uploaded_by_email"), a.get("destination_path"),
+                    a.get("target_description"), a.get("vessel_name"), a.get("message"),
+                )
+                return any(ql in (h or "").lower() for h in haystacks)
+            items = [a for a in items if _match(a)]
         items.sort(key=lambda a: a["uploaded_at"], reverse=True)
         return [self.public_approval(a) for a in items]
 
@@ -575,6 +738,7 @@ class Store:
         return req["content"], req["content_type"], req["filename"]
 
     def approve_approval(self, request_id, decided_by_email):
+        """Upload-only: move the staged file to its destination."""
         req = self.approvals.get(request_id)
         if req is None:
             return None
@@ -597,6 +761,7 @@ class Store:
         return self.public_approval(req)
 
     def reject_approval(self, request_id, decided_by_email, reason=None):
+        """Upload-only: move the staged file to "To be Classified"."""
         req = self.approvals.get(request_id)
         if req is None:
             return None
@@ -617,6 +782,29 @@ class Store:
             raise
         req["final_path"] = path
         req["content"] = b""
+        return self.public_approval(req)
+
+    def mark_approved(self, request_id, decided_by_email):
+        """Non-upload actions: flip status only — the caller has already
+        executed (or is about to execute) the deferred mutation itself."""
+        req = self.approvals.get(request_id)
+        if req is None:
+            return None
+        req["status"] = "approved"
+        req["decided_by_email"] = decided_by_email
+        req["decided_at"] = datetime.now().isoformat()
+        return self.public_approval(req)
+
+    def mark_rejected(self, request_id, decided_by_email, reason=None):
+        """Non-upload actions: nothing was staged/created, so rejecting is a
+        pure state transition — no compensating action needed."""
+        req = self.approvals.get(request_id)
+        if req is None:
+            return None
+        req["status"] = "rejected"
+        req["decided_by_email"] = decided_by_email
+        req["decided_at"] = datetime.now().isoformat()
+        req["rejection_reason"] = reason
         return self.public_approval(req)
 
     @staticmethod

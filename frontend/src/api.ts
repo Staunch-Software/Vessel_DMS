@@ -81,7 +81,18 @@ export async function listVessels(): Promise<Vessel[]> {
   return (await api.get("/vessels")).data;
 }
 
-export async function createVessel(payload: VesselInput): Promise<unknown> {
+/** Result of a mutating action that may be gated behind admin approval.
+ * "completed" (SPE Admin, or the action ran immediately) carries the
+ * action's normal result fields flattened alongside `status`/`message`.
+ * "pending" means a pending approval was created instead — nothing has
+ * happened to the underlying data yet. */
+export type ActionResult<T = Record<string, never>> =
+  | (T & { status: "completed"; message?: string })
+  | { status: "pending"; message?: string; approval_id?: string; action_type?: string };
+
+export async function createVessel(
+  payload: VesselInput
+): Promise<ActionResult<Vessel>> {
   return (await api.post("/vessels", payload)).data;
 }
 
@@ -89,7 +100,10 @@ export async function reprovisionVessel(vesselId: string): Promise<{ ok: boolean
   return (await api.post(`/vessels/${vesselId}/reprovision`)).data;
 }
 
-export async function updateVessel(vesselId: string, payload: Partial<VesselInput>): Promise<unknown> {
+export async function updateVessel(
+  vesselId: string,
+  payload: Partial<VesselInput>
+): Promise<ActionResult<Vessel>> {
   return (await api.patch(`/vessels/${vesselId}`, payload)).data;
 }
 
@@ -130,7 +144,7 @@ export async function createSubfolder(
   folderId: string,
   name: string,
   userEmail?: string
-): Promise<FolderNode> {
+): Promise<ActionResult<FolderNode>> {
   return (await api.post(`/folders/${folderId}/subfolder`, { name, user_email: userEmail || undefined })).data;
 }
 
@@ -166,15 +180,22 @@ export async function search(
   ).data;
 }
 
-export async function deleteFile(fileId: string, userEmail?: string): Promise<void> {
-  await api.delete(`/files/${fileId}`, userEmail ? { params: { user_email: userEmail } } : undefined);
+export async function deleteFile(fileId: string, userEmail?: string, reason?: string): Promise<ActionResult> {
+  const params: Record<string, string> = {};
+  if (userEmail) params.user_email = userEmail;
+  if (reason) params.reason = reason;
+  return (
+    await api.delete(`/files/${fileId}`, Object.keys(params).length ? { params } : undefined)
+  ).data;
 }
 
-export async function deleteFolder(folderId: string, userEmail?: string, folderName?: string): Promise<void> {
+export async function deleteFolder(folderId: string, userEmail?: string, folderName?: string): Promise<ActionResult> {
   const params: Record<string, string> = {};
   if (userEmail) params.user_email = userEmail;
   if (folderName) params.folder_name = folderName;
-  await api.delete(`/folders/${folderId}`, Object.keys(params).length ? { params } : undefined);
+  return (
+    await api.delete(`/folders/${folderId}`, Object.keys(params).length ? { params } : undefined)
+  ).data;
 }
 
 export async function getArchivedIds(): Promise<string[]> {
@@ -185,32 +206,60 @@ export async function getArchivedNodes(): Promise<FolderNode[]> {
   return (await api.get("/archive/nodes")).data;
 }
 
-export async function archiveItem(itemId: string, type: "folder" | "file", userEmail?: string): Promise<void> {
-  const params: Record<string, string> = { type };
-  if (userEmail) params.user_email = userEmail;
-  await api.post(`/archive/${itemId}`, null, { params });
+export interface AuditContext {
+  itemName?: string;
+  department?: string;
+  vesselName?: string;
+  reason?: string;
 }
 
-export async function restoreItem(itemId: string, userEmail?: string): Promise<void> {
-  const params: Record<string, string> = {};
+export async function archiveItem(
+  itemId: string, type: "folder" | "file", userEmail?: string, audit?: AuditContext
+): Promise<ActionResult> {
+  const params: Record<string, string> = { type };
   if (userEmail) params.user_email = userEmail;
-  await api.post(`/restore/${itemId}`, null, { params });
+  if (audit?.itemName) params.item_name = audit.itemName;
+  if (audit?.department) params.department = audit.department;
+  if (audit?.vesselName) params.vessel_name = audit.vesselName;
+  if (audit?.reason) params.reason = audit.reason;
+  return (await api.post(`/archive/${itemId}`, null, { params })).data;
+}
+
+export async function restoreItem(
+  itemId: string, userEmail?: string, type: "folder" | "file" = "folder", audit?: AuditContext
+): Promise<ActionResult> {
+  const params: Record<string, string> = { type };
+  if (userEmail) params.user_email = userEmail;
+  if (audit?.itemName) params.item_name = audit.itemName;
+  if (audit?.department) params.department = audit.department;
+  if (audit?.vesselName) params.vessel_name = audit.vesselName;
+  return (await api.post(`/restore/${itemId}`, null, { params })).data;
 }
 
 export async function getDeletedNodes(): Promise<FolderNode[]> {
   return (await api.get("/recycle-bin/nodes")).data;
 }
 
-export async function restoreDeletedItem(itemId: string, type: "folder" | "file", userEmail?: string): Promise<void> {
+export async function restoreDeletedItem(
+  itemId: string, type: "folder" | "file", userEmail?: string, audit?: AuditContext
+): Promise<ActionResult> {
   const params: Record<string, string> = { type };
   if (userEmail) params.user_email = userEmail;
-  await api.post(`/recycle-bin/restore/${itemId}`, null, { params });
+  if (audit?.itemName) params.item_name = audit.itemName;
+  if (audit?.department) params.department = audit.department;
+  if (audit?.vesselName) params.vessel_name = audit.vesselName;
+  return (await api.post(`/recycle-bin/restore/${itemId}`, null, { params })).data;
 }
 
-export async function permanentDeleteItem(itemId: string, type: "folder" | "file", userEmail?: string): Promise<void> {
+export async function permanentDeleteItem(
+  itemId: string, type: "folder" | "file", userEmail?: string, audit?: AuditContext
+): Promise<ActionResult> {
   const params: Record<string, string> = { type };
   if (userEmail) params.user_email = userEmail;
-  await api.delete(`/recycle-bin/${itemId}`, { params });
+  if (audit?.itemName) params.item_name = audit.itemName;
+  if (audit?.department) params.department = audit.department;
+  if (audit?.vesselName) params.vessel_name = audit.vesselName;
+  return (await api.delete(`/recycle-bin/${itemId}`, { params })).data;
 }
 
 
@@ -228,28 +277,59 @@ export function fileContentUrl(fileId: string): string {
 
 // ────────────────────────── Approvals ──────────────────────────
 
-export type ApprovalStatus = "pending" | "approved" | "rejected";
+export type ApprovalStatus = "pending" | "approved" | "rejected" | "completed";
+export type ApprovalEntryKind = "approval" | "activity";
+export type ApprovalActionType =
+  | "upload"
+  | "delete_document"
+  | "delete_folder"
+  | "create_folder"
+  | "create_vessel"
+  | "update_vessel"
+  | "archive_item"
+  | "restore_item"
+  | "restore_from_recycle_bin"
+  | "permanent_delete";
+
+export interface ApprovalChange {
+  field: string;
+  old: string | null;
+  new: string | null;
+}
 
 export interface ApprovalRequest {
   id: string;
-  filename: string;
-  content_type: string;
-  size: number;
-  uploaded_by_email: string;
-  uploaded_by_name: string;
-  uploaded_at: string;
-  destination_folder_id: string;
-  destination_path: string;
+  // Upload-specific — null for non-upload action types.
+  filename: string | null;
+  content_type: string | null;
+  size: number | null;
+  destination_folder_id: string | null;
+  destination_path: string | null;
   is_month_upload: boolean;
   category: string | null;
   detected_month: string | null;
-  drive_item_id: string;
+  drive_item_id: string | null;
+  // Common to every entry.
+  uploaded_by_email: string;
+  uploaded_by_name: string;
+  uploaded_at: string;
   status: ApprovalStatus;
   decided_by_email: string | null;
   decided_at: string | null;
   rejection_reason: string | null;
   final_path: string | null;
   created_at: string;
+  // Generic fields covering every action type.
+  entry_kind: ApprovalEntryKind;
+  action_type: ApprovalActionType;
+  department: string | null;
+  vessel_id: string | null;
+  vessel_name: string | null;
+  target_id: string | null;
+  target_description: string | null;
+  changes: ApprovalChange[];
+  message: string | null;
+  payload: { reason?: string; item_type?: string; [key: string]: unknown };
 }
 
 export async function listApprovals(
@@ -279,7 +359,7 @@ export async function approveRequest(adminEmail: string, requestId: string): Pro
 export async function rejectRequest(
   adminEmail: string,
   requestId: string,
-  reason?: string
+  reason: string
 ): Promise<void> {
   await api.post(`/approvals/${requestId}/reject`, { reason }, { params: { admin: adminEmail } });
 }
