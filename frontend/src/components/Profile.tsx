@@ -1,28 +1,20 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Mail, Phone, Clock, LogOut, Camera,
   MapPin, Hash, Calendar, Users, ArrowLeft,
   ShieldOff, Edit3, Save, X,
   Building2, Activity, RefreshCw, UserCheck,
   AlertCircle, Upload, FolderOpen, Trash2, FolderPlus, LogIn,
-  Settings,
+  Settings, Shield, Monitor, Smartphone, Tablet, Globe,
+  XCircle, Timer, LogIn as LoginIcon,
 } from "lucide-react";
 
-import type { FolderNode, UserProfile, ProfileUpdatePayload } from "../api";
-import { getProfile, updateProfile } from "../api";
+import type { FolderNode, UserProfile, ProfileUpdatePayload, SessionInfo, SessionAuditEntry } from "../api";
+import { getProfile, updateProfile, listSessions, listSessionAudit, revokeSession } from "../api";
+
 
 // ── palette ───────────────────────────────────────────────────────────────────
-const navy     = "#0a2027";
-const navy2    = "#0e2a33";
-const steel    = "#1B4965";
-const teal     = "#14b8a6";
-const teal300  = "#5eead4";
 const danger   = "#e11d48";
-const white    = "#ffffff";
-const slate400 = "#94a3b8";
-const slate500 = "#64748b";
-const slate200 = "#e2e8f0";
-const slate100 = "#f1f5f9";
 const ink      = "#1e293b";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -143,19 +135,19 @@ function Card({ title, icon, eyebrow, action, children }: CardProps) {
   return (
     <div
       className="rounded-xl p-6"
-      style={{ background: white, border: `1px solid ${slate200}` }}
+      style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)" }}
     >
       <div
         className="flex items-center justify-between pb-4 mb-1"
-        style={{ borderBottom: `1px solid ${slate200}` }}
+        style={{ borderBottom: "1px solid var(--color-border)" }}
       >
         <h3
           className="flex items-center gap-2 text-sm font-semibold"
-          style={{ color: ink }}
+          style={{ color: "var(--color-fg)" }}
         >
           <span
             className="flex h-6 w-6 items-center justify-center rounded-lg"
-            style={{ background: "rgba(20,184,166,0.12)", color: teal }}
+            style={{ background: "color-mix(in oklab, var(--color-primary) 12%, transparent)", color: "var(--color-primary)" }}
           >
             {icon}
           </span>
@@ -165,7 +157,7 @@ function Card({ title, icon, eyebrow, action, children }: CardProps) {
           {eyebrow && (
             <span
               className="text-[10px] font-semibold uppercase tracking-wider"
-              style={{ color: slate400 }}
+              style={{ color: "var(--color-muted)" }}
             >
               {eyebrow}
             </span>
@@ -200,18 +192,18 @@ function FieldRow({
   return (
     <div
       className="flex items-start gap-3 py-2.5"
-      style={{ borderBottom: `1px dashed ${slate200}` }}
+      style={{ borderBottom: "1px dashed var(--color-border)" }}
     >
       <span
         className="mt-0.5 flex-shrink-0 text-center"
-        style={{ color: slate400, width: 16 }}
+        style={{ color: "var(--color-muted)", width: 16 }}
       >
         {icon}
       </span>
       <div className="flex-1 min-w-0">
         <div
           className="text-[12px] font-bold uppercase tracking-wider mb-1"
-          style={{ color: slate500 }}
+          style={{ color: "var(--color-muted)" }}
         >
           {label}
         </div>
@@ -222,16 +214,16 @@ function FieldRow({
               value={inputValue ?? ""}
               onChange={(e) => onInputChange?.(e.target.value)}
               placeholder={placeholder}
-              className="w-full rounded-md px-2.5 py-1.5 text-sm outline-none placeholder:text-slate-400"
+              className="w-full rounded-md px-2.5 py-1.5 text-sm outline-none placeholder:text-subtle"
               style={{
-                background: slate100,
-                border: `1px solid ${error ? danger : slate200}`,
-                color: ink,
+                background: "var(--color-surface2)",
+                border: `1px solid var(--color-${error ? "error" : "border"})`,
+                color: "var(--color-fg)",
                 fontFamily: mono ? "'IBM Plex Mono', monospace" : undefined,
               }}
             />
             {error && (
-              <div className="mt-1 flex items-center gap-1 text-xs" style={{ color: danger }}>
+              <div className="mt-1 flex items-center gap-1 text-xs" style={{ color: "var(--color-error)" }}>
                 <AlertCircle className="h-3 w-3 flex-shrink-0" />{error}
               </div>
             )}
@@ -240,7 +232,7 @@ function FieldRow({
           <div
             className="text-sm font-medium break-words"
             style={{
-              color: asLink ? teal : value ? ink : slate400,
+              color: asLink ? "var(--color-primary)" : value ? "var(--color-fg)" : "var(--color-muted)",
               fontFamily: mono ? "'IBM Plex Mono', monospace" : undefined,
               fontSize: mono ? "13px" : undefined,
             }}
@@ -284,6 +276,26 @@ export default function ProfilePage({
   const [showFullPhoto, setShowFullPhoto] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
+
+  // Session security state
+  const [sessions,      setSessions]      = useState<SessionInfo[]>([]);
+  const [auditLog,      setAuditLog]      = useState<SessionAuditEntry[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [revokingId,    setRevokingId]    = useState<string | null>(null);
+  const currentSessionId = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('session_id') : null;
+
+  const loadSessions = useCallback(async () => {
+    setSessionsLoading(true);
+    try {
+      const [s, a] = await Promise.all([listSessions(), listSessionAudit(100)]);
+      setSessions(s);
+      setAuditLog(a);
+    } catch { /* non-critical */ }
+    finally { setSessionsLoading(false); }
+  }, []);
+
+  useEffect(() => { loadSessions(); }, [loadSessions]);
+
 
   const handlePhotoClick = () => {
     fileInputRef.current?.click();
@@ -383,23 +395,23 @@ export default function ProfilePage({
   const displayName = profile?.display_name ?? userEmail;
 
   return (
-    <main className="flex flex-1 flex-col overflow-hidden">
+    <main className="flex flex-1 flex-col overflow-hidden bg-bg">
         {/* Top bar */}
         <div
           className="flex flex-shrink-0 items-center justify-between border-b dms-page-px py-3"
-          style={{ background: white, borderColor: slate200 }}
+          style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
         >
           <div className="flex items-center gap-2">
             <button
               onClick={onBack}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition hover:bg-slate-100"
-              style={{ color: slate500 }}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition hover:bg-surface-hover cursor-pointer"
+              style={{ color: "var(--color-muted)" }}
             >
               <ArrowLeft className="h-4 w-4" />
               Back
             </button>
-            <span style={{ color: slate200 }}>/</span>
-            <span className="text-sm font-medium" style={{ color: ink }}>My Profile</span>
+            <span style={{ color: "var(--color-border)" }}>/</span>
+            <span className="text-sm font-medium" style={{ color: "var(--color-fg)" }}>My Profile</span>
           </div>
           <div className="flex items-center gap-3">
             {editing ? (
@@ -407,8 +419,8 @@ export default function ProfilePage({
                 <button
                   onClick={handleCancel}
                   disabled={saving}
-                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 transition"
-                  style={{ color: slate500 }}
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold border border-border bg-surface hover:bg-surface-hover transition cursor-pointer"
+                  style={{ color: "var(--color-muted)" }}
                 >
                   <X className="h-3.5 w-3.5" />
                   Cancel
@@ -416,8 +428,8 @@ export default function ProfilePage({
                 <button
                   onClick={handleSave}
                   disabled={saving}
-                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:opacity-90"
-                  style={{ background: teal, color: white }}
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-primary-fg shadow-sm transition hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+                  style={{ background: "var(--color-primary)" }}
                 >
                   {saving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                   Save
@@ -427,16 +439,16 @@ export default function ProfilePage({
               <>
                 <button
                   onClick={onSettings}
-                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold bg-white border hover:bg-slate-50 transition"
-                  style={{ color: slate500, borderColor: slate200 }}
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold border border-border bg-surface hover:bg-surface-hover transition cursor-pointer"
+                  style={{ color: "var(--color-muted)" }}
                 >
                   <Settings className="h-3.5 w-3.5" />
                   Settings
                 </button>
                 <button
                   onClick={handleEdit}
-                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold bg-white border hover:bg-slate-50 transition"
-                  style={{ color: slate500, borderColor: slate200 }}
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold border border-border bg-surface hover:bg-surface-hover transition cursor-pointer"
+                  style={{ color: "var(--color-muted)" }}
                 >
                   <Edit3 className="h-3.5 w-3.5" />
                   Edit Profile
@@ -445,8 +457,8 @@ export default function ProfilePage({
             )}
             <button
               onClick={() => setShowSignOutPopup(true)}
-              className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition hover:opacity-90"
-              style={{ background: teal, color: white }}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-primary-fg shadow-sm transition hover:scale-[1.01] active:scale-[0.99] cursor-pointer animate-fade-in"
+              style={{ background: "var(--color-primary)" }}
             >
               <LogOut className="h-3.5 w-3.5" />
               Sign Out
@@ -461,46 +473,46 @@ export default function ProfilePage({
             <div className="absolute inset-0" onClick={() => setShowSignOutPopup(false)} />
             <div
               className="relative w-full max-w-md rounded-2xl p-6 shadow-2xl"
-              style={{ background: navy, border: "1px solid rgba(255,255,255,0.1)", color: slate200 }}
+              style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", color: "var(--color-fg)" }}
             >
-              <div className="flex items-center gap-3 border-b pb-4 mb-5" style={{ borderColor: "rgba(255,255,255,0.1)" }}>
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: "rgba(20,184,166,0.1)", color: teal300 }}>
+              <div className="flex items-center gap-3 border-b pb-4 mb-5" style={{ borderColor: "var(--color-border)" }}>
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: "color-mix(in oklab, var(--color-primary) 12%, transparent)", color: "var(--color-primary)" }}>
                   <LogOut className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold" style={{ color: white }}>Sign Out</h3>
-                  <p className="text-xs" style={{ color: slate400 }}>Choose your sign out method</p>
+                  <h3 className="text-lg font-semibold" style={{ color: "var(--color-fg)" }}>Sign Out</h3>
+                  <p className="text-xs" style={{ color: "var(--color-muted)" }}>Choose your sign out method</p>
                 </div>
               </div>
               <div className="space-y-3">
                 <button
                   onClick={() => { setShowSignOutPopup(false); onSignOut(); }}
-                  className="flex w-full items-center justify-between rounded-xl p-4 text-left transition hover:bg-white/10"
-                  style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.05)" }}
+                  className="flex w-full items-center justify-between rounded-xl p-4 text-left transition hover:bg-surface-hover cursor-pointer"
+                  style={{ background: "var(--color-surface2)", border: "1px solid var(--color-border)" }}
                 >
                   <div className="pr-4">
-                    <div className="text-sm font-semibold" style={{ color: white }}>Sign Out (Current Account)</div>
-                    <div className="text-xs mt-1" style={{ color: slate400 }}>Sign out of your active session on this device.</div>
+                    <div className="text-sm font-semibold" style={{ color: "var(--color-fg)" }}>Sign Out (Current Account)</div>
+                    <div className="text-xs mt-1" style={{ color: "var(--color-muted)" }}>Sign out of your active session on this device.</div>
                   </div>
-                  <LogOut className="h-5 w-5 shrink-0" style={{ color: slate400 }} />
+                  <LogOut className="h-5 w-5 shrink-0" style={{ color: "var(--color-muted)" }} />
                 </button>
                 <button
                   onClick={() => { setShowSignOutPopup(false); onGlobalSignOut(); }}
-                  className="flex w-full items-center justify-between rounded-xl p-4 text-left transition hover:bg-red-900/20"
-                  style={{ background: "rgba(225,29,72,0.05)", border: "1px solid rgba(225,29,72,0.08)" }}
+                  className="flex w-full items-center justify-between rounded-xl p-4 text-left transition hover:bg-error-bg/80 cursor-pointer"
+                  style={{ background: "var(--color-error-bg)", border: "1px solid var(--color-error)" }}
                 >
                   <div className="pr-4">
-                    <div className="text-sm font-semibold" style={{ color: "#fca5a5" }}>Sign Out All Accounts</div>
-                    <div className="text-xs mt-1" style={{ color: slate400 }}>Completely sign out of all Microsoft SSO accounts.</div>
+                    <div className="text-sm font-semibold" style={{ color: "var(--color-error)" }}>Sign Out All Accounts</div>
+                    <div className="text-xs mt-1" style={{ color: "var(--color-muted)" }}>Completely sign out of all Microsoft SSO accounts.</div>
                   </div>
-                  <ShieldOff className="h-5 w-5 shrink-0" style={{ color: slate500 }} />
+                  <ShieldOff className="h-5 w-5 shrink-0" style={{ color: "var(--color-error)" }} />
                 </button>
               </div>
               <div className="mt-6 flex justify-end">
                 <button
                   onClick={() => setShowSignOutPopup(false)}
-                  className="rounded-lg px-4 py-2 text-sm font-medium transition hover:bg-white/10"
-                  style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: slate200 }}
+                  className="rounded-lg px-4 py-2 text-sm font-medium transition hover:bg-surface-hover cursor-pointer"
+                  style={{ background: "var(--color-surface2)", border: "1px solid var(--color-border)", color: "var(--color-muted)" }}
                 >
                   Cancel
                 </button>
@@ -527,10 +539,13 @@ export default function ProfilePage({
               {/* Hero */}
               <div
                 className="relative overflow-hidden dms-page-px py-6 sm:py-8"
-                style={{ background: `linear-gradient(135deg, ${navy} 0%, ${navy2} 60%, ${steel} 100%)` }}
+                style={{ background: "linear-gradient(135deg, #1a1a4e 0%, #0d0d3a 60%, #2a0a0a 100%)" }}
               >
-                <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full" style={{ border: "1px solid rgba(94,234,212,0.15)" }} />
-                <div className="pointer-events-none absolute -right-4 -top-4 h-44 w-44 rounded-full" style={{ border: "1px solid rgba(94,234,212,0.1)" }} />
+                {/* Subtle red glow rings */}
+                <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full" style={{ borderColor: "rgba(212,43,43,0.20)", borderStyle: "solid", borderWidth: 1 }} />
+                <div className="pointer-events-none absolute -right-4 -top-4 h-44 w-44 rounded-full" style={{ borderColor: "rgba(212,43,43,0.12)", borderStyle: "solid", borderWidth: 1 }} />
+                {/* Nissen logo watermark */}
+                <img src="/nissen-logo.svg" alt="" aria-hidden="true" className="pointer-events-none absolute -bottom-4 right-6 h-28 w-auto opacity-10 select-none" />
                 <div className="relative flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
                   <div className="flex items-center gap-5">
                     <div className="relative flex-shrink-0">
@@ -545,57 +560,57 @@ export default function ProfilePage({
                         onClick={() => {
                           if (profile?.photo_base64) setShowFullPhoto(true);
                         }}
-                        className="flex h-24 w-24 items-center justify-center rounded-full text-3xl font-bold overflow-hidden"
-                        style={{ border: `3px solid ${teal300}`, background: profile?.photo_base64 ? undefined : "#cbd5e1" }}
+                        className="flex h-24 w-24 items-center justify-center rounded-full text-3xl font-bold overflow-hidden cursor-pointer"
+                        style={{ border: "3px solid #D42B2B", background: profile?.photo_base64 ? undefined : "rgba(255,255,255,0.08)" }}
                         title={profile?.photo_base64 ? "Click to view full photo" : undefined}
                       >
                         {profile?.photo_base64 ? (
                           <img src={profile.photo_base64} alt="Profile" className="h-full w-full object-cover" />
                         ) : (
                           <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-full w-full object-cover">
-                            <circle cx="50" cy="50" r="50" fill="#cbd5e1" />
-                            <circle cx="50" cy="45" r="18" fill="#94a3b8" />
-                            <path d="M15 88C15 70 30 65 50 65C70 65 85 70 85 88" fill="#94a3b8" />
+                            <circle cx="50" cy="50" r="50" fill="rgba(255,255,255,0.12)" />
+                            <circle cx="50" cy="45" r="18" fill="rgba(255,255,255,0.35)" />
+                            <path d="M15 88C15 70 30 65 50 65C70 65 85 70 85 88" fill="rgba(255,255,255,0.35)" />
                           </svg>
                         )}
                       </div>
                       <button
                         onClick={handlePhotoClick}
-                        className="absolute -bottom-1 -right-1 flex h-8 w-8 items-center justify-center rounded-full transition hover:scale-105"
-                        style={{ background: teal, border: `2px solid ${navy}` }}
+                        className="absolute -bottom-1 -right-1 flex h-8 w-8 items-center justify-center rounded-full transition hover:scale-105 cursor-pointer"
+                        style={{ background: "#D42B2B", border: "2px solid #1a1a4e" }}
                         title="Upload photo"
                       >
-                        <Camera className="h-3.5 w-3.5" style={{ color: navy }} />
+                        <Camera className="h-3.5 w-3.5" style={{ color: "white" }} />
                       </button>
                     </div>
                     <div>
-                      <h1 className="text-3xl font-bold tracking-tight" style={{ color: white }}>{displayName}</h1>
-                      {profile?.employee_id && <p className="mt-0.5 font-mono text-xs uppercase tracking-widest" style={{ color: slate400 }}>Employee ID {profile.employee_id}</p>}
-                      <p className="mt-1 text-sm" style={{ color: teal300 }}>
+                      <h1 className="text-3xl font-bold tracking-tight" style={{ color: "white" }}>{displayName}</h1>
+                      {profile?.employee_id && <p className="mt-0.5 font-mono text-xs uppercase tracking-widest" style={{ color: "rgba(255,255,255,0.55)" }}>Employee ID {profile.employee_id}</p>}
+                      <p className="mt-1 text-sm font-medium" style={{ color: "#f87171" }}>
                         {[profile?.job_title, profile?.company_name].filter(Boolean).join(" \u00b7 ") || profile?.email}
                       </p>
                       {/* Photo Size / Errors */}
                       <div className="mt-1 flex flex-col gap-0.5">
                         {profile?.photo_base64 && (
-                          <p className="text-[11px] font-medium" style={{ color: teal300 }}>
+                          <p className="text-[11px] font-medium" style={{ color: "rgba(255,255,255,0.50)" }}>
                             Photo size: {getBase64SizeLabel(profile.photo_base64)} (Max 10 MB)
                           </p>
                         )}
                         {photoError && (
-                          <p className="text-[11px] font-medium" style={{ color: danger }}>
+                          <p className="text-[11px] font-medium" style={{ color: "#fca5a5" }}>
                             {photoError}
                           </p>
                         )}
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
-                        {profile?.department && <span className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(255,255,255,0.08)", color: "#cfece7" }}><Building2 className="h-3 w-3" />{profile.department}</span>}
-                        {profile?.office_location && <span className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(255,255,255,0.08)", color: "#cfece7" }}><MapPin className="h-3 w-3" />{profile.office_location}</span>}
-                        {profile?.date_of_joining && yearsLabel(profile.date_of_joining) && <span className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(255,255,255,0.08)", color: "#cfece7" }}><Calendar className="h-3 w-3" />{yearsLabel(profile.date_of_joining)}</span>}
+                        {profile?.department && <span className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(255,255,255,0.10)", color: "white" }}><Building2 className="h-3 w-3" />{profile.department}</span>}
+                        {profile?.office_location && <span className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(255,255,255,0.10)", color: "white" }}><MapPin className="h-3 w-3" />{profile.office_location}</span>}
+                        {profile?.date_of_joining && yearsLabel(profile.date_of_joining) && <span className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium" style={{ background: "rgba(255,255,255,0.10)", color: "white" }}><Calendar className="h-3 w-3" />{yearsLabel(profile.date_of_joining)}</span>}
                       </div>
                     </div>
                   </div>
-                  <div className="inline-flex items-center gap-2 self-start rounded-full px-4 py-2 text-xs font-bold tracking-widest md:self-auto" style={{ background: "rgba(20,184,166,0.15)", border: `1px solid ${teal}`, color: teal300 }}>
-                    <span className="h-2 w-2 rounded-full" style={{ background: teal, boxShadow: "0 0 0 3px rgba(20,184,166,0.25)" }} />ACTIVE
+                  <div className="inline-flex items-center gap-2 self-start rounded-full px-4 py-2 text-xs font-bold tracking-widest md:self-auto" style={{ background: "rgba(212,43,43,0.20)", border: "1px solid rgba(212,43,43,0.35)", color: "#fca5a5" }}>
+                    <span className="h-2 w-2 rounded-full" style={{ background: "#D42B2B", boxShadow: "0 0 0 4px rgba(212,43,43,0.25)" }} />ACTIVE
                   </div>
                 </div>
               </div>
@@ -607,7 +622,7 @@ export default function ProfilePage({
                 <div className="lg:col-span-2 flex flex-col gap-5">
                   {/* WORK INFO */}
                   <Card title="Work Info" icon={<Building2 className="h-3.5 w-3.5" />}>
-                    <div style={{ borderTop: `1px dashed ${slate200}` }}>
+                    <div style={{ borderTop: "1px dashed var(--color-border)" }}>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5">
                         <FieldRow icon={<Hash className="h-3.5 w-3.5" />} label="Employee ID" value={profile?.employee_id} editing={editing} inputValue={form.employee_id} onInputChange={(v) => setField("employee_id", v)} placeholder="e.g. EMP-4471" mono error={formErrors.employee_id} />
                         <FieldRow icon={<Mail className="h-3.5 w-3.5" />} label="Work Email" value={profile?.email} readOnly />
@@ -624,10 +639,10 @@ export default function ProfilePage({
                 <div className="lg:col-span-1 flex flex-col gap-5">
                   {/* 1. PERSONAL INFO */}
                   <Card title="Personal Info" icon={<Users className="h-3.5 w-3.5" />} eyebrow="Core record">
-                    {saveError && <div className="mb-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs" style={{ background: "rgba(225,29,72,0.08)", color: danger }}><AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />{saveError}</div>}
+                    {saveError && <div className="mb-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs bg-error-bg text-error border border-error/20"><AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />{saveError}</div>}
                     
                     {/* Account detail list */}
-                    <div style={{ borderTop: `1px dashed ${slate200}` }}>
+                    <div style={{ borderTop: "1px dashed var(--color-border)" }}>
                       <FieldRow icon={<Users className="h-3.5 w-3.5" />} label="First Name" value={profile?.first_name} editing={editing} inputValue={form.first_name} onInputChange={(v) => setField("first_name", v)} placeholder="e.g. Anjali" error={formErrors.first_name} />
                       <FieldRow icon={<Users className="h-3.5 w-3.5" />} label="Last Name" value={profile?.last_name} editing={editing} inputValue={form.last_name} onInputChange={(v) => setField("last_name", v)} placeholder="e.g. Menon" error={formErrors.last_name} />
                       <FieldRow icon={<Phone className="h-3.5 w-3.5" />} label="Phone" value={profile?.phone} editing={editing} inputValue={form.phone} type="tel" onInputChange={(v) => setField("phone", v.replace(/[^\d+\-() ]/g, ""))} placeholder="e.g. +65 8123 4477" error={formErrors.phone} />
@@ -640,10 +655,10 @@ export default function ProfilePage({
                 <div className="lg:col-span-3">
                   <Card title="Recent Activity" icon={<Activity className="h-3.5 w-3.5" />} eyebrow="Last 10 events">
                     {(profile?.recent_activity ?? []).length === 0 ? (
-                      <p className="py-2 text-sm" style={{ color: slate400 }}>No recent activity on record.</p>
+                      <p className="py-2 text-sm" style={{ color: "var(--color-muted)" }}>No recent activity on record.</p>
                     ) : (
                       <div className="relative pl-6 pt-2">
-                        <div className="pointer-events-none absolute bottom-2 left-[9px] top-4" style={{ width: 1.5, background: `repeating-linear-gradient(to bottom, ${slate200} 0 4px, transparent 4px 8px)` }} />
+                        <div className="pointer-events-none absolute bottom-2 left-[9px] top-4" style={{ width: 1.5, background: "repeating-linear-gradient(to bottom, var(--color-border) 0 4px, transparent 4px 8px)" }} />
                         {profile!.recent_activity.map((entry: { action: string; detail: string | null; created_at: string }, i: number) => {
                           const actionLabel: Record<string, string> = {
                             login: "Logged in",
@@ -692,38 +707,38 @@ export default function ProfilePage({
                             : [];
 
                           return (
-                            <div key={i} className="relative mb-5 last:mb-0">
+                            <div key={i} className="relative mb-5 last:mb-0 text-fg">
                               <div className="absolute -left-6 top-1 rounded-full flex items-center justify-center"
-                                style={{ width: 18, height: 18, background: entry.action === "file_upload" ? teal : white, border: `2px solid ${teal}` }}>
-                                <span style={{ color: entry.action === "file_upload" ? white : teal }}>
+                                style={{ width: 18, height: 18, background: entry.action === "file_upload" ? "var(--color-primary)" : "var(--color-surface)", border: "2px solid var(--color-primary)" }}>
+                                <span style={{ color: entry.action === "file_upload" ? "var(--color-primary-fg)" : "var(--color-primary)" }}>
                                   {actionIcon[entry.action] ?? <Activity className="h-3 w-3" />}
                                 </span>
                               </div>
-                              <div className="mb-0.5 font-mono text-[11px]" style={{ color: slate400 }}>{fmtDate(entry.created_at)}</div>
+                              <div className="mb-0.5 font-mono text-[11px]" style={{ color: "var(--color-muted)" }}>{fmtDate(entry.created_at)}</div>
 
                               {folderPath ? (
                                 /* Rich upload entry with file + path */
-                                <div className="rounded-lg border p-2.5" style={{ borderColor: slate200, background: "#f8fafc" }}>
+                                <div className="rounded-lg border p-2.5" style={{ borderColor: "var(--color-border)", background: "var(--color-surface2)" }}>
                                   <div className="flex items-start gap-2">
-                                    <Upload className="mt-0.5 h-3.5 w-3.5 shrink-0" style={{ color: teal }} />
+                                    <Upload className="mt-0.5 h-3.5 w-3.5 shrink-0" style={{ color: "var(--color-primary)" }} />
                                     <div className="min-w-0 flex-1">
                                       {/* File name */}
-                                      <p className="text-[13px] font-semibold leading-snug" style={{ color: ink }}>
+                                      <p className="text-[13px] font-semibold leading-snug" style={{ color: "var(--color-fg)" }}>
                                         {displayName.replace(/^Uploaded:\s*/i, "")}
                                       </p>
                                       {/* Folder path breadcrumb */}
                                       <div className="mt-1 flex flex-wrap items-center gap-x-0.5 gap-y-0.5">
-                                        <FolderOpen className="h-3 w-3 shrink-0" style={{ color: slate400 }} />
+                                        <FolderOpen className="h-3 w-3 shrink-0" style={{ color: "var(--color-muted)" }} />
                                         {pathSegments.map((seg, si) => (
                                           <span key={si} className="flex items-center gap-x-0.5">
                                             {si > 0 && (
-                                              <span className="text-[10px]" style={{ color: slate400 }}>›</span>
+                                              <span className="text-[10px]" style={{ color: "var(--color-muted)" }}>›</span>
                                             )}
                                             <span
                                               className="rounded px-1 py-0.5 text-[11px] font-medium leading-none"
                                               style={{
-                                                background: si === pathSegments.length - 1 ? "#e0f2fe" : "transparent",
-                                                color: si === pathSegments.length - 1 ? "#0369a1" : slate400,
+                                                background: si === pathSegments.length - 1 ? "var(--color-primary-hover)" : "transparent",
+                                                color: si === pathSegments.length - 1 ? "var(--color-primary-fg)" : "var(--color-muted)",
                                               }}
                                             >
                                               {seg}
@@ -750,6 +765,25 @@ export default function ProfilePage({
             </>
           )}
         </div>
+
+        {/* ── Session Security Dashboard ──────────────────────────── */}
+        {!loading && !fetchError && (
+          <div className="dms-page-px pb-8">
+            <SessionSecurityCard
+              sessions={sessions}
+              auditLog={auditLog}
+              loading={sessionsLoading}
+              currentSessionId={currentSessionId}
+              revokingId={revokingId}
+              onRevoke={async (sid) => {
+                setRevokingId(sid);
+                try { await revokeSession(sid); await loadSessions(); } catch { /* ignore */ }
+                finally { setRevokingId(null); }
+              }}
+              onRefresh={loadSessions}
+            />
+          </div>
+        )}
 
         {/* Full Photo Modal */}
         {showFullPhoto && profile?.photo_base64 && (
@@ -780,5 +814,311 @@ export default function ProfilePage({
         )}
 
     </main>
+  );
+}
+
+// ── SessionSecurityCard ───────────────────────────────────────────────────────
+
+interface SessionSecurityCardProps {
+  sessions: SessionInfo[];
+  auditLog: SessionAuditEntry[];
+  loading: boolean;
+  currentSessionId: string | null;
+  revokingId: string | null;
+  onRevoke: (sessionId: string) => Promise<void>;
+  onRefresh: () => void;
+}
+
+function BrowserIcon({ browser }: { browser: string | null }) {
+  const b = (browser || "").toLowerCase();
+  if (b.includes("chrome"))   return <Globe className="h-4 w-4" style={{ color: "#34a853" }} />;
+  if (b.includes("edge"))     return <Globe className="h-4 w-4" style={{ color: "#0078d4" }} />;
+  if (b.includes("firefox"))  return <Globe className="h-4 w-4" style={{ color: "#ff6611" }} />;
+  if (b.includes("safari"))   return <Globe className="h-4 w-4" style={{ color: "#06b6d4" }} />;
+  if (b.includes("opera"))    return <Globe className="h-4 w-4" style={{ color: "#ff1b2d" }} />;
+  if (b.includes("ie") || b.includes("internet explorer")) return <Globe className="h-4 w-4" style={{ color: "#1EBBEE" }} />;
+  return <Globe className="h-4 w-4" style={{ color: "var(--color-muted)" }} />;
+}
+
+function DeviceIcon({ deviceType }: { deviceType: string | null }) {
+  if (deviceType === "Mobile")  return <Smartphone className="h-4 w-4" />;
+  if (deviceType === "Tablet")  return <Tablet className="h-4 w-4" />;
+  return <Monitor className="h-4 w-4" />;
+}
+
+const EVENT_LABEL: Record<string, string> = {
+  session_created:          "Login",
+  session_logged_out:       "Signed Out",
+  session_expired:          "Session Expired",
+  session_revoked:          "Session Revoked",
+  invalid_session_attempt:  "Invalid Attempt",
+  auth_failure:             "Auth Failure",
+};
+
+const STATUS_STYLE: Record<string, { bg: string; fg: string }> = {
+  Active:      { bg: "rgba(20,184,166,0.15)",  fg: "#14b8a6" },
+  "Logged Out":{ bg: "rgba(100,116,139,0.15)", fg: "#94a3b8" },
+  Expired:     { bg: "rgba(245,158,11,0.15)",  fg: "#f59e0b" },
+  Revoked:     { bg: "rgba(239,68,68,0.15)",   fg: "#ef4444" },
+  Failed:      { bg: "rgba(239,68,68,0.15)",   fg: "#ef4444" },
+};
+
+function fmtTs(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString("en-GB", {
+      day: "2-digit", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+  } catch { return iso; }
+}
+
+function SessionSecurityCard({
+  sessions, auditLog, loading, currentSessionId, revokingId, onRevoke, onRefresh,
+}: SessionSecurityCardProps) {
+  const activeSessions  = sessions.filter(s => s.status === "Active");
+  const pastSessions    = sessions.filter(s => s.status !== "Active");
+
+  return (
+    <div
+      className="rounded-2xl overflow-hidden"
+      style={{ border: "1px solid var(--color-border)", background: "var(--color-surface)" }}
+    >
+      {/* Header */}
+      <div
+        className="flex items-center justify-between px-6 py-4"
+        style={{ borderBottom: "1px solid var(--color-border)" }}
+      >
+        <h3 className="flex items-center gap-2 text-sm font-semibold" style={{ color: "var(--color-fg)" }}>
+          <span
+            className="flex h-6 w-6 items-center justify-center rounded-lg"
+            style={{ background: "color-mix(in oklab, var(--color-primary) 12%, transparent)", color: "var(--color-primary)" }}
+          >
+            <Shield className="h-3.5 w-3.5" />
+          </span>
+          Session Security
+          <span className="ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold"
+            style={{ background: "color-mix(in oklab, var(--color-primary) 12%, transparent)", color: "var(--color-primary)" }}
+          >
+            {activeSessions.length} ACTIVE
+          </span>
+        </h3>
+        <button
+          onClick={onRefresh}
+          disabled={loading}
+          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold border border-border transition hover:bg-surface-hover cursor-pointer"
+          style={{ color: "var(--color-muted)" }}
+        >
+          <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
+          Refresh
+        </button>
+      </div>
+
+      <div className="p-6 space-y-8">
+
+        {/* ── Active Sessions ── */}
+        <section>
+          <p className="mb-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--color-muted)" }}>
+            Active Sessions
+          </p>
+          {activeSessions.length === 0 && !loading && (
+            <p className="text-sm" style={{ color: "var(--color-muted)" }}>No active sessions found.</p>
+          )}
+          <div className="space-y-3">
+            {activeSessions.map((s) => {
+              const isCurrent = s.session_id === currentSessionId;
+              return (
+                <div
+                  key={s.session_id}
+                  className="flex items-start justify-between gap-4 rounded-xl p-4"
+                  style={{
+                    background: isCurrent ? "color-mix(in oklab, var(--color-primary) 8%, transparent)" : "var(--color-surface2)",
+                    border: `1px solid ${isCurrent ? "var(--color-primary)" : "var(--color-border)"}`,
+                  }}
+                >
+                  {/* Left: icon + info */}
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+                      style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)" }}
+                    >
+                      <DeviceIcon deviceType={s.device_type} />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-semibold" style={{ color: "var(--color-fg)" }}>
+                          {s.browser || "Unknown Browser"}
+                        </span>
+                        <BrowserIcon browser={s.browser} />
+                        {isCurrent && (
+                          <span
+                            className="rounded-full px-2 py-0.5 text-[10px] font-bold"
+                            style={{ background: "color-mix(in oklab, var(--color-primary) 18%, transparent)", color: "var(--color-primary)" }}
+                          >
+                            THIS DEVICE
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[12px]" style={{ color: "var(--color-muted)" }}>
+                        {s.operating_system && <span>{s.operating_system}</span>}
+                        {s.device_type      && <span>{s.device_type}</span>}
+                        {s.ip_address       && <span>IP: {s.ip_address}</span>}
+                      </div>
+                      <div className="mt-1 text-[11px]" style={{ color: "var(--color-muted)" }}>
+                        <span>Logged in: {fmtTs(s.login_time)}</span>
+                        {s.last_activity && <span className="ml-3">Last active: {fmtTs(s.last_activity)}</span>}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Right: revoke */}
+                  {!isCurrent && (
+                    <button
+                      onClick={() => onRevoke(s.session_id)}
+                      disabled={revokingId === s.session_id}
+                      className="flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition hover:opacity-80 cursor-pointer"
+                      style={{ background: "rgba(239,68,68,0.12)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.25)" }}
+                    >
+                      {revokingId === s.session_id
+                        ? <RefreshCw className="h-3 w-3 animate-spin" />
+                        : <XCircle className="h-3 w-3" />}
+                      Revoke
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* ── Past Sessions ── */}
+        {pastSessions.length > 0 && (
+          <section>
+            <p className="mb-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--color-muted)" }}>
+              Past Sessions
+            </p>
+            <div className="space-y-2">
+              {pastSessions.slice(0, 5).map((s) => {
+                const sStyle = STATUS_STYLE[s.status] ?? STATUS_STYLE["Expired"];
+                return (
+                  <div
+                    key={s.session_id}
+                    className="flex items-center justify-between gap-3 rounded-xl px-4 py-3"
+                    style={{ background: "var(--color-surface2)", border: "1px solid var(--color-border)" }}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <DeviceIcon deviceType={s.device_type} />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium" style={{ color: "var(--color-fg)" }}>
+                            {s.browser || "Unknown Browser"}
+                          </span>
+                          <BrowserIcon browser={s.browser} />
+                        </div>
+                        <div className="text-[11px]" style={{ color: "var(--color-muted)" }}>
+                          {fmtTs(s.login_time)}
+                          {s.logout_time && <span className="ml-2">→ {fmtTs(s.logout_time)}</span>}
+                        </div>
+                      </div>
+                    </div>
+                    <span
+                      className="shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-bold"
+                      style={{ background: sStyle.bg, color: sStyle.fg }}
+                    >
+                      {s.status.toUpperCase()}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* ── Audit Trail ── */}
+        <section>
+          <p className="mb-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--color-muted)" }}>
+            Security Audit Trail
+          </p>
+          {auditLog.length === 0 && !loading && (
+            <p className="text-sm" style={{ color: "var(--color-muted)" }}>No audit records found.</p>
+          )}
+          {auditLog.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-[12px]">
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--color-border)" }}>
+                    {["Event", "Browser", "IP Address", "Login Time", "Logout Time", "Duration", "Status"].map(h => (
+                      <th
+                        key={h}
+                        className="px-3 py-2 text-left text-[10px] font-bold uppercase tracking-wider"
+                        style={{ color: "var(--color-muted)", whiteSpace: "nowrap" }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditLog.map((e, i) => {
+                    const sStyle = STATUS_STYLE[e.status ?? ""] ?? { bg: "transparent", fg: "var(--color-muted)" };
+                    const isLogin = e.event === "session_created";
+                    return (
+                      <tr
+                        key={i}
+                        style={{ borderBottom: "1px solid var(--color-border)", background: i % 2 === 0 ? "transparent" : "var(--color-surface2)" }}
+                      >
+                        <td className="px-3 py-2.5" style={{ whiteSpace: "nowrap" }}>
+                          <span className="flex items-center gap-1.5 font-medium" style={{ color: "var(--color-fg)" }}>
+                            {isLogin
+                              ? <LoginIcon className="h-3 w-3 shrink-0" style={{ color: "#14b8a6" }} />
+                              : <LogOut className="h-3 w-3 shrink-0" style={{ color: "#94a3b8" }} />}
+                            {EVENT_LABEL[e.event] ?? e.event}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5" style={{ color: "var(--color-muted)", whiteSpace: "nowrap" }}>
+                          <span className="flex items-center gap-1">
+                            <BrowserIcon browser={e.browser} />
+                            {e.browser || "—"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5 font-mono" style={{ color: "var(--color-muted)", whiteSpace: "nowrap" }}>
+                          {e.ip_address || "—"}
+                        </td>
+                        <td className="px-3 py-2.5 font-mono" style={{ color: "var(--color-muted)", whiteSpace: "nowrap" }}>
+                          {fmtTs(e.login_time)}
+                        </td>
+                        <td className="px-3 py-2.5 font-mono" style={{ color: "var(--color-muted)", whiteSpace: "nowrap" }}>
+                          {fmtTs(e.logout_time)}
+                        </td>
+                        <td className="px-3 py-2.5" style={{ whiteSpace: "nowrap" }}>
+                          {e.active_duration_formatted ? (
+                            <span className="flex items-center gap-1" style={{ color: "var(--color-fg)" }}>
+                              <Timer className="h-3 w-3 shrink-0" style={{ color: "var(--color-primary)" }} />
+                              {e.active_duration_formatted}
+                            </span>
+                          ) : (
+                            <span style={{ color: "var(--color-muted)" }}>—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          {e.status ? (
+                            <span
+                              className="rounded-full px-2.5 py-0.5 text-[10px] font-bold"
+                              style={{ background: sStyle.bg, color: sStyle.fg }}
+                            >
+                              {e.status.toUpperCase()}
+                            </span>
+                          ) : <span style={{ color: "var(--color-muted)" }}>—</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+      </div>
+    </div>
   );
 }

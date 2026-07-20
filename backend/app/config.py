@@ -54,6 +54,19 @@ class Settings(BaseSettings):
     # docs/SETUP.md). Leave blank to only log notifications instead of emailing.
     notify_sender_email: str = ""
 
+    # --- Session tracking ---
+    # How long (minutes) a session can be idle before it is marked Expired.
+    session_idle_timeout_minutes: int = 30
+    # Maximum absolute session lifetime in hours regardless of activity.
+    session_max_lifetime_hours: int = 8
+    # How often (minutes) the scheduler spot-checks active accounts via Graph.
+    # Bounds worst-case revocation lag to this interval + sweep cadence (15 min).
+    session_revalidation_interval_minutes: int = 60
+    # Number of trusted reverse proxies in front of this app.
+    # Used by get_client_ip() to correctly parse X-Forwarded-For.
+    # 0 = no proxy (use request.client.host directly).
+    trusted_proxy_hops: int = 1
+
     @property
     def graph_configured(self) -> bool:
         return bool(

@@ -99,7 +99,7 @@ function PageShell({ children }: { children: React.ReactNode }) {
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-60" />
                         <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
                     </span>
-                    REGISTRY ONLINE&nbsp;&nbsp;&nbsp;V 4.2 · DEEP DRAFT
+                    SYSTEM ONLINE&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;NISSEN DMS
                 </div>
             </header>
 
@@ -127,7 +127,7 @@ function FeatureCard({
                 {icon}
             </div>
             <div className="text-sm font-semibold text-primary mb-1">{title}</div>
-            <div className="text-xs text-muted leading-relaxed">{copy}</div>
+            <div className="text-xs text-fg/75 leading-relaxed">{copy}</div>
         </div>
     );
 }
@@ -156,7 +156,7 @@ function StatusRow({
                 <span className={`w-2 h-2 rounded-full mt-1.5 inline-block ${dotColor}`} />
                 <div>
                     <div className="text-sm font-semibold text-primary">{title}</div>
-                    <div className="text-xs text-muted">{subtitle}</div>
+                    <div className="text-xs text-fg/70">{subtitle}</div>
                 </div>
             </div>
             <div className={`text-xs font-bold tracking-wide ${statusColor}`}>
@@ -169,13 +169,13 @@ function StatusRow({
 function CardFooter() {
     return (
         <>
-            <div className="flex items-center justify-center gap-1.5 mt-6 text-[10px] tracking-[0.1em] text-muted">
+            <div className="flex items-center justify-center gap-1.5 mt-6 text-[10px] tracking-[0.1em] text-fg/70">
                 <ShieldCheck className="w-3.5 h-3.5 text-primary" />
                 256-BIT TLS ENCRYPTED CONNECTION
             </div>
 
-            <div className="text-center mt-3 text-[10px] tracking-[0.1em] text-muted">
-                REGISTRY SYNCED · 25 VESSELS · © 2026 VESSEL DMS
+            <div className="text-center mt-3 text-[10px] tracking-[0.1em] text-fg/60">
+                SECURED · SHAREPOINT EMBEDDED · © 2026 NISSEN DMS
             </div>
         </>
     );
@@ -208,22 +208,22 @@ function SessionExpiredView({
             <main className="relative z-10 px-4 md:px-14 py-8 md:py-14 flex flex-col lg:flex-row gap-8 lg:gap-12 items-start justify-between">
                 {/* Left column */}
                 <div className="w-full lg:max-w-[calc(100%-30rem)] lg:pr-8 mb-12 lg:mb-0">
-                    <div className="flex items-center gap-2 text-brand-400 text-[11px] tracking-[0.2em] font-semibold mb-6">
-                        <span className="w-6 h-px bg-brand-500 inline-block" />
+                    <div className="flex items-center gap-2 text-primary text-[11px] tracking-[0.2em] font-semibold mb-6">
+                        <span className="w-6 h-px bg-primary inline-block" />
                         NISSEN KAIUN SINGAPORE FLEET
                     </div>
 
-                    <h1 className="font-serif text-3xl sm:text-5xl md:text-[3.75rem] leading-[1.05] text-white mb-6">
+                    <h1 className="font-serif text-3xl sm:text-5xl md:text-[3.75rem] leading-[1.05] text-fg mb-6 font-semibold">
                         Premium global shipping,
                         <br />
-                        <span className="italic text-brand-300">managed locally.</span>
+                        <span className="italic bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">managed locally.</span>
                     </h1>
 
-                    <p className="text-slate-400 text-base leading-relaxed max-w-lg mb-10">
-                        Nissen Kaiun Singapore oversees the technical management, crewing,
-                        and compliance of a high-specification global fleet operating
-                        state-of-the-art bulkers, eco-friendly container ships, and
-                        advanced product tankers.
+                    <p className="text-fg/85 text-base md:text-lg leading-relaxed max-w-xl mb-10">
+                        Nissen Kaiun Singapore oversees the{" "}
+                        <strong className="font-semibold text-fg">technical management</strong>,{" "}
+                        <strong className="font-semibold text-fg">crewing</strong>, and{" "}
+                        <strong className="font-semibold text-fg">compliance</strong> of a high-specification global fleet operating state-of-the-art bulkers, eco-friendly container ships, and advanced product tankers.
                     </p>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 max-w-xl mb-10">
@@ -235,39 +235,39 @@ function SessionExpiredView({
 
                 {/* Right column — expired card */}
                 <div className="relative lg:fixed z-10 w-full max-w-md lg:w-[26rem] top-auto right-auto lg:top-[7.5rem] lg:right-[3.5rem] self-center lg:self-auto">
-                    <Anchor className="absolute -top-6 -right-6 w-28 h-28 text-brand-500/10 -z-10" strokeWidth={1} />
+                    <Anchor className="absolute -top-6 -right-6 w-28 h-28 text-primary/10 -z-10" strokeWidth={1} />
 
-                    <div className="bg-white/5 backdrop-blur-md rounded-2xl shadow-xl shadow-black/30 border border-white/10 p-8 md:p-9">
+                    <div className="dms-card rounded-2xl p-8 md:p-9">
                         {/* Icon badge */}
-                        <div className="w-14 h-14 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center mb-5">
+                        <div className="w-14 h-14 rounded-full bg-warning/10 border border-warning/20 flex items-center justify-center mb-5">
                             {isInactivity
-                                ? <Clock className="w-7 h-7 text-amber-400" />
-                                : <AlertTriangle className="w-7 h-7 text-amber-400" />}
+                                ? <Clock className="w-7 h-7 text-warning" />
+                                : <AlertTriangle className="w-7 h-7 text-warning" />}
                         </div>
 
-                        <h2 className="font-serif text-3xl text-white mb-2 font-semibold">
+                        <h2 className="font-serif text-3xl text-fg mb-2 font-semibold">
                             {isInactivity ? "Session Timed Out" : "Session Expired"}
                         </h2>
-                        <p className="text-[11px] tracking-[0.12em] text-slate-400 font-medium mb-7">
+                        <p className="text-[11px] tracking-[0.12em] text-muted font-medium mb-7">
                             {isInactivity
                                 ? "INACTIVE FOR 8 HOURS — SESSION CLOSED"
                                 : "24-HOUR SESSION LIMIT REACHED"}
                         </p>
 
                         <div className="space-y-4">
-                            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3.5">
-                                <p className="text-sm text-amber-200/80 leading-relaxed">
+                            <div className="bg-warning-bg border border-warning/20 rounded-xl px-4 py-3.5">
+                                <p className="text-sm text-warning leading-relaxed">
                                     {isInactivity
-                                        ? "Your session was automatically closed after 8 hours of inactivity to protect your documents."
+                                        ? "Your session was automatically closed after 8 hours of inactivity to protect your documents."
                                         : "Your session reached the 24-hour security limit. Please sign in again to continue."}
                                 </p>
                             </div>
 
                             <button
                                 onClick={onSignBackIn}
-                                className="w-full py-3.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-sm font-semibold flex items-center justify-center gap-2 shadow-md shadow-brand-900/40 hover:shadow-lg active:scale-[0.99] transition cursor-pointer"
+                                className="w-full py-3.5 rounded-lg bg-primary hover:bg-primary-hover text-primary-fg text-sm font-semibold flex items-center justify-center gap-2 shadow-md hover:shadow-lg active:scale-[0.99] transition cursor-pointer"
                             >
-                                <LogIn className="w-4 h-4" />
+                                <LogIn className="w-4 h-4 text-primary-fg" />
                                 Sign In Again
                             </button>
                         </div>
@@ -294,18 +294,17 @@ function SignedOutView({ onSignBackIn }: { onSignBackIn: () => void }) {
                         NISSEN KAIUN SINGAPORE FLEET
                     </div>
 
-                    <h1 className="font-serif text-3xl sm:text-5xl md:text-[3.75rem] leading-[1.05] text-fg mb-6">
+                    <h1 className="font-serif text-3xl sm:text-5xl md:text-[3.75rem] leading-[1.05] text-fg mb-6 font-semibold">
                         Premium global shipping,
                         <br />
-                        <span className="italic text-primary">managed locally.</span>
+                        <span className="italic bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">managed locally.</span>
                     </h1>
 
-                    <p className="text-muted text-base leading-relaxed max-w-lg mb-10">
-                        Nissen Kaiun Singapore oversees the technical management, crewing,
-                        and compliance of a high-specification global fleet. Operating
-                        state-of-the-art bulkers, eco-friendly container ships, and advanced
-                        product tankers, we uphold the highest international safety
-                        standards.
+                    <p className="text-fg/85 text-base md:text-lg leading-relaxed max-w-xl mb-10">
+                        Nissen Kaiun Singapore oversees the{" "}
+                        <strong className="font-semibold text-fg">technical management</strong>,{" "}
+                        <strong className="font-semibold text-fg">crewing</strong>, and{" "}
+                        <strong className="font-semibold text-fg">compliance</strong> of a high-specification global fleet. Operating state-of-the-art bulkers, eco-friendly container ships, and advanced product tankers, we uphold the highest international safety standards.
                     </p>
 
                     {/* Feature cards */}
@@ -327,30 +326,37 @@ function SignedOutView({ onSignBackIn }: { onSignBackIn: () => void }) {
                         />
                     </div>
 
-                    {/* Status panel */}
+                    {/* System Stats panel */}
                     <div className="dms-card max-w-xl overflow-hidden">
                         <div className="flex items-center justify-between px-5 py-3 border-b border-border">
                             <div className="flex items-center gap-2 text-[11px] tracking-[0.15em] font-semibold text-muted">
                                 <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" />
-                                SINGAPORE MANAGED VESSELS
+                                SYSTEM OVERVIEW
                             </div>
                             <div className="text-[11px] tracking-[0.1em] text-muted">
-                                ACTIVE STATUS
+                                LIVE STATUS
                             </div>
                         </div>
 
                         <StatusRow
                             dotColor="bg-primary"
-                            title="MT Southern Wave"
-                            subtitle="LPG Tanker · Class NK Registered"
+                            title="Document Repository"
+                            subtitle="Certificates, surveys & reports · SharePoint Embedded"
+                            status="ONLINE"
+                            statusColor="text-primary"
+                        />
+                        <StatusRow
+                            dotColor="bg-primary"
+                            title="Approval Workflow"
+                            subtitle="Multi-level review & sign-off · Audit trail enabled"
                             status="ACTIVE"
                             statusColor="text-primary"
                         />
                         <StatusRow
                             dotColor="bg-primary"
-                            title="MV Pacific Horizon"
-                            subtitle="Supramax Bulk Carrier · DNV Certified"
-                            status="UNDERWAY"
+                            title="Azure AD Authentication"
+                            subtitle="Microsoft SSO · Role-based access control"
+                            status="SECURED"
                             statusColor="text-primary"
                             last
                         />
@@ -462,18 +468,20 @@ function LoginView({ authError }: { authError?: string | null }) {
                         VESSEL DOCUMENT MANAGEMENT SYSTEM
                     </div>
 
-                    <h1 className="font-serif text-3xl sm:text-5xl md:text-[3.75rem] leading-[1.05] text-fg mb-6">
+                    <h1 className="font-serif text-3xl sm:text-5xl md:text-[3.75rem] leading-[1.05] text-fg mb-6 font-semibold">
                         Every certificate,
                         <br />
-                        <span className="italic text-primary">every vessel,</span> in one
+                        <span className="italic bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">every vessel,</span> in one
                         <br />
                         place.
                     </h1>
 
-                    <p className="text-muted text-base leading-relaxed max-w-lg mb-10">
-                        Centralize certificates, survey reports, and compliance records
-                        across the fleet — with automatic renewal alerts and a full audit
-                        trail for every document, on every hull.
+                    <p className="text-fg/85 text-base md:text-lg leading-relaxed max-w-xl mb-10">
+                        <strong className="font-semibold text-fg">Centralize certificates</strong>,{" "}
+                        <strong className="font-semibold text-fg">survey reports</strong>, and{" "}
+                        <strong className="font-semibold text-fg">compliance records</strong> across the fleet — with automatic{" "}
+                        <span className="font-semibold text-primary">renewal alerts</span> and a full{" "}
+                        <span className="font-semibold text-primary">audit trail</span> for every document, on every hull.
                     </p>
 
                     {/* Feature cards */}
@@ -495,31 +503,38 @@ function LoginView({ authError }: { authError?: string | null }) {
                         />
                     </div>
 
-                    {/* Status panel */}
+                    {/* System Stats panel */}
                     <div className="dms-card max-w-xl overflow-hidden">
                         <div className="flex items-center justify-between px-5 py-3 border-b border-border">
                             <div className="flex items-center gap-2 text-[11px] tracking-[0.15em] font-semibold text-muted">
                                 <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" />
-                                DOCUMENT &amp; COMPLIANCE STATUS
+                                SYSTEM OVERVIEW
                             </div>
                             <div className="text-[11px] tracking-[0.1em] text-muted">
-                                REGISTRY SYNCED · 12S AGO
+                                LIVE STATUS
                             </div>
                         </div>
 
                         <StatusRow
                             dotColor="bg-primary"
-                            title="MV Meridian"
-                            subtitle="Safety Management Certificate · Verified"
-                            status="VALID"
+                            title="Document Repository"
+                            subtitle="Certificates, surveys & reports · SharePoint Embedded"
+                            status="ONLINE"
                             statusColor="text-primary"
                         />
                         <StatusRow
-                            dotColor="bg-warning"
-                            title="MV Solstice"
-                            subtitle="ISM Audit Report · Renewal due"
-                            status="12 DAYS"
-                            statusColor="text-warning"
+                            dotColor="bg-primary"
+                            title="Approval Workflow"
+                            subtitle="Multi-level review & sign-off · Audit trail enabled"
+                            status="ACTIVE"
+                            statusColor="text-primary"
+                        />
+                        <StatusRow
+                            dotColor="bg-primary"
+                            title="Azure AD Authentication"
+                            subtitle="Microsoft SSO · Role-based access control"
+                            status="SECURED"
+                            statusColor="text-primary"
                             last
                         />
                     </div>
@@ -544,7 +559,7 @@ function LoginView({ authError }: { authError?: string | null }) {
                         <div className="mb-1">
                             <label
                                 htmlFor="work-email"
-                                className="block text-[10px] tracking-[0.15em] font-semibold text-muted mb-2"
+                                className="block text-[10px] tracking-[0.15em] font-semibold text-fg/80 mb-2"
                             >
                                 WORK EMAIL
                             </label>
@@ -552,7 +567,9 @@ function LoginView({ authError }: { authError?: string | null }) {
                                 <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
                                 <input
                                     id="work-email"
+                                    name="email"
                                     type="email"
+                                    autoComplete="email"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
                                     onKeyDown={(e) => e.key === "Enter" && void handleContinue()}

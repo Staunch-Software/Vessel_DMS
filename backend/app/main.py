@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore", message="Timezone offset does not match system
 
 import httpx
 
-from fastapi import Depends, FastAPI, Form, Header, HTTPException, Query, Response, UploadFile
+from fastapi import Depends, FastAPI, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -146,10 +146,14 @@ class CheckEmailIn(BaseModel):
 class LoginIn(BaseModel):
     access_token: str
     tenant_id: str = ""
+    # Optional fallback UA reported by the browser JS — never authoritative;
+    # the server-side request header takes precedence.
+    client_reported_user_agent: str | None = None
 
 
 class LogoutIn(BaseModel):
     email: str | None = None
+    session_id: str | None = None  # UUID of the session being ended
 
 
 def _log_activity(email: str | None, action: str, detail: str | None = None) -> None:
@@ -175,6 +179,131 @@ def _log_activity(email: str | None, action: str, detail: str | None = None) -> 
             db.commit()
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Session tracking helpers
+# ---------------------------------------------------------------------------
+
+def _session_db():
+    """Yield a SessionLocal instance; skip if DB not configured."""
+    if not settings.db_configured:
+        yield None
+        return
+    from .db.base import SessionLocal
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+async def require_session(
+    request: Request,
+    x_session_id: str | None = Header(default=None),
+):
+    """FastAPI dependency — validate the server-side session on every protected
+    request.  Returns the UserSession ORM row on success; raises HTTP 401 with
+    a structured { reason } body on failure.
+
+    Reasons: not_found | expired | logged_out | revoked
+
+    In stub / no-DB mode this dependency is a no-op so development continues
+    to work without a database.
+    """
+    if not settings.db_configured:
+        return None  # stub mode — skip session checks
+
+    if not x_session_id:
+        # Log the invalid-access attempt before rejecting
+        _write_invalid_attempt(
+            session_id=None,
+            email="unknown",
+            ip=_get_ip(request),
+            ua=request.headers.get("user-agent"),
+            detail="No X-Session-ID header",
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={"reason": "not_found", "message": "Session ID is required"},
+        )
+
+    from .db.base import SessionLocal
+    from .services.session_service import validate_session, write_audit
+    from datetime import datetime, timezone
+
+    db = SessionLocal()
+    try:
+        session, reason = validate_session(db, x_session_id)
+        if session is None:
+            # Write audit for failed access attempt
+            _write_invalid_attempt(
+                session_id=x_session_id,
+                email="unknown",
+                ip=_get_ip(request),
+                ua=request.headers.get("user-agent"),
+                detail=f"Invalid session: {reason}",
+            )
+            raise HTTPException(
+                status_code=401,
+                detail={"reason": reason, "message": _session_reason_message(reason)},
+            )
+        # Update last_activity on every valid request
+        session.last_activity = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
+        return session
+    finally:
+        db.close()
+
+
+def _get_ip(request: Request) -> str | None:
+    """Extract client IP from the request (uses request_meta logic)."""
+    try:
+        from .utils.request_meta import get_client_ip
+        return get_client_ip(request)
+    except Exception:
+        return None
+
+
+def _write_invalid_attempt(
+    session_id: str | None,
+    email: str,
+    ip: str | None,
+    ua: str | None,
+    detail: str | None = None,
+) -> None:
+    """Write an invalid_session_attempt audit entry (best-effort)."""
+    if not settings.db_configured:
+        return
+    try:
+        from .db.base import SessionLocal
+        from .services.session_service import write_audit
+        db = SessionLocal()
+        try:
+            write_audit(
+                db,
+                email=email,
+                event="invalid_session_attempt",
+                session_id=session_id,
+                ip_address=ip,
+                user_agent=ua,
+                detail=detail,
+            )
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+
+def _session_reason_message(reason: str) -> str:
+    messages = {
+        "not_found": "Session not found. Please sign in again.",
+        "expired": "Your session has expired. Please sign in again.",
+        "logged_out": "This session has ended. Please sign in again.",
+        "revoked": "Your access was revoked. Contact your administrator if unexpected.",
+    }
+    return messages.get(reason, "Authentication required.")
 
 
 @app.post("/api/auth/check-email")
@@ -241,10 +370,16 @@ async def check_email(payload: CheckEmailIn):
 
 
 @app.post("/api/auth/login")
-async def auth_login(payload: LoginIn):
+async def auth_login(request: Request, payload: LoginIn):
     """Validate the MSAL access token, persist/update the extended profile,
-    seed related records for new users, and log the login activity."""
+    seed related records for new users, create a server-side session, and
+    return the session_id for the client to attach as X-Session-ID."""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    # ── Capture IP and User-Agent server-side (never trust client body) ─────
+    from .utils.request_meta import get_client_ip, get_user_agent
+    client_ip = get_client_ip(request)
+    user_agent = get_user_agent(request) or payload.client_reported_user_agent
 
     if payload.access_token == "mock-token":
         profile = {
@@ -271,7 +406,22 @@ async def auth_login(payload: LoginIn):
             "recent_activity": [{"action": "login", "detail": "Logged in", "created_at": now.isoformat() + "Z"}],
         }
         _profile_cache["testuser@example.com"] = profile
-        return {"display_name": profile["display_name"], "email": profile["email"]}
+        # Create a stub session for mock logins too
+        mock_session_id = None
+        if settings.db_configured:
+            try:
+                from .db.base import SessionLocal
+                from .services.session_service import create_session
+                with SessionLocal() as db:
+                    sess = create_session(db, "testuser@example.com", user_agent, client_ip)
+                    mock_session_id = sess.session_id
+            except Exception:
+                pass
+        return {
+            "display_name": profile["display_name"],
+            "email": profile["email"],
+            "session_id": mock_session_id,
+        }
 
     # ── Fetch /me from Graph ─────────────────────────────────────────────────
     async with httpx.AsyncClient(verify=graph_tls_verify()) as client:
@@ -456,21 +606,49 @@ async def auth_login(payload: LoginIn):
         profile.setdefault("recent_activity", [{"action": "login", "detail": "Logged in", "created_at": now.isoformat()}])
         _profile_cache[email] = profile
 
-    return {"display_name": display_name, "email": email}
+    # ── Create server-side session ────────────────────────────────────────────
+    session_id: str | None = None
+    if settings.db_configured:
+        try:
+            from .db.base import SessionLocal
+            from .services.session_service import create_session
+            with SessionLocal() as db:
+                sess = create_session(db, email, user_agent, client_ip)
+                session_id = sess.session_id
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Session creation failed: %s", exc)
+            # Non-critical: login still succeeds, session tracking just won't work
+
+    return {"display_name": display_name, "email": email, "session_id": session_id}
 
 
 @app.post("/api/auth/logout")
-async def auth_logout(payload: LogoutIn):
-    """Session-end signal from the frontend. Returns 200 immediately.
+async def auth_logout(request: Request, payload: LogoutIn):
+    """Session-end signal from the frontend.
 
-    Any server-side session state (e.g. token cache entries) can be cleared here.
+    Marks the specified session as 'Logged Out' and writes an audit entry.
+    Other active sessions for the same user are left untouched.
     """
-    _log_activity(payload.email, "logout", "Signed out")
+    email = (payload.email or "").strip().lower() or None
+    _log_activity(email, "logout", "Signed out")
+
+    if settings.db_configured and payload.session_id:
+        try:
+            from .db.base import SessionLocal
+            from .services.session_service import logout_session
+            ip = _get_ip(request)
+            with SessionLocal() as db:
+                logout_session(db, payload.session_id, ip_address=ip)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("logout_session failed: %s", exc)
+
     return {"ok": True}
 
 
 @app.get("/api/profile")
-async def get_profile(email: str):
+async def get_profile(email: str, _session: object = Depends(require_session)):
     """Return the full stored profile for the given email address."""
     email = email.lower().strip()
 
@@ -578,7 +756,7 @@ class ProfileUpdateIn(BaseModel):
 
 
 @app.patch("/api/profile")
-async def patch_profile(email: str, payload: ProfileUpdateIn):
+async def patch_profile(email: str, payload: ProfileUpdateIn, _session: object = Depends(require_session)):
     """Update editable profile fields."""
     email = email.lower().strip()
 
@@ -656,12 +834,12 @@ def health():
 
 
 @app.get("/api/vessels")
-async def list_vessels():
+async def list_vessels(_session: object = Depends(require_session)):
     return await get_backend().list_vessels()
 
 
 @app.post("/api/vessels", status_code=201)
-async def create_vessel(payload: VesselIn):
+async def create_vessel(payload: VesselIn, _session: object = Depends(require_session)):
     vtype = (payload.vessel_type or "").strip() or None
     if vtype and vtype not in VESSEL_TYPES:
         raise HTTPException(400, "Invalid vessel type")
@@ -685,7 +863,8 @@ async def create_vessel(payload: VesselIn):
 async def update_vessel(
     vessel_id: str,
     payload: VesselUpdateIn,
-    x_user_email: str | None = Header(default=None)
+    x_user_email: str | None = Header(default=None),
+    _session: object = Depends(require_session),
 ):
     vtype = (payload.vessel_type or "").strip() or None
     if vtype and vtype not in VESSEL_TYPES:
@@ -786,17 +965,17 @@ async def repair_vessel_links():
 
 
 @app.get("/api/mains")
-async def mains():
+async def mains(_session: object = Depends(require_session)):
     return await get_backend().mains()
 
 
 @app.get("/api/stats")
-async def stats():
+async def stats(_session: object = Depends(require_session)):
     return await get_backend().stats()
 
 
 @app.get("/api/folders/{folder_id}/children")
-async def children(folder_id: str):
+async def children(folder_id: str, _session: object = Depends(require_session)):
     try:
         return await get_backend().children(folder_id)
     except (NotFound, BadRequest) as e:
@@ -804,7 +983,7 @@ async def children(folder_id: str):
 
 
 @app.get("/api/folders/{folder_id}")
-async def folder(folder_id: str):
+async def folder(folder_id: str, _session: object = Depends(require_session)):
     try:
         return await get_backend().get_folder(folder_id)
     except (NotFound, BadRequest) as e:
@@ -819,6 +998,7 @@ async def upload(
     uploader_name: str | None = Form(None),
     user_email: str | None = Form(None),
     x_user_email: str | None = Header(default=None),
+    _session: object = Depends(require_session),
 ):
     """Stages the file and creates a pending approval request — it is no
     longer saved into the folder directly. See docs on the approval workflow
@@ -846,7 +1026,7 @@ class CreateSubfolderIn(BaseModel):
 
 
 @app.delete("/api/folders/{folder_id}", status_code=204)
-async def delete_folder(folder_id: str, user_email: str | None = Query(None), folder_name: str | None = Query(None), x_user_email: str | None = Header(default=None)):
+async def delete_folder(folder_id: str, user_email: str | None = Query(None), folder_name: str | None = Query(None), x_user_email: str | None = Header(default=None), _session: object = Depends(require_session)):
     """Delete a folder and all its contents."""
     email = user_email or x_user_email
     try:
@@ -863,7 +1043,7 @@ async def delete_folder(folder_id: str, user_email: str | None = Query(None), fo
 
 
 @app.post("/api/folders/{folder_id}/subfolder", status_code=201)
-async def create_subfolder(folder_id: str, payload: CreateSubfolderIn, x_user_email: str | None = Header(default=None)):
+async def create_subfolder(folder_id: str, payload: CreateSubfolderIn, x_user_email: str | None = Header(default=None), _session: object = Depends(require_session)):
     """Manually create a named sub-folder inside a month_driven folder."""
     email = payload.user_email or x_user_email
     try:
@@ -883,6 +1063,7 @@ async def month_upload(
     uploader_name: str | None = Form(None),
     user_email: str | None = Form(None),
     x_user_email: str | None = Header(default=None),
+    _session: object = Depends(require_session),
 ):
     data = await file.read()
     email = uploader_email or user_email or x_user_email or "unknown@example.com"
@@ -907,7 +1088,7 @@ async def month_upload(
 
 
 @app.get("/api/files/{file_id}/content")
-async def file_content(file_id: str):
+async def file_content(file_id: str, _session: object = Depends(require_session)):
     result = await get_backend().get_file(file_id)
     if result is None:
         raise HTTPException(404, "File not found")
@@ -920,7 +1101,7 @@ async def file_content(file_id: str):
 
 
 @app.delete("/api/files/{file_id}", status_code=204)
-async def delete_file(file_id: str, user_email: str | None = Query(None), x_user_email: str | None = Header(default=None)):
+async def delete_file(file_id: str, user_email: str | None = Query(None), x_user_email: str | None = Header(default=None), _session: object = Depends(require_session)):
     if not await get_backend().delete_file(file_id):
         raise HTTPException(404, "File not found")
     _log_activity(user_email or x_user_email, "delete_file", f"Deleted file: {file_id}")
@@ -928,7 +1109,7 @@ async def delete_file(file_id: str, user_email: str | None = Query(None), x_user
 
 
 @app.get("/api/search")
-async def search(q: str = "", vessel_id: str | None = None):
+async def search(q: str = "", vessel_id: str | None = None, _session: object = Depends(require_session)):
     return await get_backend().search(q, vessel_id)
 
 
@@ -939,14 +1120,14 @@ class LogActivityIn(BaseModel):
 
 
 @app.post("/api/activity", status_code=204)
-async def log_activity_endpoint(payload: LogActivityIn):
+async def log_activity_endpoint(payload: LogActivityIn, _session: object = Depends(require_session)):
     """Frontend-initiated activity log (archive, restore, etc.)."""
     _log_activity(payload.email, payload.action, payload.detail)
     return Response(status_code=204)
 
 
 @app.get("/api/jobs/{job_id}")
-async def get_job(job_id: str):
+async def get_job(job_id: str, _session: object = Depends(require_session)):
     job = await get_backend().get_job(job_id)
     if job is None:
         raise HTTPException(404, "Job not found")
@@ -954,7 +1135,7 @@ async def get_job(job_id: str):
 
 
 @app.get("/api/archive/ids")
-async def get_archived_ids():
+async def get_archived_ids(_session: object = Depends(require_session)):
     try:
         return await get_backend().get_archived_ids()
     except Exception as e:
@@ -962,7 +1143,7 @@ async def get_archived_ids():
 
 
 @app.get("/api/archive/nodes")
-async def get_archived_nodes():
+async def get_archived_nodes(_session: object = Depends(require_session)):
     try:
         return await get_backend().get_archived_nodes()
     except Exception as e:
@@ -970,7 +1151,7 @@ async def get_archived_nodes():
 
 
 @app.post("/api/archive/{item_id}", status_code=204)
-async def archive_item(item_id: str, type: str = Query("folder"), user_email: str | None = Query(None), x_user_email: str | None = Header(default=None)):
+async def archive_item(item_id: str, type: str = Query("folder"), user_email: str | None = Query(None), x_user_email: str | None = Header(default=None), _session: object = Depends(require_session)):
     try:
         await get_backend().archive_item(item_id, type)
         _log_activity(user_email or x_user_email, "archive_folder" if type == "folder" else "archive_file", f"Archived {type}: {item_id}")
@@ -980,7 +1161,7 @@ async def archive_item(item_id: str, type: str = Query("folder"), user_email: st
 
 
 @app.post("/api/restore/{item_id}", status_code=204)
-async def restore_item(item_id: str, user_email: str | None = Query(None), x_user_email: str | None = Header(default=None)):
+async def restore_item(item_id: str, user_email: str | None = Query(None), x_user_email: str | None = Header(default=None), _session: object = Depends(require_session)):
     try:
         await get_backend().restore_item(item_id)
         _log_activity(user_email or x_user_email, "restore_folder", f"Restored item: {item_id}")
@@ -990,7 +1171,7 @@ async def restore_item(item_id: str, user_email: str | None = Query(None), x_use
 
 
 @app.get("/api/recycle-bin/ids")
-async def get_deleted_ids():
+async def get_deleted_ids(_session: object = Depends(require_session)):
     try:
         return await get_backend().get_deleted_ids()
     except Exception as e:
@@ -998,7 +1179,7 @@ async def get_deleted_ids():
 
 
 @app.get("/api/recycle-bin/nodes")
-async def get_deleted_nodes():
+async def get_deleted_nodes(_session: object = Depends(require_session)):
     try:
         return await get_backend().get_deleted_nodes()
     except Exception as e:
@@ -1006,7 +1187,7 @@ async def get_deleted_nodes():
 
 
 @app.post("/api/recycle-bin/restore/{item_id}", status_code=204)
-async def restore_deleted_item(item_id: str, type: str = Query("folder"), user_email: str | None = Query(None), x_user_email: str | None = Header(default=None)):
+async def restore_deleted_item(item_id: str, type: str = Query("folder"), user_email: str | None = Query(None), x_user_email: str | None = Header(default=None), _session: object = Depends(require_session)):
     try:
         result = await get_backend().restore_deleted_item(item_id)
         if not result:
@@ -1020,7 +1201,7 @@ async def restore_deleted_item(item_id: str, type: str = Query("folder"), user_e
 
 
 @app.delete("/api/recycle-bin/{item_id}", status_code=204)
-async def permanent_delete_item(item_id: str, type: str = Query("folder"), user_email: str | None = Query(None), x_user_email: str | None = Header(default=None)):
+async def permanent_delete_item(item_id: str, type: str = Query("folder"), user_email: str | None = Query(None), x_user_email: str | None = Header(default=None), _session: object = Depends(require_session)):
     try:
         result = await get_backend().permanent_delete_item(item_id, type)
         if not result:
@@ -1039,7 +1220,7 @@ async def permanent_delete_item(item_id: str, type: str = Query("folder"), user_
 
 @app.get("/api/my-approvals")
 async def list_my_approvals(
-    status: str | None = None, x_user_email: str | None = Header(default=None)
+    status: str | None = None, x_user_email: str | None = Header(default=None), _session: object = Depends(require_session)
 ):
     if not x_user_email:
         raise HTTPException(400, "X-User-Email header required")
@@ -1049,9 +1230,7 @@ async def list_my_approvals(
 
 
 @app.get("/api/approvals")
-async def list_approvals(
-    status: str | None = None, q: str | None = None, admin: str = Depends(_require_admin)
-):
+async def list_approvals(status: str | None = None, q: str | None = None, admin: str = Depends(_require_admin), _session: object = Depends(require_session)):
     return await get_backend().list_approvals(status, q)
 
 
@@ -1105,7 +1284,7 @@ async def approval_preview(
 
 
 @app.post("/api/approvals/{request_id}/approve")
-async def approve_approval(request_id: str, admin: str = Depends(_require_admin)):
+async def approve_approval(request_id: str, admin: str = Depends(_require_admin), _session: object = Depends(require_session)):
     try:
         return await get_backend().approve_request(request_id, admin)
     except (NotFound, BadRequest, Conflict) as e:
@@ -1114,9 +1293,140 @@ async def approve_approval(request_id: str, admin: str = Depends(_require_admin)
 
 @app.post("/api/approvals/{request_id}/reject")
 async def reject_approval(
-    request_id: str, payload: RejectIn, admin: str = Depends(_require_admin)
+    request_id: str, payload: RejectIn, admin: str = Depends(_require_admin), _session: object = Depends(require_session)
 ):
     try:
         return await get_backend().reject_request(request_id, admin, payload.reason)
     except (NotFound, BadRequest, Conflict) as e:
         _raise(e)
+
+
+# ---------------------------------------------------------------------------
+# Session management endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/sessions")
+async def list_sessions(
+    x_session_id: str | None = Header(default=None),
+    x_user_email: str | None = Header(default=None),
+):
+    """List all sessions for the currently authenticated user, newest first."""
+    if not settings.db_configured:
+        return []
+
+    email = (x_user_email or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "X-User-Email header required")
+
+    try:
+        from .db.base import SessionLocal
+        from .services.session_service import list_user_sessions
+        with SessionLocal() as db:
+            sessions = list_user_sessions(db, email)
+        return [
+            {
+                "session_id": s.session_id,
+                "status": s.status,
+                "login_time": s.login_time.isoformat() + "Z" if s.login_time else None,
+                "last_activity": s.last_activity.isoformat() + "Z" if s.last_activity else None,
+                "expiry_time": s.expiry_time.isoformat() + "Z" if s.expiry_time else None,
+                "logout_time": s.logout_time.isoformat() + "Z" if s.logout_time else None,
+                "browser": s.browser,
+                "operating_system": s.operating_system,
+                "device_type": s.device_type,
+                "ip_address": s.ip_address,
+                "authentication_method": s.authentication_method,
+                "is_current": s.session_id == x_session_id,
+            }
+            for s in sessions
+        ]
+    except Exception as exc:
+        raise HTTPException(500, f"Could not retrieve sessions: {exc}")
+
+
+@app.delete("/api/sessions/{target_session_id}")
+async def revoke_session_endpoint(
+    target_session_id: str,
+    request: Request,
+    x_session_id: str | None = Header(default=None),
+    x_user_email: str | None = Header(default=None),
+):
+    """Revoke a specific session. Users can only revoke their own sessions."""
+    if not settings.db_configured:
+        raise HTTPException(501, "Session management requires database")
+
+    email = (x_user_email or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "X-User-Email header required")
+
+    try:
+        from .db.base import SessionLocal
+        from .db import models as db_models
+        from .services.session_service import revoke_session
+
+        with SessionLocal() as db:
+            target = (
+                db.query(db_models.UserSession)
+                .filter_by(session_id=target_session_id)
+                .one_or_none()
+            )
+            if target is None:
+                raise HTTPException(404, "Session not found")
+
+            is_admin = email in settings.admin_email_set
+            is_owner = target.email.lower() == email
+            if not (is_owner or is_admin):
+                raise HTTPException(403, "You can only revoke your own sessions")
+
+            ip = _get_ip(request)
+            revoke_session(db, target_session_id, reason="user_initiated", ip_address=ip)
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, f"Could not revoke session: {exc}")
+
+
+@app.get("/api/sessions/audit")
+async def list_session_audit(
+    x_user_email: str | None = Header(default=None),
+    limit: int = Query(default=50, le=200),
+):
+    """Return the session audit log for the current user (newest first)."""
+    if not settings.db_configured:
+        return []
+
+    email = (x_user_email or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "X-User-Email header required")
+
+    try:
+        from .db.base import SessionLocal
+        from .db import models as db_models
+
+        with SessionLocal() as db:
+            entries = (
+                db.query(db_models.SessionAuditLog)
+                .filter_by(email=email)
+                .order_by(db_models.SessionAuditLog.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+        return [
+            {
+                "session_id": e.session_id,
+                "event": e.event,
+                "detail": e.detail,
+                "ip_address": e.ip_address,
+                "browser": e.browser,
+                "status": e.status,
+                "login_time": e.login_time.isoformat() + "Z" if e.login_time else None,
+                "logout_time": e.logout_time.isoformat() + "Z" if e.logout_time else None,
+                "active_duration": e.active_duration,
+                "active_duration_formatted": e.active_duration_formatted,
+                "created_at": e.created_at.isoformat() + "Z" if e.created_at else None,
+            }
+            for e in entries
+        ]
+    except Exception as exc:
+        raise HTTPException(500, f"Could not retrieve audit log: {exc}")

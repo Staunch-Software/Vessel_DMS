@@ -84,10 +84,16 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
         {/* Fleet */}
         <section className="dms-panel">
           <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
-            <h3 className="text-sm font-semibold text-fg">Fleet</h3>
+            <div className="flex items-center gap-2">
+              <div className="flex h-7 w-7 items-center justify-center rounded" style={{ background: "#D42B2B" }}>
+                <Ship className="h-4 w-4" style={{ color: "white" }} />
+              </div>
+              <h3 className="text-sm font-semibold text-fg">Fleet</h3>
+            </div>
             <button
               onClick={onNewVessel}
-              className="dms-btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer"
+              style={{ background: "#1a1a4e", color: "white" }}
             >
               <Plus className="h-3.5 w-3.5" />
               New Vessel
@@ -101,21 +107,27 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
             <ul className="divide-y divide-border">
               {vessels.map((v) => (
                 <li key={v.id} className="flex items-center gap-3 px-5 py-3">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-                    <Ship className="h-4 w-4 text-primary" />
+                  <span
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+                    style={{ background: "#1a1a4e" }}
+                  >
+                    <Ship className="h-4 w-4" style={{ color: "#D42B2B" }} />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-slate-800">
+                    <p className="truncate text-sm font-semibold" style={{ color: "#1a1a4e" }}>
                       {v.name}
                     </p>
-                    <p className="truncate text-xs text-slate-500">
+                    <p className="truncate text-xs text-muted">
                       IMO {v.imo ?? "—"}
                       {v.hull_number ? ` · Hull ${v.hull_number}` : ""}
                       {v.shipyard ? ` · ${v.shipyard}` : ""}
                     </p>
                   </div>
                   {v.vessel_type && (
-                    <span className="shrink-0 rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-100">
+                    <span
+                      className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide"
+                      style={{ background: "#D42B2B", color: "white" }}
+                    >
                       {v.vessel_type}
                     </span>
                   )}

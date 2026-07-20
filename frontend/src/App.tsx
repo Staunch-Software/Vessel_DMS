@@ -24,6 +24,8 @@ import {
   logActivity,
   monthUpload,
   setApiEmail,
+  setSessionId,
+  clearSessionId,
   uploadFile,
   fileContentUrl,
   deleteFolder,
@@ -32,6 +34,7 @@ import {
   permanentDeleteItem,
   search,
   updateVessel,
+  revokeSession,
   type FolderNode,
   type SearchResult,
   type Stats,
@@ -108,10 +111,11 @@ function hasMsalAuthResponseInUrl(): boolean {
 }
 
 function errDetail(e: unknown, fallback: string): string {
-  return (
-    (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-    fallback
-  );
+  const raw = (e as any)?.response?.data?.detail;
+  if (!raw) return fallback;
+  if (typeof raw === "string") return raw;
+  if (typeof raw === "object" && raw.message) return raw.message;
+  return JSON.stringify(raw);
 }
 
 function formatUploadSuccessDetail(dest: string): string {
@@ -408,11 +412,31 @@ export default function App() {
       sessionStorage.setItem("test_login", "true");
     }
     if (sessionStorage.getItem("test_login") === "true" && !user) {
-      setUser({
-        display_name: "Test User",
-        email: "testuser@example.com",
-      });
-      setApiEmail("testuser@example.com");
+      fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ access_token: "mock-token" }),
+      })
+        .then((res) => res.json())
+        .then((payload) => {
+          setApiEmail(payload.email || "testuser@example.com");
+          if (payload.session_id) {
+            sessionStorage.setItem("session_id", payload.session_id);
+            setSessionId(payload.session_id);
+          }
+          setUser({
+            display_name: payload.display_name || "Test User",
+            email: payload.email || "testuser@example.com",
+          });
+        })
+        .catch((err) => {
+          console.error("Mock login fetch failed, falling back to local state:", err);
+          setApiEmail("testuser@example.com");
+          setUser({
+            display_name: "Test User",
+            email: "testuser@example.com",
+          });
+        });
     }
   }, [user]);
 
@@ -453,10 +477,17 @@ export default function App() {
           if (!active) return;
           if (res.ok) {
             const payload = await res.json();
+            const email = payload.email || result.account.username;
+            setApiEmail(email);
+            // Store and attach the server-side session ID
+            if (payload.session_id) {
+              sessionStorage.setItem("session_id", payload.session_id);
+              setSessionId(payload.session_id);
+            }
             setUser({
               display_name:
                 payload.display_name || result.account.name || result.account.username,
-              email: payload.email || result.account.username,
+              email: email,
             });
           } else {
             setAuthError(
@@ -519,11 +550,16 @@ export default function App() {
             if (res.ok) {
               const payload = await res.json();
               const email = payload.email || account.username;
+              setApiEmail(email);
+              // Store and attach the server-side session ID
+              if (payload.session_id) {
+                sessionStorage.setItem("session_id", payload.session_id);
+                setSessionId(payload.session_id);
+              }
               setUser({
                 display_name: payload.display_name || account.name || account.username,
                 email,
               });
-              setApiEmail(email);
               setAuthError(null);
             } else {
               const body = await res.text();
@@ -684,13 +720,44 @@ export default function App() {
     };
   }, [user, fetchNotifications]);
 
-
+  // ── Global 401 handler: reason-aware session expiry ───────────────────────
+  // Installed once when the user is authenticated. When any API call receives
+  // a 401, we read the structured 'reason' field from the backend and show
+  // the appropriate message before redirecting to the login page.
   useEffect(() => {
-    if (user && window.location.pathname !== "/homepage") {
-      captureDiagnostics("before homepage replaceState");
-      window.history.replaceState({}, "", "/homepage");
-      captureDiagnostics("after homepage replaceState");
+    if (!user) return;
+
+    const interceptorId = (window as any).__sessionInterceptorId;
+
+    // Remove any previously installed interceptor to avoid duplicates
+    if (typeof interceptorId === "number") {
+      try {
+        // axios interceptors are module-level; import via dynamic reference
+        const axiosModule = (window as any).__axiosInstance;
+        if (axiosModule) axiosModule.interceptors.response.eject(interceptorId);
+      } catch { /* no-op */ }
     }
+
+    // We install a window-level listener instead of re-importing axios here
+    // to avoid circular dependency issues. The api.ts interceptor already
+    // enriches errors with sessionReason; we just need to react to them.
+    const handleApiError = (event: CustomEvent) => {
+      const { reason } = event.detail || {};
+      if (reason === "revoked") {
+        // Show a distinct message for admin-revoked sessions
+        alert(
+          "Your access was revoked by an administrator. " +
+          "Please contact IT support if this was unexpected.\n\n" +
+          "You will now be signed out."
+        );
+      }
+      expireSessionRef.current("inactivity");
+    };
+
+    window.addEventListener("session:unauthorized", handleApiError as EventListener);
+    return () => {
+      window.removeEventListener("session:unauthorized", handleApiError as EventListener);
+    };
   }, [user]);
 
   const signOutRef = useRef<() => void>(() => { });
@@ -758,8 +825,10 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
-    loadTop();
-  }, [loadTop]);
+    if (user) {
+      loadTop();
+    }
+  }, [loadTop, user]);
 
   const currentId = path.length ? path[path.length - 1].id : null;
   const pageKey = view === "dashboard"
@@ -800,7 +869,7 @@ export default function App() {
     } catch (e) {
       // If the folder can't be loaded (e.g. stale ID after rename/delete),
       // keep children empty and show a toast rather than silently doing nothing.
-      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Could not load folder contents.";
+      const detail = errDetail(e, "Could not load folder contents.");
       const id = Date.now();
       setToasts((prev) => [
         ...prev,
@@ -813,14 +882,16 @@ export default function App() {
   }, [currentId, mains]);
 
   useEffect(() => {
-    if (view === "explorer" || view === "archive") loadCurrent();
-  }, [view, currentId, loadCurrent]);
+    if (user && (view === "explorer" || view === "archive")) {
+      loadCurrent();
+    }
+  }, [view, currentId, loadCurrent, user]);
 
   useEffect(() => {
-    if (view === "recycle_bin") {
+    if (user && view === "recycle_bin") {
       getDeletedNodes().then(setDeletedNodes).catch(console.error);
     }
-  }, [view]);
+  }, [view, user]);
 
   useEffect(() => {
     setFQuery(""); // reset in-folder filter when navigating
@@ -1411,26 +1482,25 @@ export default function App() {
       setCreateFolderName("");
       await loadCurrent();
     } catch (e) {
-      setCreateFolderError(
-        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-        "Failed to create folder. Please try again."
-      );
+      setCreateFolderError(errDetail(e, "Failed to create folder. Please try again."));
     } finally {
       setCreateFolderLoading(false);
     }
   };
 
   const handleSignOut = async () => {
+    const sessionId = sessionStorage.getItem("session_id") || undefined;
     try {
       await fetch("/api/auth/logout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: user?.email }),
+        body: JSON.stringify({ email: user?.email, session_id: sessionId }),
       });
     } catch (e) {
       console.error("Backend logout call failed", e);
     }
 
+    clearSessionId();
     sessionStorage.clear();
     localStorage.clear();
 
@@ -1453,11 +1523,14 @@ export default function App() {
       sessionTimerRef.current = null;
     }
     // Backend logout (best-effort, non-blocking)
+    const sessionId = sessionStorage.getItem("session_id") || undefined;
     fetch("/api/auth/logout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: user?.email }),
+      body: JSON.stringify({ email: user?.email, session_id: sessionId }),
     }).catch(() => { });
+    // Clear session tracking
+    clearSessionId();
     // MSAL silent cache clear
     const account = accounts[0] || instance.getActiveAccount();
     if (account) {
@@ -1471,13 +1544,14 @@ export default function App() {
 
   /** Sign out of ALL Microsoft accounts on this device (ends every SSO session) */
   const handleGlobalSignOut = async () => {
-    // Send a backend logout request for every account cached in MSAL
+    // Revoke all server-side sessions for every MSAL account
+    const currentSessionId = sessionStorage.getItem("session_id");
     const logoutPromises = accounts.map(account => {
       const email = account.username;
       return fetch("/api/auth/logout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, session_id: currentSessionId || undefined }),
       }).catch(e => console.error("Backend logout failed for", email, e));
     });
 
@@ -1486,9 +1560,16 @@ export default function App() {
         fetch("/api/auth/logout", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: user.email }),
+          body: JSON.stringify({ email: user.email, session_id: currentSessionId || undefined }),
         }).catch(e => console.error("Backend logout failed for", user.email, e))
       );
+    }
+
+    // Also try to revoke current session explicitly via the revoke endpoint
+    if (currentSessionId) {
+      try {
+        await revokeSession(currentSessionId);
+      } catch { /* best-effort */ }
     }
 
     try {
@@ -1497,11 +1578,10 @@ export default function App() {
       console.error("Failed to complete some backend logouts", e);
     }
 
+    clearSessionId();
     sessionStorage.clear();
     localStorage.clear();
-    // Clear MSAL cache silently — onRedirectNavigate returning false stops
-    // the browser from navigating to Microsoft's logout page while still
-    // removing the account from the local token cache.
+    // Clear MSAL cache silently
     if (accounts.length > 0) {
       instance.setActiveAccount(null);
     }

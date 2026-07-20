@@ -8,8 +8,8 @@ export interface ToastItem {
   detectedMonth?: string | null;
 }
 
-const isDuplicateError = (detail?: string) =>
-  !!detail && (detail.toLowerCase().includes("already exists") || detail.toLowerCase().includes("duplicate"));
+const isDuplicateError = (detail?: any) =>
+  typeof detail === "string" && (detail.toLowerCase().includes("already exists") || detail.toLowerCase().includes("duplicate"));
 
 export function ToastStack({
   toasts,

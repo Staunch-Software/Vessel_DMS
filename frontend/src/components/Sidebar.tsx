@@ -63,7 +63,7 @@ export function Sidebar({
 
       {/* ── Sidebar ─────────────────────────────────────────────── */}
       <aside
-        className={`dms-sidebar-responsive flex h-full w-72 shrink-0 flex-col bg-navy-900 text-slate-200 overflow-hidden ${
+        className={`dms-sidebar-responsive flex h-full w-72 shrink-0 flex-col bg-sidebar-bg text-sidebar-fg overflow-hidden ${
           mobileOpen ? "sidebar-open" : ""
         }`}
       >
@@ -71,7 +71,7 @@ export function Sidebar({
         <div className="flex items-center justify-between pr-3">
           <button
             onClick={() => handleNavClick(onDashboard)}
-            className="flex flex-1 items-center gap-2.5 px-5 py-3 text-left transition hover:bg-white/5 cursor-pointer"
+            className="flex flex-1 items-center gap-2.5 px-5 py-3 text-left transition hover:bg-sidebar-hover cursor-pointer"
           >
             <img
               src="/nissen-logo.svg"
@@ -79,16 +79,16 @@ export function Sidebar({
               className="h-7 w-auto drop-shadow-md"
             />
             <div>
-              <h1 className="text-[13px] font-semibold leading-tight text-white">
+              <h1 className="text-[13px] font-semibold leading-tight text-sidebar-fg">
                 Nissen DMS
               </h1>
-              <p className="text-[10px] text-slate-400">SharePoint Embedded</p>
+              <p className="text-[10px] text-sidebar-muted">SharePoint Embedded</p>
             </div>
           </button>
           {/* Close button — only shown on tablet/mobile via CSS */}
           <button
             onClick={onMobileClose}
-            className="hidden lg:hidden flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white transition"
+            className="hidden lg:hidden flex h-7 w-7 items-center justify-center rounded-lg text-sidebar-muted hover:bg-sidebar-hover hover:text-sidebar-fg transition"
             style={{ display: "flex" }}
             title="Close sidebar"
           >
@@ -99,9 +99,9 @@ export function Sidebar({
         <div className="px-4 pb-2">
           <button
             onClick={() => handleNavClick(onNewVessel)}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-brand-500 cursor-pointer"
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-fg shadow-sm transition hover:bg-primary-hover cursor-pointer"
           >
-            <Plus className="h-3.5 w-3.5" />
+            <Plus className="h-3.5 w-3.5 text-primary-fg" />
             New Vessel
           </button>
         </div>
@@ -110,14 +110,14 @@ export function Sidebar({
           <button
             onClick={() => handleNavClick(onDashboard)}
             className={
-              "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition cursor-pointer " +
+              "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition cursor-pointer " +
               (view === "dashboard"
-                ? "bg-white/10 font-medium text-white"
-                : "text-slate-300 hover:bg-white/5")
+                ? "bg-sidebar-active font-semibold text-sidebar-fg"
+                : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg")
             }
           >
-            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/10">
-              <LayoutDashboard className="h-3.5 w-3.5 text-brand-300" />
+            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-sidebar-active">
+              <LayoutDashboard className="h-3.5 w-3.5 text-sidebar-icon" />
             </span>
             Dashboard
           </button>
@@ -126,14 +126,14 @@ export function Sidebar({
             <button
               onClick={() => handleNavClick(onApprovals)}
               className={
-                "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition cursor-pointer " +
+                "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition cursor-pointer " +
                 (view === "approvals"
-                  ? "bg-white/10 font-medium text-white"
-                  : "text-slate-300 hover:bg-white/5")
+                  ? "bg-sidebar-active font-semibold text-sidebar-fg"
+                  : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg")
               }
             >
-              <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/10">
-                <ClipboardCheck className="h-3.5 w-3.5 text-brand-300" />
+              <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-sidebar-active">
+                <ClipboardCheck className="h-3.5 w-3.5 text-sidebar-icon" />
               </span>
               Approvals
             </button>
@@ -141,7 +141,7 @@ export function Sidebar({
 
 
 
-          <p className="px-2 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          <p className="px-2 pb-0.5 pt-2 text-[10px] font-bold uppercase tracking-wider text-sidebar-fg/70">
             Main Folders
           </p>
 
@@ -153,20 +153,20 @@ export function Sidebar({
                 key={m.id}
                 onClick={() => handleNavClick(() => onSelectMain(m))}
                 className={
-                  "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition cursor-pointer " +
+                  "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition cursor-pointer " +
                   (active
-                    ? "bg-white/10 font-medium text-white"
-                    : "text-slate-300 hover:bg-white/5")
+                    ? "bg-sidebar-active font-semibold text-sidebar-fg"
+                    : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg")
                 }
               >
                 <span
                   className={
                     "flex h-6 w-6 items-center justify-center rounded-lg " +
-                    (accent ? accent.chip : "bg-white/10")
+                    (accent ? accent.chip : "bg-sidebar-active")
                   }
                 >
                   <Layers
-                    className={"h-3.5 w-3.5 " + (accent ? accent.text : "text-white")}
+                    className={"h-3.5 w-3.5 " + (accent ? accent.text : "text-sidebar-icon")}
                   />
                 </span>
                 <span className="truncate text-left">{m.name}</span>
@@ -176,18 +176,18 @@ export function Sidebar({
         </nav>
 
         {/* Bottom: Archive / Recycle Bin / Profile / Sign-out */}
-        <div className="border-t border-white/10 px-3 py-1.5 space-y-0.5">
+        <div className="border-t border-sidebar-border px-3 py-1.5 space-y-0.5">
           <button
             onClick={() => handleNavClick(onArchive)}
             className={
-              "group flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition cursor-pointer " +
+              "group flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition cursor-pointer " +
               (view === "archive"
-                ? "bg-white/10 font-medium text-white"
-                : "text-slate-300 hover:bg-white/5 hover:text-white")
+                ? "bg-sidebar-active font-semibold text-sidebar-fg"
+                : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg")
             }
             title="View Archived Folders"
           >
-            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/10">
+            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-sidebar-active">
               <Archive className="h-3.5 w-3.5 text-amber-400" />
             </span>
             <span className="truncate min-w-0 flex-1 text-left">Archive</span>
@@ -196,14 +196,14 @@ export function Sidebar({
           <button
             onClick={() => handleNavClick(onRecycleBin)}
             className={
-              "group flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition cursor-pointer " +
+              "group flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition cursor-pointer " +
               (view === "recycle_bin"
-                ? "bg-white/10 font-medium text-white"
-                : "text-slate-300 hover:bg-white/5 hover:text-white")
+                ? "bg-sidebar-active font-semibold text-sidebar-fg"
+                : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg")
             }
             title="View Recycle Bin"
           >
-            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/10">
+            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-sidebar-active">
               <Trash2 className="h-3.5 w-3.5 text-rose-400" />
             </span>
             <span className="truncate min-w-0 flex-1 text-left">Recycle Bin</span>
@@ -212,10 +212,10 @@ export function Sidebar({
           <button
             onClick={() => handleNavClick(onProfile)}
             className={
-              "group flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition cursor-pointer " +
+              "group flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition cursor-pointer " +
               (view === "profile"
-                ? "bg-white/10 font-medium text-white"
-                : "text-slate-300 hover:bg-white/5 hover:text-white")
+                ? "bg-sidebar-active font-semibold text-sidebar-fg"
+                : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg")
             }
             title="View Profile"
           >
@@ -246,9 +246,9 @@ export function Sidebar({
 
           <button
             onClick={() => setShowSignOutPopup(true)}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition text-slate-300 hover:bg-white/5 hover:text-white cursor-pointer"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg cursor-pointer"
           >
-            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/10">
+            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-sidebar-active">
               <LogOut className="h-3.5 w-3.5 text-primary" />
             </span>
             Sign Out
@@ -262,9 +262,9 @@ export function Sidebar({
               className="absolute inset-0"
               onClick={() => setShowSignOutPopup(false)}
             />
-            <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-navy-950 p-6 shadow-2xl animate-scale-up text-slate-200 mx-4">
-              <div className="flex items-center gap-3 border-b border-white/10 pb-4 mb-5">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-400">
+            <div className="relative w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-2xl animate-scale-up text-fg mx-4">
+              <div className="flex items-center gap-3 border-b border-border pb-4 mb-5">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
                   <LogOut className="h-5 w-5" />
                 </div>
                 <div>

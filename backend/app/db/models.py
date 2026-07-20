@@ -9,7 +9,7 @@
 from datetime import date, datetime
 
 # pyrefly: ignore [missing-import]
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, String, Text, Integer, func
 # pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -168,4 +168,77 @@ class ApprovalRequest(Base):
     final_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+
+class UserSession(Base):
+    """One row per login session.
+
+    Every MSAL login creates a fresh row.  Multiple rows with status=Active
+    for the same user email are expected and supported (multi-device/tab).
+    Status lifecycle: Active → Expired | Logged Out | Revoked.
+    """
+
+    __tablename__ = "user_sessions"
+
+    # Internal surrogate PK (UUID stored as String for broad DB compat)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    # Opaque token sent to and verified from the client (X-Session-ID header)
+    session_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    # Soft FK to user_profiles — nullable because the profile row may not
+    # exist yet in stub/no-DB startup situations.
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_profiles.id", ondelete="SET NULL"), nullable=True
+    )
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    login_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_activity: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # Hard expiry = login_time + max_lifetime_hours (never extended)
+    expiry_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    logout_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Timestamp of last periodic Graph account-enabled spot-check
+    last_revalidated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Raw User-Agent string from the HTTP request header (server-captured)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Parsed UA components
+    browser: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    operating_system: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    device_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # Desktop/Mobile/Tablet
+    # Server-captured client IP (never trusted from the request body)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    authentication_method: Mapped[str] = mapped_column(String(50), default="AzureAD")
+    # Active | Expired | Logged Out | Revoked
+    status: Mapped[str] = mapped_column(String(20), default="Active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SessionAuditLog(Base):
+    """Immutable audit trail for session lifecycle events.
+
+    Intentionally has NO foreign key to user_sessions so that entries are
+    preserved even if the session row is cleaned up later.  This table is
+    append-only — no updates or deletes should ever be issued against it.
+
+    Events: session_created | session_logged_out | session_expired |
+            session_revoked | invalid_session_attempt | auth_failure
+    """
+
+    __tablename__ = "session_audit_log"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    # Reference to user_sessions.session_id — string copy, not an FK
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    event: Mapped[str] = mapped_column(String(50), index=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    browser: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    login_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    logout_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    active_duration: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    active_duration_formatted: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 

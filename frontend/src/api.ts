@@ -67,6 +67,16 @@ export function setApiEmail(email: string) {
   api.defaults.headers.common["X-User-Email"] = email;
 }
 
+/** Call after login to attach the server-side session ID to every request. */
+export function setSessionId(sessionId: string) {
+  api.defaults.headers.common["X-Session-ID"] = sessionId;
+}
+
+/** Call on logout / session expiry to stop sending the session ID. */
+export function clearSessionId() {
+  delete api.defaults.headers.common["X-Session-ID"];
+}
+
 export async function listVessels(): Promise<Vessel[]> {
   return (await api.get("/vessels")).data;
 }
@@ -337,3 +347,45 @@ export async function updateProfile(
 }
 
 
+// ────────────────────────── Sessions ──────────────────────────
+
+export interface SessionInfo {
+  session_id: string;
+  status: "Active" | "Expired" | "Logged Out" | "Revoked";
+  login_time: string | null;
+  last_activity: string | null;
+  expiry_time: string | null;
+  logout_time: string | null;
+  browser: string | null;
+  operating_system: string | null;
+  device_type: string | null;
+  ip_address: string | null;
+  authentication_method: string;
+  is_current: boolean;
+}
+
+export interface SessionAuditEntry {
+  session_id: string | null;
+  event: string;
+  detail: string | null;
+  ip_address: string | null;
+  browser: string | null;
+  status: string | null;
+  login_time: string | null;
+  logout_time: string | null;
+  active_duration: number | null;
+  active_duration_formatted: string | null;
+  created_at: string | null;
+}
+
+export async function listSessions(): Promise<SessionInfo[]> {
+  return (await api.get("/sessions")).data;
+}
+
+export async function revokeSession(sessionId: string): Promise<void> {
+  await api.delete(`/sessions/${sessionId}`);
+}
+
+export async function listSessionAudit(limit = 50): Promise<SessionAuditEntry[]> {
+  return (await api.get("/sessions/audit", { params: { limit } })).data;
+}
