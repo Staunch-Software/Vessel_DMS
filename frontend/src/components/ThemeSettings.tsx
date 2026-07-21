@@ -39,7 +39,7 @@ export function ThemeSettings({ onBack }: ThemeSettingsProps) {
       </header>
 
       <div className="dms-page-bg flex-1 overflow-y-auto dms-page-px dms-page-py">
-        <div className="mx-auto max-w-5xl space-y-8">
+        <div className="w-full space-y-8">
           {/* ---------------------------------------------------------- Mode */}
           <section>
             <h3 className="mb-3 text-sm font-semibold text-fg">Theme mode</h3>

@@ -8,6 +8,7 @@ import {
   Settings, Shield, Monitor, Smartphone, Tablet, Globe,
   XCircle, Timer, LogIn as LoginIcon, Briefcase, Key, Lock,
 } from "lucide-react";
+import { useMsal } from "@azure/msal-react";
 
 import type { FolderNode, UserProfile, ProfileUpdatePayload, SessionInfo, SessionAuditEntry } from "../api";
 import { getProfile, updateProfile, listSessions, listSessionAudit, revokeSession } from "../api";
@@ -264,6 +265,7 @@ interface ProfilePageProps {
 export default function ProfilePage({
   userEmail, onBack, onSignOut, onGlobalSignOut, onSettings, onPhotoUpdate,
 }: ProfilePageProps) {
+  const { instance, accounts } = useMsal();
   const [profile,          setProfile]          = useState<UserProfile | null>(null);
   const [loading,          setLoading]          = useState(true);
   const [fetchError,       setFetchError]       = useState<string | null>(null);
@@ -283,6 +285,35 @@ export default function ProfilePage({
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [revokingId,    setRevokingId]    = useState<string | null>(null);
   const currentSessionId = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('session_id') : null;
+
+  const persistGraphPhoto = useCallback(async () => {
+    if (profile?.photo_base64 || accounts.length === 0) return;
+    try {
+      const token = await instance.acquireTokenSilent({
+        scopes: ["User.Read"],
+        account: accounts[0],
+      });
+      const response = await fetch("https://graph.microsoft.com/v1.0/me/photo/$value", {
+        headers: { Authorization: `Bearer ${token.accessToken}` },
+      });
+      if (!response.ok) {
+        return;
+      }
+      const blob = await response.blob();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("Could not read profile photo"));
+        reader.readAsDataURL(blob);
+      });
+      const updated = await updateProfile(userEmail, { photo_base64: dataUrl });
+      setProfile(updated);
+      setForm(initForm(updated));
+      onPhotoUpdate?.(updated.photo_base64 || null);
+    } catch {
+      // Missing Graph photo or a transient token/network failure is non-fatal.
+    }
+  }, [accounts, instance, onPhotoUpdate, profile?.photo_base64, userEmail]);
 
   const loadSessions = useCallback(async () => {
     setSessionsLoading(true);
@@ -349,6 +380,12 @@ export default function ProfilePage({
       .then((data) => { setProfile(data); setForm(initForm(data)); setLoading(false); })
       .catch(() => { setFetchError("Could not load profile."); setLoading(false); });
   }, [userEmail]);
+
+  useEffect(() => {
+    if (!loading && !fetchError && profile && !profile.photo_base64) {
+      persistGraphPhoto();
+    }
+  }, [fetchError, loading, persistGraphPhoto, profile]);
 
   function handleEdit() {
     if (profile) setForm(initForm(profile));
@@ -805,25 +842,24 @@ export default function ProfilePage({
 
               </div>
 
-              {/* ── Session Security Dashboard ──────────────────────────── */}
-              <div className="dms-page-px pb-8">
-                <SessionSecurityCard
-                  sessions={sessions}
-                  auditLog={auditLog}
-                  loading={sessionsLoading}
-                  currentSessionId={currentSessionId}
-                  revokingId={revokingId}
-                  onRevoke={async (sid) => {
-                    setRevokingId(sid);
-                    try { await revokeSession(sid); await loadSessions(); } catch { /* ignore */ }
-                    finally { setRevokingId(null); }
-                  }}
-                  onRefresh={loadSessions}
-                />
-              </div>
-            </>
-          )}
-        </div>
+        {/* ── Session Security Dashboard ──────────────────────────── */}
+        {!loading && !fetchError && (
+          <div className="dms-page-px pb-8">
+            <SessionSecurityCard
+              sessions={sessions}
+              auditLog={auditLog}
+              loading={sessionsLoading}
+              currentSessionId={currentSessionId}
+              revokingId={revokingId}
+              onRevoke={async (sid) => {
+                setRevokingId(sid);
+                try { await revokeSession(sid); await loadSessions(); } catch { /* ignore */ }
+                finally { setRevokingId(null); }
+              }}
+              onRefresh={loadSessions}
+            />
+          </div>
+        )}
 
         {/* Full Photo Modal */}
         {showFullPhoto && profile?.photo_base64 && (

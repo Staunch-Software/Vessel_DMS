@@ -1,16 +1,17 @@
 import { useState } from "react";
-import { LayoutDashboard, ClipboardCheck, Layers, Plus, LogOut, ShieldOff, Archive, Trash2, X } from "lucide-react";
+import { LayoutDashboard, ClipboardCheck, Layers, Plus, LogOut, ShieldOff, Archive, Trash2, X, Anchor, Menu, Wrench, BriefcaseBusiness, Shield, Ship } from "lucide-react";
 import type { FolderNode } from "../api";
 import { MAIN_ACCENTS } from "./nodeStyle";
 
 interface Props {
   mains: FolderNode[];
-  view: "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance";
+  view: "dashboard" | "explorer" | "vessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance";
   selectedMainId: string | null;
   userDisplayName?: string;
   userPhotoBase64?: string | null;
   onSelectMain: (node: FolderNode) => void;
   onDashboard: () => void;
+  onVessels: () => void;
   onNewVessel: () => void;
   onSignOut: () => void;
   onGlobalSignOut: () => void;
@@ -24,6 +25,12 @@ interface Props {
   mobileOpen?: boolean;
   /** Called when user taps the close button or overlay on mobile */
   onMobileClose?: () => void;
+  /** Desktop collapsed state: icon-only rail */
+  collapsed?: boolean;
+  /** Collapse the desktop sidebar into icon-only mode */
+  onCollapse?: () => void;
+  /** Expand the desktop sidebar from collapsed icon-only mode */
+  onExpand?: () => void;
 }
 
 export function Sidebar({
@@ -34,6 +41,7 @@ export function Sidebar({
   userPhotoBase64,
   onSelectMain,
   onDashboard,
+  onVessels,
   onNewVessel,
   onSignOut,
   onGlobalSignOut,
@@ -45,12 +53,37 @@ export function Sidebar({
   onApprovals,
   mobileOpen = false,
   onMobileClose,
+  collapsed = false,
+  onCollapse,
+  onExpand,
 }: Props) {
   const [showSignOutPopup, setShowSignOutPopup] = useState(false);
 
   const handleNavClick = (fn: () => void) => {
     fn();
     onMobileClose?.();
+  };
+
+  const handleCloseSidebar = () => {
+    if (typeof window !== "undefined" && window.innerWidth <= 1024) {
+      onMobileClose?.();
+      return;
+    }
+    onCollapse?.();
+  };
+
+  const mainFolderIconFor = (name: string) => {
+    const n = name.trim().toLowerCase();
+    if (n === "technical & crewing") return Wrench;
+    if (n === "commercial & chartering") return BriefcaseBusiness;
+    if (n === "insurance") return Shield;
+    return Layers;
+  };
+
+  const displayMainName = (name: string) => {
+    const n = name.trim().toLowerCase();
+    if (n === "kaizen - knowledge bank") return "Knowledge Bank";
+    return name;
   };
 
   return (
@@ -63,40 +96,71 @@ export function Sidebar({
 
       {/* ── Sidebar ─────────────────────────────────────────────── */}
       <aside
-        className={`dms-sidebar-responsive flex h-full w-72 shrink-0 flex-col bg-sidebar-bg text-sidebar-fg overflow-hidden ${
+        className={`dms-sidebar-responsive flex h-full shrink-0 flex-col bg-sidebar-bg text-sidebar-fg overflow-hidden ${collapsed ? "w-20" : "w-72"} ${
           mobileOpen ? "sidebar-open" : ""
         }`}
       >
-        {/* Logo + mobile close button */}
-        <div className="flex items-center justify-between pr-3">
-          <button
-            onClick={() => handleNavClick(onDashboard)}
-            className="flex flex-1 items-center gap-2.5 px-5 py-3 text-left transition hover:bg-sidebar-hover cursor-pointer"
-          >
-            <img
-              src="/nissen-logo.svg"
-              alt="Nissen Kaiun logo"
-              className="h-7 w-auto drop-shadow-md"
-            />
-            <div>
-              <h1 className="text-[13px] font-semibold leading-tight text-sidebar-fg">
-                Nissen DMS
-              </h1>
-              <p className="text-[10px] text-sidebar-muted">SharePoint Embedded</p>
-            </div>
-          </button>
-          {/* Close button — only shown on tablet/mobile via CSS */}
-          <button
-            onClick={onMobileClose}
-            className="hidden lg:hidden flex h-7 w-7 items-center justify-center rounded-lg text-sidebar-muted hover:bg-sidebar-hover hover:text-sidebar-fg transition"
-            style={{ display: "flex" }}
-            title="Close sidebar"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        {/* Header controls */}
+        {collapsed ? (
+          <div className="flex flex-col items-center gap-2 px-2 py-3">
+            <button
+              onClick={() => handleNavClick(onDashboard)}
+              className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/15 text-primary ring-1 ring-primary/30 transition hover:bg-sidebar-hover cursor-pointer"
+              title="Nissen DMS"
+            >
+              <Anchor className="h-5 w-5" strokeWidth={2} />
+            </button>
+            <button
+              onClick={onExpand}
+              className="hidden lg:flex h-10 w-10 items-center justify-center rounded-lg text-sidebar-muted hover:bg-sidebar-hover hover:text-sidebar-fg transition"
+              title="Expand sidebar"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <button
+              onClick={handleCloseSidebar}
+              className="flex lg:hidden h-10 w-10 items-center justify-center rounded-lg text-sidebar-muted hover:bg-sidebar-hover hover:text-sidebar-fg transition"
+              title="Close sidebar"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between pr-3">
+            <button
+              onClick={() => handleNavClick(onDashboard)}
+              className="flex flex-1 items-center gap-2.5 px-5 py-3 text-left transition hover:bg-sidebar-hover cursor-pointer"
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary ring-1 ring-primary/30">
+                <Anchor className="h-4 w-4" strokeWidth={2} />
+              </span>
+              <div>
+                <h1 className="text-[13px] font-semibold leading-tight text-sidebar-fg">
+                  Nissen DMS
+                </h1>
+                <p className="text-[10px] text-sidebar-muted">SharePoint Embedded</p>
+              </div>
+            </button>
+            {/* Desktop collapse button */}
+            <button
+              onClick={handleCloseSidebar}
+              className="hidden lg:flex h-9 w-9 items-center justify-center rounded-lg text-sidebar-muted hover:bg-sidebar-hover hover:text-sidebar-fg transition"
+              title="Collapse sidebar"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            {/* Mobile close button */}
+            <button
+              onClick={handleCloseSidebar}
+              className="flex lg:hidden h-9 w-9 items-center justify-center rounded-lg text-sidebar-muted hover:bg-sidebar-hover hover:text-sidebar-fg transition"
+              title="Close sidebar"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        )}
 
-        <div className="px-4 pb-2">
+        {!collapsed && <div className="px-4 pb-2">
           <button
             onClick={() => handleNavClick(onNewVessel)}
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-fg shadow-sm transition hover:bg-primary-hover cursor-pointer"
@@ -104,56 +168,76 @@ export function Sidebar({
             <Plus className="h-3.5 w-3.5 text-primary-fg" />
             New Vessel
           </button>
-        </div>
+        </div>}
 
-        <nav className="flex-1 space-y-0.5 overflow-y-hidden px-3 pb-2">
+        <nav className={`flex-1 space-y-0.5 overflow-y-hidden ${collapsed ? "px-2" : "px-3"} pb-2`}>
           <button
             onClick={() => handleNavClick(onDashboard)}
+            title={collapsed ? "Dashboard" : undefined}
             className={
-              "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition cursor-pointer " +
+              `flex w-full items-center ${collapsed ? "justify-center px-2" : "gap-2 px-3"} rounded-lg py-1.5 text-sm font-medium transition cursor-pointer ` +
               (view === "dashboard"
                 ? "bg-sidebar-active font-semibold text-sidebar-fg"
                 : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg")
             }
           >
-            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-sidebar-active">
-              <LayoutDashboard className="h-3.5 w-3.5 text-sidebar-icon" />
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-sidebar-active">
+              <LayoutDashboard className="h-4.5 w-4.5 text-sidebar-fg/85" />
             </span>
-            Dashboard
+            {!collapsed && "Dashboard"}
+          </button>
+
+          <button
+            onClick={() => handleNavClick(onVessels)}
+            title={collapsed ? "Vessels" : undefined}
+            className={
+              `flex w-full items-center ${collapsed ? "justify-center px-2" : "gap-2 px-3"} rounded-lg py-1.5 text-sm font-medium transition cursor-pointer ` +
+              (view === "vessels"
+                ? "bg-sidebar-active font-semibold text-sidebar-fg"
+                : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg")
+            }
+          >
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-sidebar-active">
+              <Ship className="h-4.5 w-4.5 text-sidebar-fg/85" />
+            </span>
+            {!collapsed && "Vessels"}
           </button>
 
           {isAdmin && onApprovals && (
             <button
               onClick={() => handleNavClick(onApprovals)}
+              title={collapsed ? "Approvals" : undefined}
               className={
-                "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition cursor-pointer " +
+                `flex w-full items-center ${collapsed ? "justify-center px-2" : "gap-2 px-3"} rounded-lg py-1.5 text-sm font-medium transition cursor-pointer ` +
                 (view === "approvals"
                   ? "bg-sidebar-active font-semibold text-sidebar-fg"
                   : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg")
               }
             >
-              <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-sidebar-active">
-                <ClipboardCheck className="h-3.5 w-3.5 text-sidebar-icon" />
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-sidebar-active">
+                <ClipboardCheck className="h-4.5 w-4.5 text-sidebar-fg/85" />
               </span>
-              Approvals
+              {!collapsed && "Approvals"}
             </button>
           )}
 
-
-
-          <p className="px-2 pb-0.5 pt-2 text-[10px] font-bold uppercase tracking-wider text-sidebar-fg/70">
-            Main Folders
-          </p>
+          {!collapsed && (
+            <p className="px-2 pb-0.5 pt-2 text-[10px] font-bold uppercase tracking-wider text-sidebar-fg/70">
+              Main Folders
+            </p>
+          )}
 
           {mains.map((m) => {
             const accent = MAIN_ACCENTS[m.name];
             const active = view === "explorer" && selectedMainId === m.id;
+            const label = displayMainName(m.name);
             return (
               <button
                 key={m.id}
                 onClick={() => handleNavClick(() => onSelectMain(m))}
+                title={collapsed ? label : undefined}
                 className={
-                  "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition cursor-pointer " +
+                  `flex w-full items-center ${collapsed ? "justify-center px-2" : "gap-2 px-3"} rounded-lg py-1.5 text-sm font-medium transition cursor-pointer ` +
                   (active
                     ? "bg-sidebar-active font-semibold text-sidebar-fg"
                     : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg")
@@ -161,58 +245,59 @@ export function Sidebar({
               >
                 <span
                   className={
-                    "flex h-6 w-6 items-center justify-center rounded-lg " +
+                    "flex h-8 w-8 items-center justify-center rounded-lg " +
                     (accent ? accent.chip : "bg-sidebar-active")
                   }
                 >
-                  <Layers
-                    className={"h-3.5 w-3.5 " + (accent ? accent.text : "text-sidebar-icon")}
-                  />
+                  {(() => {
+                    const MainIcon = mainFolderIconFor(m.name);
+                    return <MainIcon className={"h-4.5 w-4.5 " + (accent ? accent.text : "text-sidebar-fg/80")} />;
+                  })()}
                 </span>
-                <span className="truncate text-left" title={m.name}>{m.name}</span>
+                {!collapsed && <span className="truncate text-left" title={label}>{label}</span>}
               </button>
             );
           })}
         </nav>
 
         {/* Bottom: Archive / Recycle Bin / Profile / Sign-out */}
-        <div className="border-t border-sidebar-border px-3 py-1.5 space-y-0.5">
+        <div className={`border-t border-sidebar-fg/15 ${collapsed ? "px-2" : "px-3"} py-1.5 space-y-0.5`}>
           <button
             onClick={() => handleNavClick(onArchive)}
             className={
-              "group flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition cursor-pointer " +
+              `group flex w-full items-center ${collapsed ? "justify-center px-2" : "gap-2 px-3"} rounded-lg py-1.5 text-sm font-medium transition cursor-pointer ` +
               (view === "archive"
                 ? "bg-sidebar-active font-semibold text-sidebar-fg"
                 : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg")
             }
             title="View Archived Folders"
           >
-            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-sidebar-active">
-              <Archive className="h-3.5 w-3.5 text-amber-400" />
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-sidebar-active">
+              <Archive className="h-4.5 w-4.5 text-amber-400" />
             </span>
-            <span className="truncate min-w-0 flex-1 text-left">Archive</span>
+            {!collapsed && <span className="truncate min-w-0 flex-1 text-left">Archive</span>}
           </button>
 
           <button
             onClick={() => handleNavClick(onRecycleBin)}
             className={
-              "group flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition cursor-pointer " +
+              `group flex w-full items-center ${collapsed ? "justify-center px-2" : "gap-2 px-3"} rounded-lg py-1.5 text-sm font-medium transition cursor-pointer ` +
               (view === "recycle_bin"
                 ? "bg-sidebar-active font-semibold text-sidebar-fg"
                 : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg")
             }
             title="View Recycle Bin"
           >
-            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-sidebar-active">
-              <Trash2 className="h-3.5 w-3.5 text-rose-400" />
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-sidebar-active">
+              <Trash2 className="h-4.5 w-4.5 text-rose-400" />
             </span>
-            <span className="truncate min-w-0 flex-1 text-left">Recycle Bin</span>
+            {!collapsed && <span className="truncate min-w-0 flex-1 text-left">Recycle Bin</span>}
           </button>
 
           <button
             onClick={() => handleNavClick(onProfile)}
             className={
-              "group flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition cursor-pointer " +
+              `group flex w-full items-center ${collapsed ? "justify-center px-2" : "gap-2 px-3"} rounded-lg py-1.5 text-sm font-medium transition cursor-pointer ` +
               (view === "profile"
                 ? "bg-sidebar-active font-semibold text-sidebar-fg"
                 : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg")
@@ -226,7 +311,7 @@ export function Sidebar({
                   onViewFullPhoto();
                 }
               }}
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold overflow-hidden"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-bold overflow-hidden"
               title={userPhotoBase64 ? "Click to view full photo" : undefined}
             >
               {userPhotoBase64 ? (
@@ -239,19 +324,22 @@ export function Sidebar({
                 </svg>
               )}
             </span>
-            <span className="truncate min-w-0 flex-1 text-left">
-              {userDisplayName || "Profile"}
-            </span>
+            {!collapsed && (
+              <span className="truncate min-w-0 flex-1 text-left">
+                {userDisplayName || "Profile"}
+              </span>
+            )}
           </button>
 
           <button
             onClick={() => setShowSignOutPopup(true)}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg cursor-pointer"
+            className={`flex w-full items-center ${collapsed ? "justify-center px-2" : "gap-2 px-3"} rounded-lg py-1.5 text-sm font-medium transition text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg cursor-pointer`}
+            title={collapsed ? "Sign Out" : undefined}
           >
-            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-sidebar-active">
-              <LogOut className="h-3.5 w-3.5 text-primary" />
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-sidebar-active">
+              <LogOut className="h-4.5 w-4.5 text-primary" />
             </span>
-            Sign Out
+            {!collapsed && "Sign Out"}
           </button>
         </div>
 

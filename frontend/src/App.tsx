@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { createPortal } from "react-dom";
-import { ChevronRight, ChevronDown, ChevronUp, Menu, MoreVertical, Download, RotateCcw, FolderOpen, FolderPlus, Trash2, X, Archive, ArchiveRestore, Eye, FileText, ShieldOff, Plus, Ship, Clock3 } from "lucide-react";
+import { ChevronRight, ChevronDown, ChevronUp, Menu, MoreVertical, Download, RotateCcw, FolderOpen, FolderPlus, Trash2, X, Archive, ArchiveRestore, Eye, FileText, ShieldOff, Plus, Ship, Clock3, Anchor } from "lucide-react";
 import { ApprovalResultPopup, type ApprovalResultItem } from "./components/ApprovalResultPopup";
 import { DuplicateFilePopup, type DuplicateFileInfo } from "./components/DuplicateFilePopup";
 import { listMyApprovals, listApprovals } from "./api";
@@ -41,7 +41,7 @@ import {
   type Vessel,
 } from "./api";
 import { useMsal } from "@azure/msal-react";
-import { LoginPage } from "./components/Login";
+import { LoginPage, RETURNING_USER_STORAGE_KEY } from "./components/Login";
 
 const cleanFolderName = (name: string): string => {
   if (!name) return "";
@@ -262,17 +262,24 @@ export default function App() {
   const [mains, setMains] = useState<FolderNode[]>([]);
   const [vessels, setVessels] = useState<Vessel[]>([]);
   const [user, setUser] = useState<{ display_name: string; email: string } | null>(null);
+  // Guards the redirect-handler and auto-authenticate effects below from both
+  // calling /api/auth/login for the same sign-in — without this, MSAL's
+  // `accounts` array can populate while the redirect effect's own fetch is
+  // still in flight, letting the auto-authenticate effect race in and create
+  // a second backend session for one actual login.
+  const authRequestRef = useRef<"idle" | "pending" | "done">("idle");
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
   const [showFullPhoto, setShowFullPhoto] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { instance, accounts, inProgress } = useMsal();
   const [stats, setStats] = useState<Stats | null>(null);
-  const [view, setView] = useState<"dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance">(() => {
+  const [view, setView] = useState<"dashboard" | "explorer" | "vessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance">(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const v = params.get("view");
-      if (v === "explorer" || v === "profile" || v === "dashboard" || v === "archive" || v === "recycle_bin" || v === "approvals" || v === "settings" || v === "appearance") {
-        return v as "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance";
+      if (v === "explorer" || v === "profile" || v === "dashboard" || v === "vessels" || v === "archive" || v === "recycle_bin" || v === "approvals" || v === "settings" || v === "appearance") {
+        return v as "dashboard" | "explorer" | "vessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance";
       }
     }
     return "dashboard";
@@ -317,6 +324,9 @@ export default function App() {
   const [archiveSelectIds, setArchiveSelectIds] = useState<Set<string>>(new Set());
   const [_selectedVessel, _setSelectedVessel] = useState<string | null>(null);
   const [deleteFileNode, setDeleteFileNode] = useState<FolderNode | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
+  const [showArchiveReasonModal, setShowArchiveReasonModal] = useState(false);
+  const [archiveReason, setArchiveReason] = useState("");
   const [preview, setPreview] = useState<FolderNode | null>(null);
   const [showDeleteFilesModal, setShowDeleteFilesModal] = useState(false);
   const [deleteFileIds, setDeleteFileIds] = useState<Set<string>>(new Set());
@@ -436,6 +446,8 @@ export default function App() {
       sessionStorage.setItem("test_login", "true");
     }
     if (sessionStorage.getItem("test_login") === "true" && !user) {
+      if (authRequestRef.current !== "idle") return;
+      authRequestRef.current = "pending";
       fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -452,6 +464,7 @@ export default function App() {
             display_name: payload.display_name || "Test User",
             email: payload.email || "testuser@example.com",
           });
+          authRequestRef.current = "done";
         })
         .catch((err) => {
           console.error("Mock login fetch failed, falling back to local state:", err);
@@ -460,6 +473,7 @@ export default function App() {
             display_name: "Test User",
             email: "testuser@example.com",
           });
+          authRequestRef.current = "idle";
         });
     }
   }, [user]);
@@ -489,6 +503,12 @@ export default function App() {
           );
           return;
         }
+        // Claim the login synchronously before awaiting anything — if the
+        // auto-authenticate effect's own promise resolves and its callback
+        // runs before this one, it will see "pending"/"done" and bail out
+        // instead of also calling /api/auth/login for the same sign-in.
+        if (authRequestRef.current !== "idle") return;
+        authRequestRef.current = "pending";
         try {
           const res = await fetch("/api/auth/login", {
             method: "POST",
@@ -513,6 +533,7 @@ export default function App() {
                 payload.display_name || result.account.name || result.account.username,
               email: email,
             });
+            authRequestRef.current = "done";
           } else {
             // Try to extract a meaningful message from the response body
             let errMsg = "Signed in with Microsoft, but the server rejected the session. Please try again.";
@@ -522,12 +543,14 @@ export default function App() {
               else if (typeof errBody?.detail === "string") errMsg = errBody.detail;
             } catch {}
             setAuthError(errMsg);
+            authRequestRef.current = "idle";
           }
         } catch (e) {
           if (active) {
             console.error("Backend login sync failed after redirect", e);
             setAuthError("Could not reach the server to complete sign-in. Please try again.");
           }
+          authRequestRef.current = "idle";
         }
       })
       .catch((err) => {
@@ -566,6 +589,10 @@ export default function App() {
         .then(async (response) => {
           console.info("[auth] acquireTokenSilent succeeded, calling /api/auth/login");
           if (!active) return;
+          // Same claim as the redirect-handler effect above — whichever of
+          // the two actually gets here first wins; the other bails out.
+          if (authRequestRef.current !== "idle") return;
+          authRequestRef.current = "pending";
           try {
             const res = await fetch("/api/auth/login", {
               method: "POST",
@@ -590,6 +617,7 @@ export default function App() {
                 email,
               });
               setAuthError(null);
+              authRequestRef.current = "done";
             } else {
               const body = await res.text();
               // Try to extract a structured error message
@@ -601,10 +629,12 @@ export default function App() {
               } catch {}
               console.error("Backend validation failed during auto-login:", res.status, body);
               setAuthError(errMsg);
+              authRequestRef.current = "idle";
             }
           } catch (e) {
             console.error("Backend login sync failed during auto-login", e);
             setAuthError(`Could not reach the server to complete sign-in. Connection failed: ${e instanceof Error ? e.message : String(e)}`);
+            authRequestRef.current = "idle";
           }
         })
         .catch((err) => {
@@ -627,6 +657,19 @@ export default function App() {
         setProfilePhoto(data.photo_base64 || null);
       })
       .catch(() => {});
+  }, [user]);
+
+  // Marks this browser as having completed a successful login before, so the
+  // next visit to the login page can greet with "Welcome Back" instead of "Welcome".
+  useEffect(() => {
+    if (!user) return;
+    try {
+      if (localStorage.getItem(RETURNING_USER_STORAGE_KEY) !== "true") {
+        localStorage.setItem(RETURNING_USER_STORAGE_KEY, "true");
+      }
+    } catch {
+      // Ignore storage errors (e.g. private browsing) — greeting just falls back to default.
+    }
   }, [user]);
 
   const handleDismissApprovalResult = useCallback((id: string) => {
@@ -666,22 +709,29 @@ export default function App() {
           rawApprovals = await listMyApprovals();
         }
         const items: NotificationItem[] = rawApprovals.map((a: any) => {
+          const displayName = a.filename || a.target_description || "";
           let message = "";
           let timestamp = a.uploaded_at;
           if (a.status === "pending") {
-            message = isAdmin
-              ? `New document awaiting reviewer approval: ${a.filename} (uploaded by ${a.uploaded_by_name || a.uploaded_by_email})`
-              : `File "${a.filename}" has been uploaded successfully and is awaiting reviewer approval.`;
+            // Backend already composes the exact "X is requesting approval to..."
+            // sentence with full context (requester, department, vessel, target).
+            message = a.message || `Awaiting reviewer approval: ${displayName}`;
+          } else if (a.entry_kind === "activity") {
+            // SPE Admin action that bypassed approval — not something the
+            // acting admin needs a personal "your request was decided" toast
+            // for, but it still belongs in the activity feed.
+            message = a.message || `"${displayName}" — completed, no approval required.`;
+            timestamp = a.decided_at || a.uploaded_at;
           } else if (a.status === "approved") {
-            message = `File "${a.filename}" has been approved`;
+            message = `"${displayName}" has been approved`;
             timestamp = a.decided_at || a.uploaded_at;
           } else if (a.status === "rejected") {
-            message = `File "${a.filename}" was rejected` + (a.rejection_reason ? `: ${a.rejection_reason}` : "");
+            message = `"${displayName}" was rejected` + (a.rejection_reason ? `: ${a.rejection_reason}` : "");
             timestamp = a.decided_at || a.uploaded_at;
           }
           return {
             id: a.id,
-            filename: a.filename,
+            filename: displayName,
             status: a.status,
             timestamp,
             message,
@@ -695,7 +745,11 @@ export default function App() {
         console.error("Failed to fetch notifications feed", err);
       }
 
-      // Fetch decided approvals for personal toast alerts
+      // Fetch decided approvals for personal toast alerts. Admin-activity
+      // rows are never "approved"/"rejected" (they're inserted already
+      // "completed"), so this naturally excludes them — the acting admin
+      // doesn't need a personal "your request was decided" toast for
+      // something they already did themselves.
       const myApprovals = await listMyApprovals();
       const decided = myApprovals.filter(a => a.status === "approved" || a.status === "rejected");
       
@@ -715,7 +769,7 @@ export default function App() {
       if (newDecided.length > 0) {
         const itemsToShow: ApprovalResultItem[] = newDecided.map(a => ({
           id: a.id,
-          filename: a.filename,
+          filename: a.filename || a.target_description || "",
           status: a.status as "approved" | "rejected",
           decidedAt: a.decided_at,
           rejectionReason: a.rejection_reason,
@@ -800,7 +854,7 @@ export default function App() {
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const expireSessionRef = useRef<(reason: "inactivity" | "token_expiry") => void>(() => { });
 
-  const navigateTo = useCallback((newView: "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings", newPath: PathEntry[]) => {
+  const navigateTo = useCallback((newView: "dashboard" | "explorer" | "vessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance", newPath: PathEntry[]) => {
     setView(newView);
     setPath(newPath);
 
@@ -843,8 +897,8 @@ export default function App() {
         return;
       }
 
-      if (state.view === "dashboard" || state.view === "explorer" || state.view === "profile" || state.view === "archive" || state.view === "recycle_bin") {
-        setView(state.view as "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin");
+      if (state.view === "dashboard" || state.view === "explorer" || state.view === "vessels" || state.view === "profile" || state.view === "archive" || state.view === "recycle_bin" || state.view === "approvals" || state.view === "settings" || state.view === "appearance") {
+        setView(state.view as "dashboard" | "explorer" | "vessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance");
         setPath(state.path || []);
       } else {
         setView("dashboard");
@@ -876,17 +930,6 @@ export default function App() {
   const selectedVesselObj = vessels.find((v) => v.id === selectedVesselId) ?? null;
   const selectedVesselName = selectedVesselObj?.name ?? null;
   const searchQuery = searchQueryByPage[pageKey] ?? "";
-
-  const activeVesselObj = useMemo(() => {
-    if (path.length > 1) {
-      const vName = path[1].name;
-      return vessels.find((v) => v.name.toLowerCase() === vName.toLowerCase()) || null;
-    }
-    if (selectedVesselId) {
-      return vessels.find((v) => v.id === selectedVesselId) || null;
-    }
-    return null;
-  }, [path, vessels, selectedVesselId]);
 
   const loadCurrent = useCallback(async () => {
     if (!currentId) {
@@ -935,15 +978,70 @@ export default function App() {
 
   // ----- navigation -----
   const goDashboard = () => navigateTo("dashboard", []);
+  const goVessels = () => navigateTo("vessels", []);
   const goProfile = () => navigateTo("profile", []);
   const goApprovals = () => navigateTo("approvals", []);
   const goSettings = () => navigateTo("settings", []);
-  const openMain = (node: FolderNode) => navigateTo("explorer", [{ id: node.id, name: node.name }]);
+  const openMainToSelectedVessel = useCallback(async (node: FolderNode): Promise<boolean> => {
+    const selectedForMainId =
+      selectedVesselByPage[node.name] ??
+      selectedVesselByPage.vessels ??
+      null;
+    const selectedForMainName =
+      vessels.find((v) => v.id === selectedForMainId)?.name?.trim().toLowerCase() ?? null;
+
+    if (selectedForMainName) {
+      try {
+        const mainChildren = await getChildren(node.id);
+        const vesselNode = mainChildren.find(
+          (c) =>
+            c.kind !== "file" &&
+            c.name.trim().toLowerCase() === selectedForMainName
+        );
+        if (vesselNode) {
+          navigateTo("explorer", [
+            { id: node.id, name: node.name },
+            { id: vesselNode.id, name: vesselNode.name },
+          ]);
+          return true;
+        }
+      } catch {
+        // If lookup fails, fall back to opening the main folder level.
+      }
+    }
+
+    return false;
+  }, [navigateTo, selectedVesselByPage, vessels]);
+
+  const openMain = async (node: FolderNode) => {
+    const opened = await openMainToSelectedVessel(node);
+    if (!opened) {
+      navigateTo("explorer", [{ id: node.id, name: node.name }]);
+    }
+  };
   const openChild = (node: FolderNode) => {
     if (node.kind === "file") return;
+    if (node.kind === "main") {
+      void (async () => {
+        const opened = await openMainToSelectedVessel(node);
+        if (!opened) {
+          navigateTo("explorer", [{ id: node.id, name: node.name }]);
+        }
+      })();
+      return;
+    }
     navigateTo("explorer", [...path, { id: node.id, name: node.name }]);
   };
-  const crumbTo = (i: number) => navigateTo("explorer", i === 0 ? [] : path.slice(0, i));
+  const crumbTo = (i: number) => {
+    // In selected-vessel flow, clicking the main-folder crumb should return
+    // to the mains landing page (Home) instead of showing main-level
+    // Common/Vessels grouping cards.
+    if (i === 1 && path.length >= 2 && selectedVesselByPage.vessels) {
+      navigateTo("explorer", []);
+      return;
+    }
+    navigateTo("explorer", i === 0 ? [] : path.slice(0, i));
+  };
 
   const handleArchiveMenuToggle = (e: React.MouseEvent, folderId: string) => {
     e.stopPropagation();
@@ -975,6 +1073,79 @@ export default function App() {
     setView("explorer");
     setPath(trail.map((t) => ({ id: t.id, name: t.name })));
   };
+
+  const openVesselFromDashboard = useCallback(async (vessel: Vessel) => {
+    const pushOpenFailToast = (detail: string) => {
+      setToasts((prev) => [
+        ...prev,
+        {
+          id: Date.now(),
+          status: "failed",
+          title: "Could not open vessel",
+          detail,
+        },
+      ]);
+    };
+
+    try {
+      const results = await search(vessel.name);
+      const normalized = vessel.name.trim().toLowerCase();
+      const currentMainId = path[0]?.id;
+      const pickBestShipHit = (candidates: SearchResult[]) => {
+        if (candidates.length === 0) return undefined;
+        if (currentMainId) {
+          const inCurrentMain = candidates.find((r) => r.trail[0]?.id === currentMainId);
+          if (inCurrentMain) return inCurrentMain;
+        }
+
+        const preferredMainOrder = ["Technical & Crewing", "Commercial & Chartering", "Insurance"];
+        for (const mainName of preferredMainOrder) {
+          const inPreferredMain = candidates.find((r) => r.trail[0]?.name === mainName);
+          if (inPreferredMain) return inPreferredMain;
+        }
+
+        return candidates[0];
+      };
+
+      const exactShips = results.filter(
+        (r) => r.kind === "ship" && r.name.trim().toLowerCase() === normalized
+      );
+      const anyShips = results.filter((r) => r.kind === "ship");
+      const shipHit = pickBestShipHit(exactShips) ?? pickBestShipHit(anyShips);
+
+      if (shipHit && shipHit.trail.length > 0) {
+        navigateTo(
+          "explorer",
+          shipHit.trail.map((t) => ({ id: t.id, name: t.name }))
+        );
+        return;
+      }
+
+      if (mains.length > 0) {
+        navigateTo("explorer", [{ id: mains[0].id, name: mains[0].name }]);
+      }
+
+      pushOpenFailToast(`Could not locate folder path for ${vessel.name}.`);
+    } catch (e) {
+      pushOpenFailToast(errDetail(e, `Failed to open ${vessel.name}.`));
+    }
+  }, [mains, navigateTo, path, setToasts]);
+
+  const openVesselFromVesselsView = useCallback((vessel: Vessel) => {
+    // Open main-folder page first, then keep the vessel preselected per main
+    // so the user can choose a main and immediately see that vessel context.
+    setSelectedVesselByPage((prev) => {
+      const next: Record<string, string | null> = {
+        ...prev,
+        vessels: vessel.id,
+      };
+      for (const main of mains) {
+        next[main.name] = vessel.id;
+      }
+      return next;
+    });
+    navigateTo("explorer", []);
+  }, [mains, navigateTo]);
 
   // ----- displayed items (vessel scope + filter + sort) -----
   const displayed = useMemo(() => {
@@ -1137,19 +1308,23 @@ export default function App() {
   );
 
   const confirmDeleteFile = useCallback(
-    async () => {
+    async (reason?: string) => {
       if (!deleteFileNode) return;
       const node = deleteFileNode;
       setDeleteFileNode(null);
+      setDeleteReason("");
       const id = Date.now() + Math.floor(Math.random() * 1000);
       try {
-        if (node.kind === "file") {
-          await deleteFile(node.id, user?.email);
+        const result =
+          node.kind === "file"
+            ? await deleteFile(node.id, user?.email, reason)
+            : await deleteFolder(node.id, user?.email, node.name);
+        if (result.status === "pending") {
+          upsertToast({ id, status: "pending", title: "Awaiting approval", detail: result.message || node.name });
         } else {
-          await deleteFolder(node.id, user?.email, node.name);
+          await refreshAfterMutation();
+          upsertToast({ id, status: "done", title: "Moved to Recycle Bin", detail: node.name });
         }
-        await refreshAfterMutation();
-        upsertToast({ id, status: "done", title: "Moved to Recycle Bin", detail: node.name });
       } catch (e) {
         upsertToast({ id, status: "failed", title: "Delete failed", detail: errDetail(e, node.name) });
       }
@@ -1257,59 +1432,88 @@ export default function App() {
     [current, refreshAfterMutation]
   );
 
-  const handleBulkFolderArchive = useCallback(async () => {
+  const handleBulkFolderArchive = useCallback(async (reason?: string) => {
     if (archiveSelectIds.size === 0) return;
     const nodesToArchive = children.filter((c) => archiveSelectIds.has(c.id));
-    
+    const completedNodes: FolderNode[] = [];
+    let pendingCount = 0;
+
     try {
-      await Promise.all(
+      const results = await Promise.all(
         nodesToArchive.map((n) =>
-          archiveItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined)
+          archiveItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined, {
+            itemName: n.name,
+            reason,
+          })
         )
       );
+      results.forEach((r, i) => {
+        if (r.status === "pending") pendingCount++;
+        else completedNodes.push(nodesToArchive[i]);
+      });
     } catch (e) {
       console.error("Failed to archive items in DB:", e);
     }
 
-    setArchivedFolderIds((prev) => {
-      const next = new Set(prev);
-      archiveSelectIds.forEach((id) => next.add(id));
-      return next;
-    });
-    setArchivedNodes((prev) => {
-      const existingIds = new Set(prev.map((n) => n.id));
-      return [...prev, ...nodesToArchive.filter((n) => !existingIds.has(n.id))];
-    });
-    setShowArchiveSelectModal(false);
-    setArchiveSelectIds(new Set());
-    // Log activity
-    if (user?.email) {
-      nodesToArchive.forEach((n) =>
-        logActivity(user.email, n.kind === "file" ? "archive_file" : "archive_folder", `Archived ${n.kind === "file" ? "file" : "folder"}: ${n.name}`)
-      );
+    if (completedNodes.length > 0) {
+      setArchivedFolderIds((prev) => {
+        const next = new Set(prev);
+        completedNodes.forEach((n) => next.add(n.id));
+        return next;
+      });
+      setArchivedNodes((prev) => {
+        const existingIds = new Set(prev.map((n) => n.id));
+        return [...prev, ...completedNodes.filter((n) => !existingIds.has(n.id))];
+      });
+      if (user?.email) {
+        completedNodes.forEach((n) =>
+          logActivity(user.email, n.kind === "file" ? "archive_file" : "archive_folder", `Archived ${n.kind === "file" ? "file" : "folder"}: ${n.name}`)
+        );
+      }
     }
-    // Success toast
+    setShowArchiveSelectModal(false);
+    setShowArchiveReasonModal(false);
+    setArchiveReason("");
+    setArchiveSelectIds(new Set());
+
     const tid = Date.now() + Math.floor(Math.random() * 1000);
+    const detail =
+      pendingCount > 0
+        ? completedNodes.length > 0
+          ? `${completedNodes.length} archived, ${pendingCount} awaiting approval`
+          : `${pendingCount} item(s) awaiting approval`
+        : nodesToArchive.map((n) => n.name).join(", ");
     upsertToast({
       id: tid,
-      status: "done",
-      title: `${nodesToArchive.length} item${nodesToArchive.length !== 1 ? "s" : ""} archived`,
-      detail: nodesToArchive.map((n) => n.name).join(", "),
+      status: pendingCount > 0 && completedNodes.length === 0 ? "pending" : "done",
+      title: pendingCount > 0 ? "Archive requested" : `${nodesToArchive.length} item${nodesToArchive.length !== 1 ? "s" : ""} archived`,
+      detail,
     });
     setTimeout(() => dismissToast(tid), 4000);
   }, [archiveSelectIds, children, user]);
 
   const handleFolderArchive = useCallback(async (node: FolderNode) => {
     const isRestoring = archivedNodes.some((n) => n.id === node.id);
-    
+    let result: { status: "completed" | "pending"; message?: string } | null = null;
+
     try {
-      if (isRestoring) {
-        await restoreItem(node.id, user?.email || undefined);
-      } else {
-        await archiveItem(node.id, node.kind === "file" ? "file" : "folder", user?.email || undefined);
-      }
+      result = isRestoring
+        ? await restoreItem(node.id, user?.email || undefined, node.kind === "file" ? "file" : "folder", { itemName: node.name })
+        : await archiveItem(node.id, node.kind === "file" ? "file" : "folder", user?.email || undefined, { itemName: node.name });
     } catch (e) {
       console.error("Failed to archive/restore item in DB:", e);
+    }
+
+    const tid2 = Date.now() + Math.floor(Math.random() * 1000);
+    if (result?.status === "pending") {
+      upsertToast({
+        id: tid2,
+        status: "pending",
+        title: "Awaiting approval",
+        detail: result.message || node.name,
+      });
+      setTimeout(() => dismissToast(tid2), 6000);
+      return;
     }
 
     setArchivedFolderIds((prev) => {
@@ -1331,7 +1535,6 @@ export default function App() {
       );
     }
     // Success toast
-    const tid2 = Date.now() + Math.floor(Math.random() * 1000);
     upsertToast({
       id: tid2,
       status: "done",
@@ -1350,11 +1553,26 @@ export default function App() {
     upsertToast({ id, status: "processing", title: `Moving ${idsToDelete.length} folder(s) to Recycle Bin…`, detail: "Please wait" });
     try {
       // Execute sequentially to prevent SQLite write conflicts and SharePoint API throttling
+      let completed = 0;
+      let pending = 0;
       for (const fid of idsToDelete) {
-        await deleteFolder(fid, user?.email, nameMap.get(fid));
+        const result = await deleteFolder(fid, user?.email, nameMap.get(fid));
+        if (result.status === "pending") pending++;
+        else completed++;
       }
-      await refreshAfterMutation();
-      upsertToast({ id, status: "done", title: "Folders soft-deleted", detail: `${idsToDelete.length} folder(s) moved to Recycle Bin` });
+      if (completed > 0) await refreshAfterMutation();
+      const detail =
+        pending > 0
+          ? completed > 0
+            ? `${completed} deleted, ${pending} awaiting approval`
+            : `${pending} folder(s) awaiting approval`
+          : `${idsToDelete.length} folder(s) moved to Recycle Bin`;
+      upsertToast({
+        id,
+        status: pending > 0 && completed === 0 ? "pending" : "done",
+        title: pending > 0 ? "Delete requested" : "Folders soft-deleted",
+        detail,
+      });
     } catch (e) {
       upsertToast({ id, status: "failed", title: "Delete failed", detail: errDetail(e, "") });
     }
@@ -1370,11 +1588,26 @@ export default function App() {
     upsertToast({ id, status: "processing", title: `Moving ${idsToDelete.length} file(s) to Recycle Bin…`, detail: "Please wait" });
     try {
       // Execute sequentially to prevent SQLite write conflicts and SharePoint API throttling
+      let completed = 0;
+      let pending = 0;
       for (const fid of idsToDelete) {
-        await deleteFile(fid, user?.email);
+        const result = await deleteFile(fid, user?.email);
+        if (result.status === "pending") pending++;
+        else completed++;
       }
-      await refreshAfterMutation();
-      upsertToast({ id, status: "done", title: "Files soft-deleted", detail: `${idsToDelete.length} file(s) moved to Recycle Bin` });
+      if (completed > 0) await refreshAfterMutation();
+      const detail =
+        pending > 0
+          ? completed > 0
+            ? `${completed} deleted, ${pending} awaiting approval`
+            : `${pending} file(s) awaiting approval`
+          : `${idsToDelete.length} file(s) moved to Recycle Bin`;
+      upsertToast({
+        id,
+        status: pending > 0 && completed === 0 ? "pending" : "done",
+        title: pending > 0 ? "Delete requested" : "Files soft-deleted",
+        detail,
+      });
     } catch (e) {
       upsertToast({ id, status: "failed", title: "Delete failed", detail: errDetail(e, "") });
     }
@@ -1389,11 +1622,29 @@ export default function App() {
     try {
       const selected = deletedNodes.filter(n => recycleSelectIds.has(n.id));
       // Execute sequentially to prevent SQLite write conflicts and SharePoint API throttling
+      let completed = 0;
+      let pending = 0;
       for (const n of selected) {
-        await restoreDeletedItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined);
+        const result = await restoreDeletedItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined, {
+          itemName: n.name,
+          department: n.main_folder,
+        });
+        if (result.status === "pending") pending++;
+        else completed++;
       }
-      await refreshAfterMutation();
-      upsertToast({ id, status: "done", title: "Selected items restored", detail: "Items are visible again" });
+      if (completed > 0) await refreshAfterMutation();
+      const detail =
+        pending > 0
+          ? completed > 0
+            ? `${completed} restored, ${pending} awaiting approval`
+            : `${pending} item(s) awaiting approval`
+          : "Items are visible again";
+      upsertToast({
+        id,
+        status: pending > 0 && completed === 0 ? "pending" : "done",
+        title: pending > 0 ? "Restore requested" : "Selected items restored",
+        detail,
+      });
       setRecycleSelectIds(new Set());
       setShowRestoreSelectedModal(false);
     } catch (e) {
@@ -1407,27 +1658,82 @@ export default function App() {
     const id = Date.now();
     upsertToast({ id, status: "processing", title: `Restoring all ${deletedNodes.length} items…`, detail: "Please wait" });
     try {
+      let completed = 0;
+      let pending = 0;
       for (const n of deletedNodes) {
-        await restoreDeletedItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined);
+        const result = await restoreDeletedItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined, {
+          itemName: n.name,
+          department: n.main_folder,
+        });
+        if (result.status === "pending") pending++;
+        else completed++;
       }
-      await getDeletedNodes().then(setDeletedNodes);
-      upsertToast({ id, status: "done", title: "All items restored", detail: "Items are visible again in the explorer" });
+      if (completed > 0) await getDeletedNodes().then(setDeletedNodes);
+      const detail =
+        pending > 0
+          ? completed > 0
+            ? `${completed} restored, ${pending} awaiting approval`
+            : `${pending} item(s) awaiting approval`
+          : "Items are visible again in the explorer";
+      upsertToast({
+        id,
+        status: pending > 0 && completed === 0 ? "pending" : "done",
+        title: pending > 0 ? "Restore requested" : "All items restored",
+        detail,
+      });
     } catch (e) {
       upsertToast({ id, status: "failed", title: "Restore failed", detail: errDetail(e, "") });
     }
     setTimeout(() => dismissToast(id), 5000);
   }, [deletedNodes, user]);
 
+  const handleRestoreSingleDeleted = useCallback((n: FolderNode) => {
+    const id = Date.now();
+    upsertToast({ id, status: "processing", title: "Restoring…", detail: n.name });
+    restoreDeletedItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined, {
+      itemName: n.name,
+      department: n.main_folder,
+    })
+      .then(async (result) => {
+        if (result.status === "pending") {
+          upsertToast({ id, status: "pending", title: "Awaiting approval", detail: result.message || n.name });
+          return;
+        }
+        await getDeletedNodes().then(setDeletedNodes);
+        upsertToast({ id, status: "done", title: "Restored", detail: `"${n.name}" restored` });
+      })
+      .catch((e) => upsertToast({ id, status: "failed", title: "Restore failed", detail: errDetail(e, "") }))
+      .finally(() => setTimeout(() => dismissToast(id), 4000));
+  }, [user]);
+
   const handleEmptyRecycleBin = useCallback(async () => {
     if (deletedNodes.length === 0) return;
     const id = Date.now();
     upsertToast({ id, status: "processing", title: "Emptying Recycle Bin…", detail: "Please wait" });
     try {
+      let completed = 0;
+      let pending = 0;
       for (const n of deletedNodes) {
-        await permanentDeleteItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined);
+        const result = await permanentDeleteItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined, {
+          itemName: n.name,
+          department: n.main_folder,
+        });
+        if (result.status === "pending") pending++;
+        else completed++;
       }
-      await getDeletedNodes().then(setDeletedNodes);
-      upsertToast({ id, status: "done", title: "Recycle Bin emptied", detail: "All items permanently deleted" });
+      if (completed > 0) await getDeletedNodes().then(setDeletedNodes);
+      const detail =
+        pending > 0
+          ? completed > 0
+            ? `${completed} deleted, ${pending} awaiting approval`
+            : `${pending} item(s) awaiting approval`
+          : "All items permanently deleted";
+      upsertToast({
+        id,
+        status: pending > 0 && completed === 0 ? "pending" : "done",
+        title: pending > 0 ? "Delete requested" : "Recycle Bin emptied",
+        detail,
+      });
     } catch (e) {
       upsertToast({ id, status: "failed", title: "Empty failed", detail: errDetail(e, "") });
     }
@@ -1451,11 +1757,29 @@ export default function App() {
     try {
       const selected = deletedNodes.filter(n => recycleSelectIds.has(n.id));
       // Execute sequentially to prevent SQLite write conflicts and SharePoint API throttling
+      let completed = 0;
+      let pending = 0;
       for (const n of selected) {
-        await permanentDeleteItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined);
+        const result = await permanentDeleteItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined, {
+          itemName: n.name,
+          department: n.main_folder,
+        });
+        if (result.status === "pending") pending++;
+        else completed++;
       }
-      await refreshAfterMutation();
-      upsertToast({ id, status: "done", title: "Selected items permanently deleted", detail: "Items removed forever" });
+      if (completed > 0) await refreshAfterMutation();
+      const detail =
+        pending > 0
+          ? completed > 0
+            ? `${completed} deleted, ${pending} awaiting approval`
+            : `${pending} item(s) awaiting approval`
+          : "Items removed forever";
+      upsertToast({
+        id,
+        status: pending > 0 && completed === 0 ? "pending" : "done",
+        title: pending > 0 ? "Delete requested" : "Selected items permanently deleted",
+        detail,
+      });
       setRecycleSelectIds(new Set());
     } catch (e) {
       upsertToast({ id, status: "failed", title: "Delete failed", detail: errDetail(e, "") });
@@ -1472,7 +1796,19 @@ export default function App() {
       detail: `Provisioning SharePoint folders for "${data.name}"`,
     });
     try {
-      await createVessel(data);
+      const result = await createVessel(data);
+
+      if (result.status === "pending") {
+        setShowModal(false);
+        upsertToast({
+          id: toastId,
+          status: "pending",
+          title: "Awaiting approval",
+          detail: result.message || `Vessel "${data.name}" is awaiting approval`,
+        });
+        setTimeout(() => dismissToast(toastId), 6000);
+        return;
+      }
 
       // Close the modal immediately so the user isn't stuck
       setShowModal(false);
@@ -1540,8 +1876,19 @@ export default function App() {
       detail: "Please wait",
     });
     try {
-      const result = await updateVessel(vesselId, data) as { message: string };
-      
+      const result = await updateVessel(vesselId, data);
+
+      if (result.status === "pending") {
+        upsertToast({
+          id: toastId,
+          status: "pending",
+          title: "Awaiting approval",
+          detail: result.message || `Vessel update for "${data.name || ""}" is awaiting approval`,
+        });
+        setTimeout(() => dismissToast(toastId), 6000);
+        return;
+      }
+
       // Reload vessels, mains, stats, archive, deleted in parallel
       const [freshMains, freshVessels, freshStats, archIds, archNodes, delNodes] = await Promise.all([
         getMains(),
@@ -1602,14 +1949,37 @@ export default function App() {
     setCreateFolderLoading(true);
     setCreateFolderError(null);
     try {
-      await createSubfolder(current.id, cleaned, user?.email);
+      const result = await createSubfolder(current.id, cleaned, user?.email);
       setShowCreateFolderModal(false);
       setCreateFolderName("");
-      await loadCurrent();
+      if (result.status === "pending") {
+        const toastId = Date.now() + Math.floor(Math.random() * 1000);
+        upsertToast({
+          id: toastId,
+          status: "pending",
+          title: "Awaiting approval",
+          detail: result.message || `Folder "${cleaned}" is awaiting approval`,
+        });
+        setTimeout(() => dismissToast(toastId), 6000);
+      } else {
+        await loadCurrent();
+      }
     } catch (e) {
       setCreateFolderError(errDetail(e, "Failed to create folder. Please try again."));
     } finally {
       setCreateFolderLoading(false);
+    }
+  };
+
+  const clearLocalStoragePreserveTheme = () => {
+    try {
+      const mode = localStorage.getItem("dms-theme-mode");
+      const color = localStorage.getItem("dms-theme-color");
+      localStorage.clear();
+      if (mode) localStorage.setItem("dms-theme-mode", mode);
+      if (color) localStorage.setItem("dms-theme-color", color);
+    } catch {
+      // Ignore storage access failures.
     }
   };
 
@@ -1627,7 +1997,7 @@ export default function App() {
 
     clearSessionId();
     sessionStorage.clear();
-    localStorage.clear();
+    clearLocalStoragePreserveTheme();
 
     const account = accounts[0] || instance.getActiveAccount();
     if (account) {
@@ -1662,7 +2032,7 @@ export default function App() {
       instance.setActiveAccount(null);
     }
     sessionStorage.clear();
-    localStorage.clear();
+    clearLocalStoragePreserveTheme();
     setUser(null);
     setSessionExpiredReason(reason);
   };
@@ -1705,7 +2075,7 @@ export default function App() {
 
     clearSessionId();
     sessionStorage.clear();
-    localStorage.clear();
+    clearLocalStoragePreserveTheme();
     // Clear MSAL cache silently
     if (accounts.length > 0) {
       instance.setActiveAccount(null);
@@ -1862,6 +2232,7 @@ export default function App() {
         userPhotoBase64={profilePhoto}
         onSelectMain={openMain}
         onDashboard={goDashboard}
+        onVessels={goVessels}
         onNewVessel={() => setShowModal(true)}
         onSignOut={handleSignOut}
         onGlobalSignOut={handleGlobalSignOut}
@@ -1873,6 +2244,9 @@ export default function App() {
         onApprovals={goApprovals}
         mobileOpen={sidebarOpen}
         onMobileClose={() => setSidebarOpen(false)}
+        collapsed={sidebarCollapsed}
+        onCollapse={() => setSidebarCollapsed(true)}
+        onExpand={() => setSidebarCollapsed(false)}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden min-w-0">
@@ -1881,13 +2255,24 @@ export default function App() {
           {/* Left: Mobile hamburger menu and brand */}
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setSidebarOpen(true)}
+              onClick={() => {
+                if (typeof window !== "undefined" && window.innerWidth > 1024) {
+                  setSidebarCollapsed(false);
+                  return;
+                }
+                setSidebarOpen(true);
+              }}
               className="lg:hidden dms-touch-btn rounded-lg text-fg hover:bg-surface2 transition"
               aria-label="Open sidebar"
             >
               <Menu className="h-5 w-5" />
             </button>
-            <span className="text-sm font-semibold text-fg lg:hidden truncate">Nissen DMS</span>
+            <span className="flex items-center gap-2 lg:hidden">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/15 text-primary ring-1 ring-primary/25">
+                <Anchor className="h-3.5 w-3.5" strokeWidth={2} />
+              </span>
+              <span className="text-sm font-semibold text-fg truncate">Nissen DMS</span>
+            </span>
           </div>
 
           {/* Center/Left (on Desktop): Search Bar (if applicable) */}
@@ -1948,6 +2333,84 @@ export default function App() {
             onSettings={goSettings}
             onPhotoUpdate={setProfilePhoto}
           />
+        ) : view === "vessels" ? (
+          <>
+            <header className="dms-top-chrome border-b border-border dms-page-px py-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-semibold text-fg">Vessels</h2>
+                  <p className="mt-0.5 text-sm text-muted">
+                    Manage all vessels and update details from one place.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      if (!selectedVesselObj) return;
+                      setVesselToUpdate(selectedVesselObj);
+                      setShowUpdateModal(true);
+                    }}
+                    disabled={!selectedVesselObj}
+                    className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    <Ship className="h-4 w-4 shrink-0" />
+                    <span className="dms-action-btn-text">Update Vessel</span>
+                  </button>
+                  <button
+                    onClick={() => setShowModal(true)}
+                    className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-500 cursor-pointer"
+                  >
+                    <Plus className="h-4 w-4 shrink-0" />
+                    <span className="dms-action-btn-text">New Vessel</span>
+                  </button>
+                </div>
+              </div>
+            </header>
+            <div className="dms-page-bg flex-1 overflow-y-auto dms-page-px dms-page-py">
+              {vessels.length === 0 ? (
+                <div className="dms-card rounded-2xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
+                  No vessels yet. Create one to provision its folder structure.
+                </div>
+              ) : (
+                <div className="dms-card overflow-hidden rounded-2xl">
+                  <div className="border-b border-border px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted">
+                    Click any vessel row to open the main folder page.
+                  </div>
+                  <ul className="divide-y divide-border">
+                    {vessels.map((v) => {
+                      return (
+                        <li key={v.id} className="bg-transparent">
+                          <button
+                            onClick={() => {
+                              setSelectedVesselByPage((prev) => ({
+                                ...prev,
+                                [pageKey]: v.id,
+                              }));
+                              openVesselFromVesselsView(v);
+                            }}
+                            className="group flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition hover:bg-surface-hover cursor-pointer select-none focus:outline-none"
+                            title={`Open ${v.name}`}
+                          >
+                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
+                              <Ship className="h-5 w-5" />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-base font-semibold text-fg">{v.name}</span>
+                              <span className="mt-0.5 block truncate text-xs text-muted">
+                                IMO {v.imo ?? "—"}
+                                {v.hull_number ? ` · Hull ${v.hull_number}` : ""}
+                                {v.shipyard ? ` · ${v.shipyard}` : ""}
+                              </span>
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </>
         ) : view === "dashboard" ? (
           <>
             <header className="dms-top-chrome border-b border-border dms-page-px py-5">
@@ -1962,6 +2425,7 @@ export default function App() {
                 mains={mains}
                 stats={stats}
                 onOpenMain={openMain}
+                onOpenVessel={openVesselFromDashboard}
                 onNewVessel={() => setShowModal(true)}
               />
             </div>
@@ -2257,6 +2721,23 @@ export default function App() {
                               <td className="px-3 py-2.5 text-slate-500 text-xs whitespace-nowrap">
                                 {fmtDate(n.modified)}
                               </td>
+<<<<<<< HEAD
+=======
+                              <td className="px-3 py-2.5">
+                                <button
+                                  onClick={() => {
+                                    if (window.confirm(`Restore "${n.name}" to its original location?`)) {
+                                      handleRestoreSingleDeleted(n);
+                                    }
+                                  }}
+                                  className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition"
+                                  title="Restore"
+                                >
+                                  <ArchiveRestore className="h-3 w-3" />
+                                  Restore
+                                </button>
+                              </td>
+>>>>>>> origin/dev/rupa
                             </tr>
                           );
                         })}
@@ -2311,6 +2792,20 @@ export default function App() {
                               <span>{fmtBytes(n.size)}</span>
                             </div>
                           </div>
+<<<<<<< HEAD
+=======
+                          <button
+                            onClick={() => {
+                              if (window.confirm(`Restore "${n.name}"?`)) {
+                                handleRestoreSingleDeleted(n);
+                              }
+                            }}
+                            className="mt-1 w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition"
+                          >
+                            <ArchiveRestore className="h-3.5 w-3.5" />
+                            Restore
+                          </button>
+>>>>>>> origin/dev/rupa
                         </div>
                       );
                     })}
@@ -2530,15 +3025,6 @@ export default function App() {
                       <Archive className="h-4 w-4 shrink-0" />
                       <span className="dms-action-btn-text">Archive</span>
                     </button>
-                    {current?.kind === "main" && (
-                      <button
-                        onClick={() => { setVesselToUpdate(activeVesselObj); setShowUpdateModal(true); }}
-                        className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-blue-500 cursor-pointer"
-                      >
-                        <Ship className="h-4 w-4 shrink-0" />
-                        <span className="dms-action-btn-text">Update Vessel</span>
-                      </button>
-                    )}
                     {current?.month_driven && (
                       <button
                         onClick={() => { setCreateFolderName(""); setCreateFolderError(null); setShowCreateFolderModal(true); }}
@@ -2591,11 +3077,11 @@ export default function App() {
                 <FolderGridSkeleton />
               ) : displayed.length === 0 ? (
                 children.length > 0 ? (
-                  <p className="dms-card mx-auto max-w-5xl rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
+                  <p className="dms-card w-full rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
                     Nothing matches your filter.
                   </p>
                 ) : current?.month_driven ? (
-                  <p className="dms-card mx-auto max-w-5xl rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
+                  <p className="dms-card w-full rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
                     No month folders yet — upload a document to auto-create one, or click <strong className="text-primary">Create Folder</strong> to add one manually.
                   </p>
                 ) : (
@@ -2780,13 +3266,75 @@ export default function App() {
                   Cancel
                 </button>
                 <button
-                  onClick={() => handleBulkFolderArchive()}
+                  onClick={() => {
+                    const selected = children.filter((c) => archiveSelectIds.has(c.id));
+                    const includesFile = selected.some((n) => n.kind === "file");
+                    const isAdminUser = ADMIN_EMAILS.includes((user?.email || "").toLowerCase());
+                    if (includesFile && !isAdminUser) {
+                      setShowArchiveSelectModal(false);
+                      setShowArchiveReasonModal(true);
+                    } else {
+                      void handleBulkFolderArchive();
+                    }
+                  }}
                   disabled={archiveSelectIds.size === 0}
                   className="flex-1 rounded-lg bg-amber-600 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Archive {archiveSelectIds.size > 0 ? `(${archiveSelectIds.size})` : ""} Selected
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Archive File Request Modal (non-admin, mandatory reason) ──── */}
+      {showArchiveReasonModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div
+            className="absolute inset-0"
+            onClick={() => { setShowArchiveReasonModal(false); setArchiveReason(""); }}
+          />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-black/5">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50">
+                <Archive className="h-5 w-5 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-slate-800">Archive File Request</h3>
+              </div>
+            </div>
+
+            <p className="mb-2 text-xs text-slate-500">
+              Please provide the reason for archiving this file. This reason will be included in the
+              approval request for the SPE Admin to review.
+            </p>
+            <label className="mb-1 block text-xs font-medium text-slate-700">
+              Reason for Archiving <span className="text-rose-500">*</span>
+            </label>
+            <textarea
+              value={archiveReason}
+              onChange={(e) => setArchiveReason(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="Explain why this file should be archived…"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
+            />
+
+            <div className="mt-5 flex gap-3">
+              <button
+                onClick={() => { setShowArchiveReasonModal(false); setArchiveReason(""); }}
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => archiveReason.trim() && void handleBulkFolderArchive(archiveReason.trim())}
+                disabled={!archiveReason.trim()}
+                className="flex-1 rounded-lg bg-amber-600 py-2.5 text-sm font-semibold text-white hover:bg-amber-500 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Submit Request
+              </button>
             </div>
           </div>
         </div>
@@ -3288,7 +3836,61 @@ export default function App() {
       )}
 
       {/* ── Delete File Confirmation Modal ──────────────────────── */}
-      {deleteFileNode && (
+      {deleteFileNode && deleteFileNode.kind === "file" && !ADMIN_EMAILS.includes((user?.email || "").toLowerCase()) ? (
+        // Non-admin deleting a file: mandatory reason, becomes a pending approval request.
+        <div className="fixed inset-0 z-[70] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => { setDeleteFileNode(null); setDeleteReason(""); }} />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-black/5">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50">
+                <Trash2 className="h-5 w-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-slate-800">Delete File Request</h3>
+              </div>
+            </div>
+
+            <div className="mb-3 rounded-lg border border-slate-100 bg-slate-50 px-4 py-3">
+              <p className="truncate text-sm font-medium text-slate-700" title={deleteFileNode.name}>
+                {deleteFileNode.name}
+              </p>
+            </div>
+
+            <p className="mb-2 text-xs text-slate-500">
+              Please provide the reason for deleting this file. This reason will be included in the
+              approval request for the SPE Admin to review.
+            </p>
+            <label className="mb-1 block text-xs font-medium text-slate-700">
+              Reason for Deletion <span className="text-rose-500">*</span>
+            </label>
+            <textarea
+              value={deleteReason}
+              onChange={(e) => setDeleteReason(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="Explain why this file should be deleted…"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-rose-400 focus:outline-none focus:ring-2 focus:ring-rose-100"
+            />
+
+            <div className="mt-5 flex gap-3">
+              <button
+                onClick={() => { setDeleteFileNode(null); setDeleteReason(""); }}
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteReason.trim() && void confirmDeleteFile(deleteReason.trim())}
+                disabled={!deleteReason.trim()}
+                className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white hover:bg-rose-700 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Submit Request
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : deleteFileNode && (
+        // Admin, or a folder: existing immediate-confirmation flow, unchanged.
         <div className="fixed inset-0 z-[70] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setDeleteFileNode(null)} />
           <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-black/5">
@@ -3501,16 +4103,16 @@ function FolderGrid({
     : vesselFolders;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="w-full space-y-7">
       {/* If isMainFolder, we separate common from vessel folders */}
       {isMainFolder ? (
         <>
           {commonFolder && (
-            <div className="mb-6">
-              <p className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-400">
+            <div className="mb-7">
+              <p className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-400">
                 Common Agreements / Documents
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="sm:col-span-1 lg:col-span-1">
                   <FolderCard key={commonFolder.id} node={commonFolder} accent={accent} onOpen={onOpen} isBig={true} />
                 </div>
@@ -3520,12 +4122,12 @@ function FolderGrid({
 
           {vesselFolders.length > 0 && (
             <div>
-              <p className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-400">
+              <p className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-400">
                 Vessels
               </p>
               {layout === "grid" ? (
                 <>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     {displayedVessels.map((n) => (
                       <FolderCard key={n.id} node={n} accent={accent} onOpen={onOpen} />
                     ))}
@@ -3534,7 +4136,7 @@ function FolderGrid({
                     <div className="mt-4 flex justify-center">
                       <button
                         onClick={() => setShowAllVessels(!showAllVessels)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-slate-800"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-slate-800"
                       >
                         {showAllVessels ? (
                           <>
@@ -3563,7 +4165,7 @@ function FolderGrid({
         /* Standard rendering */
         folders.length > 0 &&
         (layout === "grid" ? (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {folders.map((n) => (
               <FolderCard key={n.id} node={n} accent={accent} onOpen={onOpen} />
             ))}
@@ -3579,11 +4181,11 @@ function FolderGrid({
 
       {files.length > 0 && (
         <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-subtle">
+          <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-subtle">
             Files
           </p>
           {layout === "grid" ? (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {files.map((f) => (
                 <FileCard key={f.id} file={f} onPreview={onPreview} onDelete={onDelete} onDownload={onDownload} onRenew={onRenew} />
               ))}
@@ -3628,21 +4230,21 @@ function FolderCard({
   return (
     <button
       onClick={() => onOpen(node)}
-      className={`dms-card dms-card-hover group flex w-full items-center gap-3 rounded-xl text-left ${isBig ? "p-5" : "p-4"}`}
+      className={`dms-card dms-card-hover group flex w-full items-center gap-4 rounded-2xl text-left cursor-pointer ${isBig ? "p-6" : "p-5"}`}
     >
-      <span className={`flex shrink-0 items-center justify-center rounded-xl transition ${isBig ? "h-14 w-14" : "h-11 w-11"} ${accent.chip}`}>
-        <Icon className={`${isBig ? "h-6 w-6" : "h-5 w-5"} ${cls}`} />
+      <span className={`flex shrink-0 items-center justify-center rounded-xl transition ${isBig ? "h-16 w-16" : "h-12 w-12"} ${accent.chip}`}>
+        <Icon className={`${isBig ? "h-7 w-7" : "h-6 w-6"} ${cls}`} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className={`block font-semibold text-fg break-words whitespace-normal ${isBig ? "text-base" : "text-sm"}`} title={node.name}>{node.name}</span>
-        <span className="mt-0.5 block text-xs text-muted">{folderSubtitle(node)}</span>
+        <span className={`block font-semibold text-fg wrap-break-word whitespace-normal ${isBig ? "text-lg" : "text-base"}`} title={node.name}>{node.name}</span>
+        <span className="mt-0.5 block text-sm text-muted">{folderSubtitle(node)}</span>
       </span>
       {node.month_driven && (
-        <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent ring-1 ring-accent/20">
+        <span className="rounded-full bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent ring-1 ring-accent/20">
           auto-month
         </span>
       )}
-      <ChevronRight className="h-4 w-4 shrink-0 text-subtle transition group-hover:translate-x-0.5 group-hover:text-primary" />
+      <ChevronRight className="h-5 w-5 shrink-0 text-subtle transition group-hover:translate-x-0.5 group-hover:text-primary" />
     </button>
   );
 }
@@ -3660,13 +4262,13 @@ function FolderRow({
   return (
     <button
       onClick={() => onOpen(node)}
-      className="group flex w-full items-center gap-3 px-4 py-2.5 text-left transition hover:bg-bg"
+      className="group flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-bg cursor-pointer"
     >
       <span className={"flex h-8 w-8 shrink-0 items-center justify-center rounded-lg " + accent.chip}>
         <Icon className={"h-4 w-4 " + cls} />
       </span>
-      <span className="flex-1 text-sm font-medium text-fg break-words whitespace-normal" title={node.name}>{node.name}</span>
-      <span className="text-xs text-subtle">{folderSubtitle(node)}</span>
+      <span className="flex-1 text-base font-medium text-fg wrap-break-word whitespace-normal" title={node.name}>{node.name}</span>
+      <span className="text-sm text-subtle">{folderSubtitle(node)}</span>
       <ChevronRight className="h-4 w-4 text-subtle group-hover:text-primary" />
     </button>
   );

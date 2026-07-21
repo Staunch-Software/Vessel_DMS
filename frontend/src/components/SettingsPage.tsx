@@ -27,7 +27,7 @@ export function SettingsPage({ onBack, onSelectThemeSettings }: Props) {
       </header>
 
       <div className="dms-page-bg flex-1 overflow-y-auto dms-page-px dms-page-py">
-        <div className="mx-auto max-w-3xl">
+        <div className="w-full">
           <div className="dms-card border border-border bg-surface p-6 shadow-xl rounded-2xl">
             <h3 className="mb-4 text-sm font-semibold text-fg uppercase tracking-wider">
               System Preferences

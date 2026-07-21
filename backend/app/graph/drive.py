@@ -117,7 +117,8 @@ async def move_item(
     """Move (and optionally rename) a driveItem in place — same item id, new parent.
 
     Used by the approval workflow to relocate a staged upload to its final
-    destination (or to a "To be Classified" folder) without re-uploading bytes.
+    destination (or to a fallback folder — "To be Classified", "Other
+    Drawings", or "Other Manuals") without re-uploading bytes.
     """
     body: dict = {"parentReference": {"id": new_parent_id}}
     if new_name:

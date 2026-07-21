@@ -81,6 +81,11 @@
   /* Custom animations */
   --animate-fade-in: fadeIn 0.15s ease-out;
   --animate-scale-up: scaleUp 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+  --animate-twinkle: twinkle 3.2s ease-in-out infinite;
+  --animate-ken-burns: kenBurns 26s ease-in-out infinite;
+  --animate-float-drift: floatDrift 10s ease-in-out infinite;
+  --animate-card-float: cardFloat 6s ease-in-out infinite;
+  --animate-sheen: sheenSweep 8s ease-in-out infinite;
 
   @keyframes fadeIn {
     from { opacity: 0; }
@@ -89,6 +94,26 @@
   @keyframes scaleUp {
     from { transform: scale(0.96); opacity: 0; }
     to { transform: scale(1); opacity: 1; }
+  }
+  @keyframes twinkle {
+    0%, 100% { opacity: 0.25; }
+    50% { opacity: 0.95; }
+  }
+  @keyframes kenBurns {
+    0%, 100% { transform: scale(1) translate3d(0, 0, 0); }
+    50% { transform: scale(1.09) translate3d(-1.5%, -1%, 0); }
+  }
+  @keyframes floatDrift {
+    0%, 100% { transform: translate(0, 0); }
+    50% { transform: translate(12px, -22px); }
+  }
+  @keyframes cardFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+  }
+  @keyframes sheenSweep {
+    0% { transform: translateX(-130%) rotate(8deg); }
+    100% { transform: translateX(130%) rotate(8deg); }
   }
 }
 
@@ -323,6 +348,39 @@ textarea::placeholder {
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-primary) 18%, transparent);
 }
 
+.dms-auth-grain {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 140px 140px;
+}
+
+.dms-auth-card {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.02));
+  backdrop-filter: blur(24px);
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.35),
+    0 6px 20px rgba(0, 0, 0, 0.2),
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset,
+    0 1px 0 rgba(255, 255, 255, 0.16) inset;
+}
+
+.dms-auth-input {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  color: #fff;
+}
+
+.dms-auth-input::placeholder {
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.dms-auth-input:focus {
+  outline: none;
+  border-color: color-mix(in oklab, var(--color-accent) 65%, white);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 28%, transparent);
+}
+
 .dms-search-pill {
   border-radius: 999px;
   border: 1px solid color-mix(in oklab, var(--color-primary) 28%, var(--color-border));
@@ -406,12 +464,12 @@ textarea::placeholder {
 
 /* Responsive page padding: reduce on smaller screens */
 .dms-page-px {
-  padding-left: 2rem;   /* 8 → px-8 */
-  padding-right: 2rem;
+  padding-left: 1.75rem;
+  padding-right: 1.75rem;
 }
 .dms-page-py {
-  padding-top: 1.5rem;  /* 6 → py-6 */
-  padding-bottom: 1.5rem;
+  padding-top: 1.75rem;
+  padding-bottom: 1.75rem;
 }
 
 /* Min touch target size (44×44px) for icon buttons */
@@ -467,8 +525,8 @@ textarea::placeholder {
 /* ── MOBILE (≤ 640px) ───────────────────────── */
 @media (max-width: 640px) {
   .dms-page-px {
-    padding-left: 0.75rem;
-    padding-right: 0.75rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
   }
   .dms-page-py {
     padding-top: 1rem;

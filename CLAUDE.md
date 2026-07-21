@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Vessel DMS — a document management system for ship/vessel management built on **SharePoint Embedded (SPE)**. Documents are uploaded through a React UI and stored in a single shared SPE container under a strict, opinionated folder hierarchy (three top-level areas × per-ship folders + a "Common for all ships" folder). Certain folders are "month-driven": uploads are auto-filed into `{Month YYYY}` sub-folders based on a date OCR'd/parsed from the document itself, with a fallback scheduler that pre-creates next month's folders on the 20th.
 
+Uploads are never filed directly: every upload creates a staged **approval request** that an admin must approve or reject (see "Approval workflow" below).
+
 ```
 React + Vite + Tailwind  ──HTTP──>  FastAPI  ──Microsoft Graph (app-only)──>  SPE container (one drive)
                                        │
