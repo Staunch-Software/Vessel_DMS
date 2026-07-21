@@ -326,119 +326,105 @@ function SessionExpiredView({
 
 function SignedOutView({ onSignBackIn }: { onSignBackIn: () => void }) {
     return (
-        <PageShell>
-            <main className="relative z-10 px-4 md:px-14 py-8 md:py-14 flex flex-col lg:flex-row gap-8 lg:gap-12 items-start justify-between">
-                {/* Left column */}
-                <div className="w-full lg:max-w-[calc(100%-30rem)] lg:pr-8 mb-12 lg:mb-0">
-                    <div className="flex items-center gap-2 text-primary text-[11px] tracking-[0.2em] font-semibold mb-6">
-                        <span className="w-6 h-px bg-primary inline-block" />
-                        NISSEN KAIUN SINGAPORE FLEET
-                    </div>
+        <div className="min-h-screen w-full relative overflow-hidden flex flex-col text-white">
+            {/* Hero photo background */}
+            <div className="absolute inset-0 -z-20 overflow-hidden">
+                <img
+                    src={SHIP_HERO_IMAGE}
+                    alt=""
+                    className="w-full h-full object-cover animate-ken-burns"
+                />
+                <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/45 to-black/60" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-black/40" />
+                <div className="dms-auth-grain absolute inset-0 opacity-40 mix-blend-overlay" />
+                <div className="absolute inset-0 overflow-hidden">
+                    <div className="absolute -inset-y-1/2 w-1/3 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-sheen" />
+                </div>
+            </div>
 
-                    <h1 className="font-serif text-3xl sm:text-5xl md:text-[3.75rem] leading-[1.05] text-fg mb-6 font-semibold">
-                        Premium global shipping,
+            <BokehField />
+
+            {/* Top status bar */}
+            <header className="relative z-10 flex items-center justify-end px-6 md:px-12 py-6">
+                <div className="hidden sm:flex items-center gap-2 text-[10px] tracking-[0.15em] text-white/70 font-medium">
+                    <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+                    </span>
+                    SYSTEM ONLINE
+                </div>
+            </header>
+
+            {/* Main content — same layout as login, sign-out card content */}
+            <main className="relative z-10 flex-1 w-full max-w-[1480px] mx-auto flex flex-col lg:flex-row items-center lg:justify-center gap-8 lg:gap-20 xl:gap-28 px-6 md:px-12 lg:px-16 pb-10">
+                {/* Headline */}
+                <div className="max-w-xl text-center lg:text-left">
+                    <div className="inline-flex items-center gap-2 text-[11px] tracking-[0.25em] font-semibold text-white/75 mb-6 drop-shadow-md">
+                        <span className="w-6 h-px bg-white/50 inline-block" />
+                        VESSEL DOCUMENT MANAGEMENT SYSTEM
+                    </div>
+                    <h1 className="font-serif text-4xl sm:text-5xl lg:text-6xl xl:text-[3.85rem] leading-[1.12] font-semibold mb-8 drop-shadow-[0_4px_18px_rgba(0,0,0,0.55)]">
+                        Every <span className="italic text-accent">document</span>,
                         <br />
-                        <span className="italic bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">managed locally.</span>
+                        every vessel, in one place.
                     </h1>
-
-                    <p className="text-fg/85 text-base md:text-lg leading-relaxed max-w-xl mb-10">
-                        Nissen Kaiun Singapore oversees the{" "}
-                        <strong className="font-semibold text-fg">technical management</strong>,{" "}
-                        <strong className="font-semibold text-fg">crewing</strong>, and{" "}
-                        <strong className="font-semibold text-fg">compliance</strong> of a high-specification global fleet. Operating state-of-the-art bulkers, eco-friendly container ships, and advanced product tankers, we uphold the highest international safety standards.
+                    <p className="text-base xl:text-lg leading-relaxed text-white/85 mb-8 drop-shadow-md max-w-lg mx-auto lg:mx-0">
+                        Centralize documents, survey reports, and compliance records across the fleet — with automatic renewal alerts and a full audit trail for every document, on every hull.
                     </p>
-
-                    {/* Feature cards */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 max-w-xl mb-10">
-                        <FeatureCard
-                            icon={<Ship className="w-4 h-4" />}
-                            title="Modern Fleet"
-                            copy="Over 100 high-spec bulkers, tankers, and boxships."
-                        />
-                        <FeatureCard
-                            icon={<Compass className="w-4 h-4" />}
-                            title="Global Routing"
-                            copy="Reliable sea transport routes across all major oceans."
-                        />
-                        <FeatureCard
-                            icon={<Award className="w-4 h-4" />}
-                            title="Class Certified"
-                            copy="Classified under top maritime boards for safety."
-                        />
-                    </div>
-
-                    {/* System Stats panel */}
-                    <div className="dms-card max-w-xl overflow-hidden">
-                        <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-                            <div className="flex items-center gap-2 text-[11px] tracking-[0.15em] font-semibold text-muted">
-                                <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" />
-                                SYSTEM OVERVIEW
-                            </div>
-                            <div className="text-[11px] tracking-[0.1em] text-muted">
-                                LIVE STATUS
-                            </div>
-                        </div>
-
-                        <StatusRow
-                            dotColor="bg-primary"
-                            title="Document Repository"
-                            subtitle="Certificates, surveys & reports · SharePoint Embedded"
-                            status="ONLINE"
-                            statusColor="text-primary"
-                        />
-                        <StatusRow
-                            dotColor="bg-primary"
-                            title="Approval Workflow"
-                            subtitle="Multi-level review & sign-off · Audit trail enabled"
-                            status="ACTIVE"
-                            statusColor="text-primary"
-                        />
-                        <StatusRow
-                            dotColor="bg-primary"
-                            title="Azure AD Authentication"
-                            subtitle="Microsoft SSO · Role-based access control"
-                            status="SECURED"
-                            statusColor="text-primary"
-                            last
-                        />
-                    </div>
+                    <div className="h-px w-16 bg-gradient-to-r from-accent to-transparent mb-5 mx-auto lg:mx-0" />
+                    <p className="text-[11px] tracking-[0.15em] text-white/60 uppercase drop-shadow-md">
+                        Trusted for fleet-wide maritime compliance
+                    </p>
                 </div>
 
-                {/* Right column — auth card */}
-                <div className="relative lg:fixed z-10 w-full max-w-md lg:w-[26rem] top-auto right-auto lg:top-[7.5rem] lg:right-[3.5rem] self-center lg:self-auto">
-                    <Anchor
-                        className="absolute -top-6 -right-6 w-28 h-28 text-primary/10 -z-10"
-                        strokeWidth={1}
-                    />
+                {/* Sign-out card */}
+                <div className="w-full max-w-lg">
+                    <div className="flex items-center justify-center gap-3 mb-10 md:mb-12">
+                        <div className="w-12 h-12 shrink-0 rounded-2xl bg-gradient-to-br from-accent/30 to-primary/20 border border-accent/30 flex items-center justify-center shadow-lg shadow-black/25 backdrop-blur-sm">
+                            <Anchor className="w-6 h-6 text-accent" strokeWidth={1.75} />
+                        </div>
+                        <div className="text-left">
+                            <div className="text-white font-bold tracking-[0.22em] text-sm drop-shadow-md">
+                                NISSEN KAIUN
+                            </div>
+                            <div className="text-[9px] tracking-[0.2em] font-medium text-white/70 drop-shadow-md">
+                                ENTERPRISE EDITION · DOCUMENT MANAGEMENT
+                            </div>
+                        </div>
+                    </div>
 
-                    <div className="dms-card rounded-2xl p-8 md:p-9">
-                        <h2 className="font-serif text-3xl text-fg mb-2 font-semibold">
+                    <div className="dms-auth-card animate-card-float rounded-[34px] p-9 md:p-11">
+                        <h2 className="text-2xl font-semibold text-white mb-1.5 text-center">
                             Signed Out
                         </h2>
-                        <p className="text-[11px] tracking-[0.12em] text-muted font-medium mb-7">
-                            YOUR SESSION WAS SECURELY CLOSED
+                        <p className="text-sm text-white/65 mb-6 text-center tracking-wide uppercase">
+                            Your session was securely closed
                         </p>
 
-                        <div className="space-y-4">
-                            <p className="text-sm text-muted leading-relaxed">
-                                Thank you for using the Vessel Document Management System.
-                                You have been successfully signed out of your account.
-                            </p>
+                        <p className="text-sm text-white/80 leading-relaxed text-center mb-6">
+                            Thank you for using the Vessel Document Management System. You have been successfully signed out of your account.
+                        </p>
 
-                            <button
-                                onClick={onSignBackIn}
-                                className="dms-btn-primary w-full py-3.5 text-sm font-semibold flex items-center justify-center gap-2 active:scale-[0.99] transition cursor-pointer"
-                            >
-                                <LogIn className="w-4 h-4" />
-                                Back to Login
-                            </button>
+                        <button
+                            onClick={onSignBackIn}
+                            className="dms-btn-primary w-full flex items-center justify-center gap-2 px-5 py-3.5 active:scale-[0.99] transition cursor-pointer"
+                        >
+                            <LogIn className="w-4 h-4" />
+                            <span className="text-sm font-semibold text-primary-fg">Back to Login</span>
+                        </button>
+
+                        <div className="flex items-center justify-center gap-1.5 mt-7 text-[10px] tracking-[0.1em] text-white/50">
+                            <ShieldCheck className="w-3.5 h-3.5 text-accent" />
+                            256-BIT TLS ENCRYPTED CONNECTION
                         </div>
-
-                        <CardFooter />
                     </div>
                 </div>
             </main>
-        </PageShell>
+
+            <p className="relative z-10 text-center pb-6 text-[10px] tracking-[0.15em] text-white/55 drop-shadow-md">
+                SECURED · SHAREPOINT EMBEDDED · © 2026 NISSEN KAIUN
+            </p>
+        </div>
     );
 }
 
