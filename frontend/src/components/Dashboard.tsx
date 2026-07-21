@@ -126,7 +126,7 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onOpenVessel, onN
                     <Ship className="h-4 w-4" style={{ color: "#D42B2B" }} />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold group-hover:underline" style={{ color: "#1a1a4e" }}>
+                    <p className="truncate text-sm font-semibold text-fg group-hover:underline">
                       {v.name}
                     </p>
                     <p className="truncate text-xs text-muted">

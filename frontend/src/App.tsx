@@ -1969,6 +1969,18 @@ export default function App() {
     }
   };
 
+  const clearLocalStoragePreserveTheme = () => {
+    try {
+      const mode = localStorage.getItem("dms-theme-mode");
+      const color = localStorage.getItem("dms-theme-color");
+      localStorage.clear();
+      if (mode) localStorage.setItem("dms-theme-mode", mode);
+      if (color) localStorage.setItem("dms-theme-color", color);
+    } catch {
+      // Ignore storage access failures.
+    }
+  };
+
   const handleSignOut = async () => {
     const sessionId = sessionStorage.getItem("session_id") || undefined;
     try {
@@ -1983,7 +1995,7 @@ export default function App() {
 
     clearSessionId();
     sessionStorage.clear();
-    localStorage.clear();
+    clearLocalStoragePreserveTheme();
 
     const account = accounts[0] || instance.getActiveAccount();
     if (account) {
@@ -2018,7 +2030,7 @@ export default function App() {
       instance.setActiveAccount(null);
     }
     sessionStorage.clear();
-    localStorage.clear();
+    clearLocalStoragePreserveTheme();
     setUser(null);
     setSessionExpiredReason(reason);
   };
@@ -2061,7 +2073,7 @@ export default function App() {
 
     clearSessionId();
     sessionStorage.clear();
-    localStorage.clear();
+    clearLocalStoragePreserveTheme();
     // Clear MSAL cache silently
     if (accounts.length > 0) {
       instance.setActiveAccount(null);
