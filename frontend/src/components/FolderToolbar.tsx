@@ -22,9 +22,9 @@ export function FolderToolbar({
   query, setQuery, typeKey, setTypeKey, sort, setSort, view, setView,
 }: Props) {
   return (
-    <div className="dms-folder-toolbar mx-auto mb-4 flex max-w-5xl flex-wrap items-center gap-2">
+    <div className="dms-folder-toolbar mb-4 flex w-full flex-wrap items-center gap-2">
       {/* Search — always full width on mobile */}
-      <div className="relative w-full sm:flex-1 sm:min-w-[180px]">
+      <div className="relative w-full sm:flex-1 sm:min-w-45">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle" />
         <input
           value={query}

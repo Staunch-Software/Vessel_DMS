@@ -44,7 +44,7 @@ export function Breadcrumb({
                   "flex items-center gap-1 rounded-md px-1.5 py-0.5 transition truncate max-w-[8rem] " +
                   (last
                     ? "font-semibold text-fg cursor-default"
-                    : "text-muted hover:bg-surface2 hover:text-primary")
+                    : "text-muted hover:bg-surface2 hover:text-primary cursor-pointer")
                 }
                 title={c.name}
               >
@@ -70,7 +70,7 @@ export function Breadcrumb({
                   "flex items-center gap-1 rounded-md px-1.5 py-0.5 transition max-w-[12rem] " +
                   (last
                     ? "font-semibold text-fg cursor-default"
-                    : "text-muted hover:bg-surface2 hover:text-primary")
+                    : "text-muted hover:bg-surface2 hover:text-primary cursor-pointer")
                 }
                 title={c.name}
               >

@@ -211,7 +211,7 @@ export function Approvals({
       </header>
 
       <div className="dms-page-bg flex-1 overflow-y-auto dms-page-px dms-page-py">
-        <div className="mx-auto max-w-5xl space-y-4">
+        <div className="w-full space-y-4">
           {/* Tabs + search — wrap on mobile */}
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             <div className="flex flex-wrap overflow-hidden rounded-lg border border-border bg-surface">

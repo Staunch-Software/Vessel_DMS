@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { createPortal } from "react-dom";
-import { ChevronRight, ChevronDown, ChevronUp, Menu, MoreVertical, Download, RotateCcw, FolderOpen, FolderPlus, Trash2, X, Archive, ArchiveRestore, Eye, FileText, ShieldOff, Plus, Ship, Clock3 } from "lucide-react";
+import { ChevronRight, ChevronDown, ChevronUp, Menu, MoreVertical, Download, RotateCcw, FolderOpen, FolderPlus, Trash2, X, Archive, ArchiveRestore, Eye, FileText, ShieldOff, Plus, Ship, Clock3, Anchor } from "lucide-react";
 import { ApprovalResultPopup, type ApprovalResultItem } from "./components/ApprovalResultPopup";
 import { DuplicateFilePopup, type DuplicateFileInfo } from "./components/DuplicateFilePopup";
 import { listMyApprovals, listApprovals } from "./api";
@@ -41,7 +41,7 @@ import {
   type Vessel,
 } from "./api";
 import { useMsal } from "@azure/msal-react";
-import { LoginPage } from "./components/Login";
+import { LoginPage, RETURNING_USER_STORAGE_KEY } from "./components/Login";
 
 const cleanFolderName = (name: string): string => {
   if (!name) return "";
@@ -262,17 +262,24 @@ export default function App() {
   const [mains, setMains] = useState<FolderNode[]>([]);
   const [vessels, setVessels] = useState<Vessel[]>([]);
   const [user, setUser] = useState<{ display_name: string; email: string } | null>(null);
+  // Guards the redirect-handler and auto-authenticate effects below from both
+  // calling /api/auth/login for the same sign-in — without this, MSAL's
+  // `accounts` array can populate while the redirect effect's own fetch is
+  // still in flight, letting the auto-authenticate effect race in and create
+  // a second backend session for one actual login.
+  const authRequestRef = useRef<"idle" | "pending" | "done">("idle");
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
   const [showFullPhoto, setShowFullPhoto] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { instance, accounts, inProgress } = useMsal();
   const [stats, setStats] = useState<Stats | null>(null);
-  const [view, setView] = useState<"dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance">(() => {
+  const [view, setView] = useState<"dashboard" | "explorer" | "vessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance">(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const v = params.get("view");
-      if (v === "explorer" || v === "profile" || v === "dashboard" || v === "archive" || v === "recycle_bin" || v === "approvals" || v === "settings" || v === "appearance") {
-        return v as "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance";
+      if (v === "explorer" || v === "profile" || v === "dashboard" || v === "vessels" || v === "archive" || v === "recycle_bin" || v === "approvals" || v === "settings" || v === "appearance") {
+        return v as "dashboard" | "explorer" | "vessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance";
       }
     }
     return "dashboard";
@@ -436,6 +443,8 @@ export default function App() {
       sessionStorage.setItem("test_login", "true");
     }
     if (sessionStorage.getItem("test_login") === "true" && !user) {
+      if (authRequestRef.current !== "idle") return;
+      authRequestRef.current = "pending";
       fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -452,6 +461,7 @@ export default function App() {
             display_name: payload.display_name || "Test User",
             email: payload.email || "testuser@example.com",
           });
+          authRequestRef.current = "done";
         })
         .catch((err) => {
           console.error("Mock login fetch failed, falling back to local state:", err);
@@ -460,6 +470,7 @@ export default function App() {
             display_name: "Test User",
             email: "testuser@example.com",
           });
+          authRequestRef.current = "idle";
         });
     }
   }, [user]);
@@ -489,6 +500,12 @@ export default function App() {
           );
           return;
         }
+        // Claim the login synchronously before awaiting anything — if the
+        // auto-authenticate effect's own promise resolves and its callback
+        // runs before this one, it will see "pending"/"done" and bail out
+        // instead of also calling /api/auth/login for the same sign-in.
+        if (authRequestRef.current !== "idle") return;
+        authRequestRef.current = "pending";
         try {
           const res = await fetch("/api/auth/login", {
             method: "POST",
@@ -513,6 +530,7 @@ export default function App() {
                 payload.display_name || result.account.name || result.account.username,
               email: email,
             });
+            authRequestRef.current = "done";
           } else {
             // Try to extract a meaningful message from the response body
             let errMsg = "Signed in with Microsoft, but the server rejected the session. Please try again.";
@@ -522,12 +540,14 @@ export default function App() {
               else if (typeof errBody?.detail === "string") errMsg = errBody.detail;
             } catch {}
             setAuthError(errMsg);
+            authRequestRef.current = "idle";
           }
         } catch (e) {
           if (active) {
             console.error("Backend login sync failed after redirect", e);
             setAuthError("Could not reach the server to complete sign-in. Please try again.");
           }
+          authRequestRef.current = "idle";
         }
       })
       .catch((err) => {
@@ -566,6 +586,10 @@ export default function App() {
         .then(async (response) => {
           console.info("[auth] acquireTokenSilent succeeded, calling /api/auth/login");
           if (!active) return;
+          // Same claim as the redirect-handler effect above — whichever of
+          // the two actually gets here first wins; the other bails out.
+          if (authRequestRef.current !== "idle") return;
+          authRequestRef.current = "pending";
           try {
             const res = await fetch("/api/auth/login", {
               method: "POST",
@@ -590,6 +614,7 @@ export default function App() {
                 email,
               });
               setAuthError(null);
+              authRequestRef.current = "done";
             } else {
               const body = await res.text();
               // Try to extract a structured error message
@@ -601,10 +626,12 @@ export default function App() {
               } catch {}
               console.error("Backend validation failed during auto-login:", res.status, body);
               setAuthError(errMsg);
+              authRequestRef.current = "idle";
             }
           } catch (e) {
             console.error("Backend login sync failed during auto-login", e);
             setAuthError(`Could not reach the server to complete sign-in. Connection failed: ${e instanceof Error ? e.message : String(e)}`);
+            authRequestRef.current = "idle";
           }
         })
         .catch((err) => {
@@ -627,6 +654,19 @@ export default function App() {
         setProfilePhoto(data.photo_base64 || null);
       })
       .catch(() => {});
+  }, [user]);
+
+  // Marks this browser as having completed a successful login before, so the
+  // next visit to the login page can greet with "Welcome Back" instead of "Welcome".
+  useEffect(() => {
+    if (!user) return;
+    try {
+      if (localStorage.getItem(RETURNING_USER_STORAGE_KEY) !== "true") {
+        localStorage.setItem(RETURNING_USER_STORAGE_KEY, "true");
+      }
+    } catch {
+      // Ignore storage errors (e.g. private browsing) — greeting just falls back to default.
+    }
   }, [user]);
 
   const handleDismissApprovalResult = useCallback((id: string) => {
@@ -811,7 +851,7 @@ export default function App() {
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const expireSessionRef = useRef<(reason: "inactivity" | "token_expiry") => void>(() => { });
 
-  const navigateTo = useCallback((newView: "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings", newPath: PathEntry[]) => {
+  const navigateTo = useCallback((newView: "dashboard" | "explorer" | "vessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance", newPath: PathEntry[]) => {
     setView(newView);
     setPath(newPath);
 
@@ -854,8 +894,8 @@ export default function App() {
         return;
       }
 
-      if (state.view === "dashboard" || state.view === "explorer" || state.view === "profile" || state.view === "archive" || state.view === "recycle_bin") {
-        setView(state.view as "dashboard" | "explorer" | "profile" | "archive" | "recycle_bin");
+      if (state.view === "dashboard" || state.view === "explorer" || state.view === "vessels" || state.view === "profile" || state.view === "archive" || state.view === "recycle_bin" || state.view === "approvals" || state.view === "settings" || state.view === "appearance") {
+        setView(state.view as "dashboard" | "explorer" | "vessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance");
         setPath(state.path || []);
       } else {
         setView("dashboard");
@@ -887,17 +927,6 @@ export default function App() {
   const selectedVesselObj = vessels.find((v) => v.id === selectedVesselId) ?? null;
   const selectedVesselName = selectedVesselObj?.name ?? null;
   const searchQuery = searchQueryByPage[pageKey] ?? "";
-
-  const activeVesselObj = useMemo(() => {
-    if (path.length > 1) {
-      const vName = path[1].name;
-      return vessels.find((v) => v.name.toLowerCase() === vName.toLowerCase()) || null;
-    }
-    if (selectedVesselId) {
-      return vessels.find((v) => v.id === selectedVesselId) || null;
-    }
-    return null;
-  }, [path, vessels, selectedVesselId]);
 
   const loadCurrent = useCallback(async () => {
     if (!currentId) {
@@ -946,15 +975,70 @@ export default function App() {
 
   // ----- navigation -----
   const goDashboard = () => navigateTo("dashboard", []);
+  const goVessels = () => navigateTo("vessels", []);
   const goProfile = () => navigateTo("profile", []);
   const goApprovals = () => navigateTo("approvals", []);
   const goSettings = () => navigateTo("settings", []);
-  const openMain = (node: FolderNode) => navigateTo("explorer", [{ id: node.id, name: node.name }]);
+  const openMainToSelectedVessel = useCallback(async (node: FolderNode): Promise<boolean> => {
+    const selectedForMainId =
+      selectedVesselByPage[node.name] ??
+      selectedVesselByPage.vessels ??
+      null;
+    const selectedForMainName =
+      vessels.find((v) => v.id === selectedForMainId)?.name?.trim().toLowerCase() ?? null;
+
+    if (selectedForMainName) {
+      try {
+        const mainChildren = await getChildren(node.id);
+        const vesselNode = mainChildren.find(
+          (c) =>
+            c.kind !== "file" &&
+            c.name.trim().toLowerCase() === selectedForMainName
+        );
+        if (vesselNode) {
+          navigateTo("explorer", [
+            { id: node.id, name: node.name },
+            { id: vesselNode.id, name: vesselNode.name },
+          ]);
+          return true;
+        }
+      } catch {
+        // If lookup fails, fall back to opening the main folder level.
+      }
+    }
+
+    return false;
+  }, [navigateTo, selectedVesselByPage, vessels]);
+
+  const openMain = async (node: FolderNode) => {
+    const opened = await openMainToSelectedVessel(node);
+    if (!opened) {
+      navigateTo("explorer", [{ id: node.id, name: node.name }]);
+    }
+  };
   const openChild = (node: FolderNode) => {
     if (node.kind === "file") return;
+    if (node.kind === "main") {
+      void (async () => {
+        const opened = await openMainToSelectedVessel(node);
+        if (!opened) {
+          navigateTo("explorer", [{ id: node.id, name: node.name }]);
+        }
+      })();
+      return;
+    }
     navigateTo("explorer", [...path, { id: node.id, name: node.name }]);
   };
-  const crumbTo = (i: number) => navigateTo("explorer", i === 0 ? [] : path.slice(0, i));
+  const crumbTo = (i: number) => {
+    // In selected-vessel flow, clicking the main-folder crumb should return
+    // to the mains landing page (Home) instead of showing main-level
+    // Common/Vessels grouping cards.
+    if (i === 1 && path.length >= 2 && selectedVesselByPage.vessels) {
+      navigateTo("explorer", []);
+      return;
+    }
+    navigateTo("explorer", i === 0 ? [] : path.slice(0, i));
+  };
 
   const handleArchiveMenuToggle = (e: React.MouseEvent, folderId: string) => {
     e.stopPropagation();
@@ -986,6 +1070,79 @@ export default function App() {
     setView("explorer");
     setPath(trail.map((t) => ({ id: t.id, name: t.name })));
   };
+
+  const openVesselFromDashboard = useCallback(async (vessel: Vessel) => {
+    const pushOpenFailToast = (detail: string) => {
+      setToasts((prev) => [
+        ...prev,
+        {
+          id: Date.now(),
+          status: "failed",
+          title: "Could not open vessel",
+          detail,
+        },
+      ]);
+    };
+
+    try {
+      const results = await search(vessel.name);
+      const normalized = vessel.name.trim().toLowerCase();
+      const currentMainId = path[0]?.id;
+      const pickBestShipHit = (candidates: SearchResult[]) => {
+        if (candidates.length === 0) return undefined;
+        if (currentMainId) {
+          const inCurrentMain = candidates.find((r) => r.trail[0]?.id === currentMainId);
+          if (inCurrentMain) return inCurrentMain;
+        }
+
+        const preferredMainOrder = ["Technical & Crewing", "Commercial & Chartering", "Insurance"];
+        for (const mainName of preferredMainOrder) {
+          const inPreferredMain = candidates.find((r) => r.trail[0]?.name === mainName);
+          if (inPreferredMain) return inPreferredMain;
+        }
+
+        return candidates[0];
+      };
+
+      const exactShips = results.filter(
+        (r) => r.kind === "ship" && r.name.trim().toLowerCase() === normalized
+      );
+      const anyShips = results.filter((r) => r.kind === "ship");
+      const shipHit = pickBestShipHit(exactShips) ?? pickBestShipHit(anyShips);
+
+      if (shipHit && shipHit.trail.length > 0) {
+        navigateTo(
+          "explorer",
+          shipHit.trail.map((t) => ({ id: t.id, name: t.name }))
+        );
+        return;
+      }
+
+      if (mains.length > 0) {
+        navigateTo("explorer", [{ id: mains[0].id, name: mains[0].name }]);
+      }
+
+      pushOpenFailToast(`Could not locate folder path for ${vessel.name}.`);
+    } catch (e) {
+      pushOpenFailToast(errDetail(e, `Failed to open ${vessel.name}.`));
+    }
+  }, [mains, navigateTo, path, setToasts]);
+
+  const openVesselFromVesselsView = useCallback((vessel: Vessel) => {
+    // Open main-folder page first, then keep the vessel preselected per main
+    // so the user can choose a main and immediately see that vessel context.
+    setSelectedVesselByPage((prev) => {
+      const next: Record<string, string | null> = {
+        ...prev,
+        vessels: vessel.id,
+      };
+      for (const main of mains) {
+        next[main.name] = vessel.id;
+      }
+      return next;
+    });
+    navigateTo("explorer", []);
+  }, [mains, navigateTo]);
 
   // ----- displayed items (vessel scope + filter + sort) -----
   const displayed = useMemo(() => {
@@ -2061,6 +2218,7 @@ export default function App() {
         userPhotoBase64={profilePhoto}
         onSelectMain={openMain}
         onDashboard={goDashboard}
+        onVessels={goVessels}
         onNewVessel={() => setShowModal(true)}
         onSignOut={handleSignOut}
         onGlobalSignOut={handleGlobalSignOut}
@@ -2072,6 +2230,9 @@ export default function App() {
         onApprovals={goApprovals}
         mobileOpen={sidebarOpen}
         onMobileClose={() => setSidebarOpen(false)}
+        collapsed={sidebarCollapsed}
+        onCollapse={() => setSidebarCollapsed(true)}
+        onExpand={() => setSidebarCollapsed(false)}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden min-w-0">
@@ -2080,13 +2241,24 @@ export default function App() {
           {/* Left: Mobile hamburger menu and brand */}
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setSidebarOpen(true)}
+              onClick={() => {
+                if (typeof window !== "undefined" && window.innerWidth > 1024) {
+                  setSidebarCollapsed(false);
+                  return;
+                }
+                setSidebarOpen(true);
+              }}
               className="lg:hidden dms-touch-btn rounded-lg text-fg hover:bg-surface2 transition"
               aria-label="Open sidebar"
             >
               <Menu className="h-5 w-5" />
             </button>
-            <span className="text-sm font-semibold text-fg lg:hidden truncate">Nissen DMS</span>
+            <span className="flex items-center gap-2 lg:hidden">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/15 text-primary ring-1 ring-primary/25">
+                <Anchor className="h-3.5 w-3.5" strokeWidth={2} />
+              </span>
+              <span className="text-sm font-semibold text-fg truncate">Nissen DMS</span>
+            </span>
           </div>
 
           {/* Center/Left (on Desktop): Search Bar (if applicable) */}
@@ -2147,6 +2319,84 @@ export default function App() {
             onSettings={goSettings}
             onPhotoUpdate={setProfilePhoto}
           />
+        ) : view === "vessels" ? (
+          <>
+            <header className="dms-top-chrome border-b border-border dms-page-px py-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-semibold text-fg">Vessels</h2>
+                  <p className="mt-0.5 text-sm text-muted">
+                    Manage all vessels and update details from one place.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      if (!selectedVesselObj) return;
+                      setVesselToUpdate(selectedVesselObj);
+                      setShowUpdateModal(true);
+                    }}
+                    disabled={!selectedVesselObj}
+                    className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    <Ship className="h-4 w-4 shrink-0" />
+                    <span className="dms-action-btn-text">Update Vessel</span>
+                  </button>
+                  <button
+                    onClick={() => setShowModal(true)}
+                    className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-500 cursor-pointer"
+                  >
+                    <Plus className="h-4 w-4 shrink-0" />
+                    <span className="dms-action-btn-text">New Vessel</span>
+                  </button>
+                </div>
+              </div>
+            </header>
+            <div className="dms-page-bg flex-1 overflow-y-auto dms-page-px dms-page-py">
+              {vessels.length === 0 ? (
+                <div className="dms-card rounded-2xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
+                  No vessels yet. Create one to provision its folder structure.
+                </div>
+              ) : (
+                <div className="dms-card overflow-hidden rounded-2xl">
+                  <div className="border-b border-border px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted">
+                    Click any vessel row to open the main folder page.
+                  </div>
+                  <ul className="divide-y divide-border">
+                    {vessels.map((v) => {
+                      return (
+                        <li key={v.id} className="bg-transparent">
+                          <button
+                            onClick={() => {
+                              setSelectedVesselByPage((prev) => ({
+                                ...prev,
+                                [pageKey]: v.id,
+                              }));
+                              openVesselFromVesselsView(v);
+                            }}
+                            className="group flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition hover:bg-surface-hover cursor-pointer select-none focus:outline-none"
+                            title={`Open ${v.name}`}
+                          >
+                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
+                              <Ship className="h-5 w-5" />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-base font-semibold text-fg">{v.name}</span>
+                              <span className="mt-0.5 block truncate text-xs text-muted">
+                                IMO {v.imo ?? "—"}
+                                {v.hull_number ? ` · Hull ${v.hull_number}` : ""}
+                                {v.shipyard ? ` · ${v.shipyard}` : ""}
+                              </span>
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </>
         ) : view === "dashboard" ? (
           <>
             <header className="dms-top-chrome border-b border-border dms-page-px py-5">
@@ -2161,6 +2411,7 @@ export default function App() {
                 mains={mains}
                 stats={stats}
                 onOpenMain={openMain}
+                onOpenVessel={openVesselFromDashboard}
                 onNewVessel={() => setShowModal(true)}
               />
             </div>
@@ -2665,15 +2916,6 @@ export default function App() {
                       <Archive className="h-4 w-4 shrink-0" />
                       <span className="dms-action-btn-text">Archive</span>
                     </button>
-                    {current?.kind === "main" && (
-                      <button
-                        onClick={() => { setVesselToUpdate(activeVesselObj); setShowUpdateModal(true); }}
-                        className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-blue-500 cursor-pointer"
-                      >
-                        <Ship className="h-4 w-4 shrink-0" />
-                        <span className="dms-action-btn-text">Update Vessel</span>
-                      </button>
-                    )}
                     {current?.month_driven && (
                       <button
                         onClick={() => { setCreateFolderName(""); setCreateFolderError(null); setShowCreateFolderModal(true); }}
@@ -2726,11 +2968,11 @@ export default function App() {
                 <FolderGridSkeleton />
               ) : displayed.length === 0 ? (
                 children.length > 0 ? (
-                  <p className="dms-card mx-auto max-w-5xl rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
+                  <p className="dms-card w-full rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
                     Nothing matches your filter.
                   </p>
                 ) : current?.month_driven ? (
-                  <p className="dms-card mx-auto max-w-5xl rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
+                  <p className="dms-card w-full rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
                     No month folders yet — upload a document to auto-create one, or click <strong className="text-primary">Create Folder</strong> to add one manually.
                   </p>
                 ) : (
@@ -3682,16 +3924,16 @@ function FolderGrid({
     : vesselFolders;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="w-full space-y-7">
       {/* If isMainFolder, we separate common from vessel folders */}
       {isMainFolder ? (
         <>
           {commonFolder && (
-            <div className="mb-6">
-              <p className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-400">
+            <div className="mb-7">
+              <p className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-400">
                 Common Agreements / Documents
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="sm:col-span-1 lg:col-span-1">
                   <FolderCard key={commonFolder.id} node={commonFolder} accent={accent} onOpen={onOpen} isBig={true} />
                 </div>
@@ -3701,12 +3943,12 @@ function FolderGrid({
 
           {vesselFolders.length > 0 && (
             <div>
-              <p className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-400">
+              <p className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-400">
                 Vessels
               </p>
               {layout === "grid" ? (
                 <>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     {displayedVessels.map((n) => (
                       <FolderCard key={n.id} node={n} accent={accent} onOpen={onOpen} />
                     ))}
@@ -3715,7 +3957,7 @@ function FolderGrid({
                     <div className="mt-4 flex justify-center">
                       <button
                         onClick={() => setShowAllVessels(!showAllVessels)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-slate-800"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-slate-800"
                       >
                         {showAllVessels ? (
                           <>
@@ -3744,7 +3986,7 @@ function FolderGrid({
         /* Standard rendering */
         folders.length > 0 &&
         (layout === "grid" ? (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {folders.map((n) => (
               <FolderCard key={n.id} node={n} accent={accent} onOpen={onOpen} />
             ))}
@@ -3760,11 +4002,11 @@ function FolderGrid({
 
       {files.length > 0 && (
         <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-subtle">
+          <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-subtle">
             Files
           </p>
           {layout === "grid" ? (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {files.map((f) => (
                 <FileCard key={f.id} file={f} onPreview={onPreview} onDelete={onDelete} onDownload={onDownload} onRenew={onRenew} />
               ))}
@@ -3809,21 +4051,21 @@ function FolderCard({
   return (
     <button
       onClick={() => onOpen(node)}
-      className={`dms-card dms-card-hover group flex w-full items-center gap-3 rounded-xl text-left ${isBig ? "p-5" : "p-4"}`}
+      className={`dms-card dms-card-hover group flex w-full items-center gap-4 rounded-2xl text-left cursor-pointer ${isBig ? "p-6" : "p-5"}`}
     >
-      <span className={`flex shrink-0 items-center justify-center rounded-xl transition ${isBig ? "h-14 w-14" : "h-11 w-11"} ${accent.chip}`}>
-        <Icon className={`${isBig ? "h-6 w-6" : "h-5 w-5"} ${cls}`} />
+      <span className={`flex shrink-0 items-center justify-center rounded-xl transition ${isBig ? "h-16 w-16" : "h-12 w-12"} ${accent.chip}`}>
+        <Icon className={`${isBig ? "h-7 w-7" : "h-6 w-6"} ${cls}`} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className={`block font-semibold text-fg break-words whitespace-normal ${isBig ? "text-base" : "text-sm"}`} title={node.name}>{node.name}</span>
-        <span className="mt-0.5 block text-xs text-muted">{folderSubtitle(node)}</span>
+        <span className={`block font-semibold text-fg wrap-break-word whitespace-normal ${isBig ? "text-lg" : "text-base"}`} title={node.name}>{node.name}</span>
+        <span className="mt-0.5 block text-sm text-muted">{folderSubtitle(node)}</span>
       </span>
       {node.month_driven && (
-        <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent ring-1 ring-accent/20">
+        <span className="rounded-full bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent ring-1 ring-accent/20">
           auto-month
         </span>
       )}
-      <ChevronRight className="h-4 w-4 shrink-0 text-subtle transition group-hover:translate-x-0.5 group-hover:text-primary" />
+      <ChevronRight className="h-5 w-5 shrink-0 text-subtle transition group-hover:translate-x-0.5 group-hover:text-primary" />
     </button>
   );
 }
@@ -3841,13 +4083,13 @@ function FolderRow({
   return (
     <button
       onClick={() => onOpen(node)}
-      className="group flex w-full items-center gap-3 px-4 py-2.5 text-left transition hover:bg-bg"
+      className="group flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-bg cursor-pointer"
     >
       <span className={"flex h-8 w-8 shrink-0 items-center justify-center rounded-lg " + accent.chip}>
         <Icon className={"h-4 w-4 " + cls} />
       </span>
-      <span className="flex-1 text-sm font-medium text-fg break-words whitespace-normal" title={node.name}>{node.name}</span>
-      <span className="text-xs text-subtle">{folderSubtitle(node)}</span>
+      <span className="flex-1 text-base font-medium text-fg wrap-break-word whitespace-normal" title={node.name}>{node.name}</span>
+      <span className="text-sm text-subtle">{folderSubtitle(node)}</span>
       <ChevronRight className="h-4 w-4 text-subtle group-hover:text-primary" />
     </button>
   );

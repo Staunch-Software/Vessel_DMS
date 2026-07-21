@@ -10,15 +10,22 @@ import {
 import type { FolderNode, Stats, Vessel } from "../api";
 import { MAIN_ACCENTS } from "./nodeStyle";
 
+const displayMainName = (name: string) => {
+  const n = name.trim().toLowerCase();
+  if (n === "kaizen - knowledge bank") return "Knowledge Bank";
+  return name;
+};
+
 interface Props {
   vessels: Vessel[];
   mains: FolderNode[];
   stats: Stats | null;
   onOpenMain: (node: FolderNode) => void;
+  onOpenVessel: (vessel: Vessel) => void;
   onNewVessel: () => void;
 }
 
-export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Props) {
+export function Dashboard({ vessels, mains, stats, onOpenMain, onOpenVessel, onNewVessel }: Props) {
 
   // --- ADD THIS BLOCK START ---
 
@@ -43,7 +50,7 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
     ];
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="w-full space-y-6">
       {/* Stat cards — 2 cols on mobile, 4 on desktop */}
       <div className="dms-stat-grid grid grid-cols-2 gap-3 lg:grid-cols-4">
         {cards.map((s) => (
@@ -67,12 +74,12 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
 
       {/* Auto-month banner */}
       <div className="dms-info-banner flex items-start gap-3 rounded-2xl p-4">
-        <CalendarClock className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
+        <CalendarClock className="mt-0.5 h-5 w-5 shrink-0 text-info" />
         <div>
-          <p className="text-sm font-semibold text-accent">
+          <p className="text-sm font-semibold text-info">
             Automatic monthly folders
           </p>
-          <p className="text-sm text-accent/80">
+          <p className="text-sm text-info/80">
             {months} monthly folders are live. The next month's folder is created
             automatically on the 20th of the prior month, and on upload if a
             document's month isn't yet present.
@@ -106,7 +113,12 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
           ) : (
             <ul className="divide-y divide-border">
               {vessels.map((v) => (
-                <li key={v.id} className="flex items-center gap-3 px-5 py-3">
+                <li key={v.id}>
+                  <button
+                    onClick={() => onOpenVessel(v)}
+                    className="group flex w-full items-center gap-3 px-5 py-3 text-left transition hover:bg-surface-hover/40 cursor-pointer"
+                    title={`Open ${v.name}`}
+                  >
                   <span
                     className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
                     style={{ background: "#1a1a4e" }}
@@ -114,7 +126,7 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
                     <Ship className="h-4 w-4" style={{ color: "#D42B2B" }} />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold" style={{ color: "#1a1a4e" }}>
+                    <p className="truncate text-sm font-semibold group-hover:underline" style={{ color: "#1a1a4e" }}>
                       {v.name}
                     </p>
                     <p className="truncate text-xs text-muted">
@@ -131,6 +143,7 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
                       {v.vessel_type}
                     </span>
                   )}
+                  </button>
                 </li>
               ))}
             </ul>
@@ -147,6 +160,7 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
           <div className="space-y-2 p-4">
             {mains.map((m) => {
               const accent = MAIN_ACCENTS[m.name];
+              const label = displayMainName(m.name);
               return (
                 <button
                   key={m.id}
@@ -167,7 +181,7 @@ export function Dashboard({ vessels, mains, stats, onOpenMain, onNewVessel }: Pr
                   </span>
                   <div className="flex-1">
                     <p className="text-sm font-medium text-fg">
-                      {m.name}
+                      {label}
                     </p>
                     <p className="text-xs text-muted">Open folder</p>
                   </div>

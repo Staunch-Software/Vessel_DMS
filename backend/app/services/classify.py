@@ -59,6 +59,9 @@ def classify(parts: list[str]) -> dict:
         return {"kind": "folder", "upload": False, "month_driven": False}
     if len(parts) == 1:
         return {"kind": "main", "upload": False, "month_driven": False}
+    if main in template.FLAT_MAIN_FOLDERS:
+        # Flat, shared main folder — no ship/common split, descend directly.
+        return _descend(template.FLAT_TEMPLATE[main], parts[1:])
     common_root = template.COMMON_TEMPLATE[main]["name"]
     if parts[1].lower() == common_root.lower():
         if len(parts) == 2:

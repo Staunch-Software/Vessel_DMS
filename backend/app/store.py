@@ -74,13 +74,21 @@ class Store:
             main = self._make_node(name, "main", None)
             self.roots.append(main["id"])
             self.main_folders[name] = main
-            # The "Common for all ships" branch lives once per main folder.
-            self._build_subtree(template.COMMON_TEMPLATE[name], main["id"])
+            if name in template.FLAT_MAIN_FOLDERS:
+                # Flat, shared main folder — same content for everyone, no
+                # per-vessel ship folder and no "Common for all ships" split.
+                for spec in template.FLAT_TEMPLATE[name]:
+                    self._build_subtree(spec, main["id"])
+            else:
+                # The "Common for all ships" branch lives once per main folder.
+                self._build_subtree(template.COMMON_TEMPLATE[name], main["id"])
 
     # ----------------------------------------------------------------- vessels
     def add_vessel(self, name, imo=None, shipyard=None, hull_number=None, vessel_type=None):
         ship_folder_ids = {}
         for main_name, main in self.main_folders.items():
+            if main_name in template.FLAT_MAIN_FOLDERS:
+                continue
             ship = self._make_node(name, "ship", main["id"])
             ship["vessel"] = name
             for spec in template.SHIP_TEMPLATE[main_name]:
@@ -387,17 +395,19 @@ class Store:
         return node, category
 
     def reject_target_for(self, destination_folder_id):
-        """The sibling "To be Classified" folder for a rejected upload — found
-        inside the same parent as the originally-selected destination. If the
-        destination already IS a "To be Classified" folder, reuse it as-is."""
+        """The sibling fallback folder for a rejected upload — found inside
+        the same parent as the originally-selected destination. Reuses
+        whichever fallback-named leaf already exists there ("To be
+        Classified", "Other Drawings", or "Other Manuals"); if the
+        destination itself already is one of those, reuse it as-is."""
         node = self.nodes[destination_folder_id]
-        if node["name"].strip().lower() == "to be classified":
+        if node["name"].strip().lower() in template.FALLBACK_LEAF_NAMES:
             return destination_folder_id
         return self.ensure_to_be_classified(node["parent_id"])["id"]
 
     def ensure_to_be_classified(self, parent_id):
         for cid in self.nodes[parent_id]["children"]:
-            if self.nodes[cid]["name"].strip().lower() == "to be classified":
+            if self.nodes[cid]["name"].strip().lower() in template.FALLBACK_LEAF_NAMES:
                 return self.nodes[cid]
         return self._make_node("To be Classified", "leaf", parent_id)
 
@@ -761,7 +771,8 @@ class Store:
         return self.public_approval(req)
 
     def reject_approval(self, request_id, decided_by_email, reason=None):
-        """Upload-only: move the staged file to "To be Classified"."""
+        """Upload-only: move the staged file to the sibling fallback folder
+        ("To be Classified", or "Other Drawings"/"Other Manuals" as applicable)."""
         req = self.approvals.get(request_id)
         if req is None:
             return None

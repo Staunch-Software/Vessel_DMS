@@ -34,12 +34,15 @@ STAGING_FOLDER_NAME = "Pending Approvals"
 
 
 def _get_template_node_for_path(main_folder: str, rel_path: list[str]) -> dict | None:
-    """Find a node inside the SHIP_TEMPLATE hierarchy matching the given relative path."""
-    if main_folder not in template.SHIP_TEMPLATE:
+    """Find a node inside the SHIP_TEMPLATE hierarchy (or FLAT_TEMPLATE, for a
+    flat shared main folder) matching the given relative path."""
+    if main_folder in template.FLAT_MAIN_FOLDERS:
+        nodes = template.FLAT_TEMPLATE[main_folder]
+    elif main_folder in template.SHIP_TEMPLATE:
+        nodes = template.SHIP_TEMPLATE[main_folder]
+    else:
         return None
-    
-    # Root of ship tree
-    nodes = template.SHIP_TEMPLATE[main_folder]
+
     current_node = {"kind": "folder", "children": nodes}
     
     for segment in rel_path:
@@ -110,15 +113,24 @@ class RealBackend:
         return item["id"]
 
     async def _resolve_reject_target(self, drive_id, destination_folder_id) -> str:
-        """The sibling "To be Classified" folder for a rejected upload — found
-        inside the same parent as the originally-selected destination. If the
-        destination already IS a "To be Classified" folder, reuse it as-is."""
+        """The sibling fallback folder for a rejected upload — found inside
+        the same parent as the originally-selected destination. Reuses
+        whichever fallback-named leaf already exists there ("To be
+        Classified", "Other Drawings", or "Other Manuals"); if the
+        destination itself already is one of those, reuse it as-is."""
         item = await gd.get_item(drive_id, destination_folder_id)
-        if item.get("name", "").strip().lower() == "to be classified":
+        if item.get("name", "").strip().lower() in template.FALLBACK_LEAF_NAMES:
             return destination_folder_id
         parent_id = (item.get("parentReference") or {}).get("id")
         if not parent_id:
             return destination_folder_id  # fallback: reuse destination
+        siblings = await gd.list_children(drive_id, parent_id)
+        existing = next(
+            (s for s in siblings if s.get("name", "").strip().lower() in template.FALLBACK_LEAF_NAMES),
+            None,
+        )
+        if existing:
+            return existing["id"]
         tbc = await gd.ensure_folder(drive_id, parent_id, "To be Classified")
         parent_path = await self._folder_path(drive_id, parent_id)
         with SessionLocal() as db:
@@ -386,15 +398,23 @@ class RealBackend:
                 self._upsert(db, main, main, "main", item["id"], False, None)
                 main_items[main] = item["id"]
             db.commit()
-        # Common subtrees for all mains, concurrently.
-        await asyncio.gather(
-            *(
-                self._ensure_node(
-                    drive_id, main_items[main], main, template.COMMON_TEMPLATE[main], None
+        # Subtrees for all mains, concurrently — flat mains get their spec
+        # list placed directly under the main folder; the rest get their
+        # single "Common for all ships" subtree.
+        tasks = []
+        for main in template.MAIN_FOLDERS:
+            if main in template.FLAT_MAIN_FOLDERS:
+                tasks.extend(
+                    self._ensure_node(drive_id, main_items[main], main, spec, None)
+                    for spec in template.FLAT_TEMPLATE[main]
                 )
-                for main in template.MAIN_FOLDERS
-            )
-        )
+            else:
+                tasks.append(
+                    self._ensure_node(
+                        drive_id, main_items[main], main, template.COMMON_TEMPLATE[main], None
+                    )
+                )
+        await asyncio.gather(*tasks)
         self._base_ready = True
 
     # -------------------------------------------------------------- vessels
@@ -520,7 +540,10 @@ class RealBackend:
                 db.commit()
 
         try:
-            await asyncio.gather(*(provision_main(m) for m in template.MAIN_FOLDERS))
+            await asyncio.gather(*(
+                provision_main(m) for m in template.MAIN_FOLDERS
+                if m not in template.FLAT_MAIN_FOLDERS
+            ))
         except Exception as provision_err:
             # Roll back: remove the vessel row so the user can retry.
             with SessionLocal() as db:
@@ -789,7 +812,10 @@ class RealBackend:
                 )
             )
 
-        await asyncio.gather(*(reprovision_main(m) for m in template.MAIN_FOLDERS))
+        await asyncio.gather(*(
+            reprovision_main(m) for m in template.MAIN_FOLDERS
+            if m not in template.FLAT_MAIN_FOLDERS
+        ))
         return {"ok": True, "vessel_id": vessel_id, "name": name}
 
     # ----------------------------------------------------------- navigation
@@ -840,14 +866,20 @@ class RealBackend:
                 )
             raise
 
-        # Check if parent_path corresponds to a ship template node, and dynamically
-        # create any missing subfolders on demand.
+        # Check if parent_path corresponds to a ship (or flat shared main)
+        # template node, and dynamically create any missing subfolders on demand.
         parts = parent_path.split("/") if parent_path else []
-        if len(parts) >= 2:
+        node_spec = None
+        if parts:
             main_folder = parts[0]
-            rel_path = parts[2:]
-            node_spec = _get_template_node_for_path(main_folder, rel_path)
-            if node_spec and "children" in node_spec:
+            if main_folder in template.FLAT_MAIN_FOLDERS:
+                # No ship/common segment — everything after the main folder
+                # itself is a direct path into FLAT_TEMPLATE.
+                node_spec = _get_template_node_for_path(main_folder, parts[1:])
+            elif len(parts) >= 2:
+                node_spec = _get_template_node_for_path(main_folder, parts[2:])
+        if node_spec is not None:
+            if "children" in node_spec:
                 expected_specs = node_spec["children"]
                 existing_names = {it["name"].lower() for it in items}
                 missing_specs = [
@@ -2127,14 +2159,17 @@ class RealBackend:
             drive_id = await self._drive()
             try:
                 target_id = await self._resolve_reject_target(drive_id, claimed["destination_folder_id"])
+                target_path = await self._folder_path(drive_id, target_id)
                 existing = await gd.find_child(drive_id, target_id, claimed["filename"])
                 if existing and "file" in existing:
-                    raise Conflict(f"'{claimed['filename']}' already exists in the To be Classified folder")
+                    raise Conflict(
+                        f"'{claimed['filename']}' already exists in the "
+                        f"'{target_path.split('/')[-1]}' folder"
+                    )
                 await gd.move_item(drive_id, claimed["drive_item_id"], target_id, new_name=claimed["filename"])
             except Exception:
                 self._revert_to_pending(request_id)
                 raise
-            target_path = await self._folder_path(drive_id, target_id)
             result = self._finalize(
                 request_id, decided_by_email, f"{target_path}/{claimed['filename']}", reason
             )

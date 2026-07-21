@@ -6,9 +6,6 @@ import {
     Mail,
     ArrowRight,
     ShieldCheck,
-    FileCheck2,
-    ClipboardList,
-    BellRing,
     Anchor,
     LogIn,
     Ship,
@@ -19,6 +16,12 @@ import {
 } from "lucide-react";
 
 const NISSEN_LOGO = "/nissen-logo.svg";
+const SHIP_HERO_IMAGE = "/ship.jpg";
+
+/** localStorage flag marking that this browser has completed a successful
+ *  login before, so the login page can greet with "Welcome Back" instead of
+ *  "Welcome". Set by App.tsx once the backend confirms a successful sign-in. */
+export const RETURNING_USER_STORAGE_KEY = "dms_returning_user";
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 /*  Types                                                                       */
@@ -189,6 +192,44 @@ function MicrosoftIcon() {
             <rect x="1" y="10.5" width="8.5" height="8.5" fill="#05A6F0" />
             <rect x="10.5" y="10.5" width="8.5" height="8.5" fill="#FFBA08" />
         </svg>
+    );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/*  Floating light particles drifting over the hero photo                       */
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+const BOKEH_PARTICLES = [
+    { top: "12%", left: "8%", size: 10, delay: "0s", warm: true },
+    { top: "22%", left: "84%", size: 6, delay: "1.4s", warm: false },
+    { top: "68%", left: "18%", size: 8, delay: "2.6s", warm: true },
+    { top: "40%", left: "48%", size: 5, delay: "0.8s", warm: false },
+    { top: "78%", left: "70%", size: 9, delay: "3.4s", warm: true },
+    { top: "30%", left: "30%", size: 4, delay: "2s", warm: false },
+    { top: "58%", left: "90%", size: 7, delay: "1.1s", warm: true },
+];
+
+function BokehField() {
+    return (
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+            {BOKEH_PARTICLES.map((p, i) => (
+                <span
+                    key={i}
+                    className="absolute rounded-full blur-[2px] animate-float-drift"
+                    style={{
+                        top: p.top,
+                        left: p.left,
+                        width: p.size * 4,
+                        height: p.size * 4,
+                        background: p.warm
+                            ? "radial-gradient(circle, rgba(255,214,150,0.85), rgba(255,214,150,0))"
+                            : "radial-gradient(circle, rgba(255,255,255,0.75), rgba(255,255,255,0))",
+                        animationDelay: p.delay,
+                        animationDuration: `${8 + (i % 4) * 2}s`,
+                    }}
+                />
+            ))}
+        </div>
     );
 }
 
@@ -406,6 +447,13 @@ function LoginView({ authError }: { authError?: string | null }) {
     const [email, setEmail] = useState("");
     const [error, setError] = useState<string | null>(authError ?? null);
     const [loading, setLoading] = useState(false);
+    const [isReturningUser] = useState<boolean>(() => {
+        try {
+            return localStorage.getItem(RETURNING_USER_STORAGE_KEY) === "true";
+        } catch {
+            return false;
+        }
+    });
 
     const handleContinue = async () => {
         setError(null);
@@ -459,112 +507,93 @@ function LoginView({ authError }: { authError?: string | null }) {
     };
 
     return (
-        <PageShell>
-            <main className="relative z-10 px-4 md:px-14 py-8 md:py-14 flex flex-col lg:flex-row gap-8 lg:gap-12 items-start justify-between">
-                {/* Left column */}
-                <div className="w-full lg:max-w-[calc(100%-30rem)] lg:pr-8 mb-12 lg:mb-0">
-                    <div className="flex items-center gap-2 text-primary text-[11px] tracking-[0.2em] font-semibold mb-6">
-                        <span className="w-6 h-px bg-primary inline-block" />
+        <div className="min-h-screen w-full relative overflow-hidden flex flex-col text-white">
+            {/* Hero photo background */}
+            <div className="absolute inset-0 -z-20 overflow-hidden">
+                <img
+                    src={SHIP_HERO_IMAGE}
+                    alt=""
+                    className="w-full h-full object-cover animate-ken-burns"
+                />
+                <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/45 to-black/60" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-black/40" />
+                <div className="dms-auth-grain absolute inset-0 opacity-40 mix-blend-overlay" />
+                {/* Diagonal sheen sweep */}
+                <div className="absolute inset-0 overflow-hidden">
+                    <div className="absolute -inset-y-1/2 w-1/3 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-sheen" />
+                </div>
+            </div>
+
+            <BokehField />
+
+            {/* Top status bar */}
+            <header className="relative z-10 flex items-center justify-end px-6 md:px-12 py-6">
+                <div className="hidden sm:flex items-center gap-2 text-[10px] tracking-[0.15em] text-white/70 font-medium">
+                    <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+                    </span>
+                    SYSTEM ONLINE
+                </div>
+            </header>
+
+            {/* Main content — headline left, sign-in card right */}
+            <main className="relative z-10 flex-1 w-full max-w-[1480px] mx-auto flex flex-col lg:flex-row items-center lg:justify-center gap-8 lg:gap-20 xl:gap-28 px-6 md:px-12 lg:px-16 pb-10">
+                {/* Headline */}
+                <div className="max-w-xl text-center lg:text-left">
+                    <div className="inline-flex items-center gap-2 text-[11px] tracking-[0.25em] font-semibold text-white/75 mb-6 drop-shadow-md">
+                        <span className="w-6 h-px bg-white/50 inline-block" />
                         VESSEL DOCUMENT MANAGEMENT SYSTEM
                     </div>
-
-                    <h1 className="font-serif text-3xl sm:text-5xl md:text-[3.75rem] leading-[1.05] text-fg mb-6 font-semibold">
-                        Every certificate,
+                    <h1 className="font-serif text-4xl sm:text-5xl lg:text-6xl xl:text-[3.85rem] leading-[1.12] font-semibold mb-8 drop-shadow-[0_4px_18px_rgba(0,0,0,0.55)]">
+                        Every <span className="italic text-accent">document</span>,
                         <br />
-                        <span className="italic bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">every vessel,</span> in one
-                        <br />
-                        place.
+                        every vessel, in one place.
                     </h1>
-
-                    <p className="text-fg/85 text-base md:text-lg leading-relaxed max-w-xl mb-10">
-                        <strong className="font-semibold text-fg">Centralize certificates</strong>,{" "}
-                        <strong className="font-semibold text-fg">survey reports</strong>, and{" "}
-                        <strong className="font-semibold text-fg">compliance records</strong> across the fleet — with automatic{" "}
-                        <span className="font-semibold text-primary">renewal alerts</span> and a full{" "}
-                        <span className="font-semibold text-primary">audit trail</span> for every document, on every hull.
+                    <p className="text-base xl:text-lg leading-relaxed text-white/85 mb-8 drop-shadow-md max-w-lg mx-auto lg:mx-0">
+                        Centralize documents, survey reports, and compliance records across the fleet — with automatic renewal alerts and a full audit trail for every document, on every hull.
                     </p>
-
-                    {/* Feature cards */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 max-w-xl mb-10">
-                        <FeatureCard
-                            icon={<FileCheck2 className="w-4 h-4" />}
-                            title="Certificate registry"
-                            copy="One record per vessel, always current."
-                        />
-                        <FeatureCard
-                            icon={<BellRing className="w-4 h-4" />}
-                            title="Renewal alerts"
-                            copy="Flagged automatically before they lapse."
-                        />
-                        <FeatureCard
-                            icon={<ClipboardList className="w-4 h-4" />}
-                            title="Audit trail"
-                            copy="Every edit, sign-off, and survey logged."
-                        />
-                    </div>
-
-                    {/* System Stats panel */}
-                    <div className="dms-card max-w-xl overflow-hidden">
-                        <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-                            <div className="flex items-center gap-2 text-[11px] tracking-[0.15em] font-semibold text-muted">
-                                <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" />
-                                SYSTEM OVERVIEW
-                            </div>
-                            <div className="text-[11px] tracking-[0.1em] text-muted">
-                                LIVE STATUS
-                            </div>
-                        </div>
-
-                        <StatusRow
-                            dotColor="bg-primary"
-                            title="Document Repository"
-                            subtitle="Certificates, surveys & reports · SharePoint Embedded"
-                            status="ONLINE"
-                            statusColor="text-primary"
-                        />
-                        <StatusRow
-                            dotColor="bg-primary"
-                            title="Approval Workflow"
-                            subtitle="Multi-level review & sign-off · Audit trail enabled"
-                            status="ACTIVE"
-                            statusColor="text-primary"
-                        />
-                        <StatusRow
-                            dotColor="bg-primary"
-                            title="Azure AD Authentication"
-                            subtitle="Microsoft SSO · Role-based access control"
-                            status="SECURED"
-                            statusColor="text-primary"
-                            last
-                        />
-                    </div>
+                    <div className="h-px w-16 bg-gradient-to-r from-accent to-transparent mb-5 mx-auto lg:mx-0" />
+                    <p className="text-[11px] tracking-[0.15em] text-white/60 uppercase drop-shadow-md">
+                        Trusted for fleet-wide maritime compliance
+                    </p>
                 </div>
 
-                {/* Right column — auth card */}
-                <div className="relative lg:fixed z-10 w-full max-w-md lg:w-[26rem] top-auto right-auto lg:top-[7.5rem] lg:right-[3.5rem] self-center lg:self-auto">
-                    <Anchor
-                        className="absolute -top-6 -right-6 w-28 h-28 text-primary/10 -z-10"
-                        strokeWidth={1}
-                    />
+                {/* Sign-in card */}
+                <div className="w-full max-w-lg">
+                    {/* Brand mark — above the card, first thing seen in this column */}
+                    <div className="flex items-center justify-center gap-3 mb-10 md:mb-12">
+                        <div className="w-12 h-12 shrink-0 rounded-2xl bg-gradient-to-br from-accent/30 to-primary/20 border border-accent/30 flex items-center justify-center shadow-lg shadow-black/25 backdrop-blur-sm">
+                            <Anchor className="w-6 h-6 text-accent" strokeWidth={1.75} />
+                        </div>
+                        <div className="text-left">
+                            <div className="text-white font-bold tracking-[0.22em] text-sm drop-shadow-md">
+                                NISSEN KAIUN
+                            </div>
+                            <div className="text-[9px] tracking-[0.2em] font-medium text-white/70 drop-shadow-md">
+                                ENTERPRISE EDITION · DOCUMENT MANAGEMENT
+                            </div>
+                        </div>
+                    </div>
 
-                    <div className="dms-card rounded-2xl p-8 md:p-9">
-                        <h2 className="font-serif text-3xl text-fg mb-2">
-                            Welcome Back
+                    <div className="dms-auth-card animate-card-float rounded-[34px] p-9 md:p-11">
+                        <h2 className="text-2xl font-semibold text-white mb-1.5 text-center">
+                            {isReturningUser ? "Welcome Back" : "Welcome"}
                         </h2>
-                        <p className="text-[11px] tracking-[0.12em] text-muted font-medium mb-7">
-                            SIGN IN TO ACCESS THE DOCUMENT REGISTRY
+                        <p className="text-sm text-white/65 mb-8 text-center">
+                            Sign in with your work email to access the document registry.
                         </p>
 
                         {/* Work Email field */}
                         <div className="mb-1">
                             <label
                                 htmlFor="work-email"
-                                className="block text-[10px] tracking-[0.15em] font-semibold text-fg/80 mb-2"
+                                className="block text-[10px] tracking-[0.15em] font-semibold text-white/70 mb-2"
                             >
                                 WORK EMAIL
                             </label>
                             <div className="relative">
-                                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+                                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/50" />
                                 <input
                                     id="work-email"
                                     name="email"
@@ -574,13 +603,13 @@ function LoginView({ authError }: { authError?: string | null }) {
                                     onChange={(e) => setEmail(e.target.value)}
                                     onKeyDown={(e) => e.key === "Enter" && void handleContinue()}
                                     placeholder="name@company.com"
-                                    className="dms-input w-full pl-10 pr-4 py-3 text-fg placeholder-subtle text-sm"
+                                    className="dms-auth-input w-full pl-10 pr-4 py-3 text-sm"
                                 />
                             </div>
                         </div>
 
                         {error && (
-                            <p className="mt-4 text-sm text-error bg-error/10 border border-error/20 rounded-lg px-4 py-2">
+                            <p className="mt-4 text-sm text-red-300 bg-red-500/10 border border-red-400/25 rounded-lg px-4 py-2">
                                 {error}
                             </p>
                         )}
@@ -592,7 +621,7 @@ function LoginView({ authError }: { authError?: string | null }) {
                             className="dms-btn-primary w-full mt-6 flex items-center gap-3 px-5 py-3.5 active:scale-[0.99] transition disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                             <MicrosoftIcon />
-                            <span className="flex-1">
+                            <span className="flex-1 text-left">
                                 <span className="block text-sm font-semibold text-primary-fg">
                                     {loading || (inProgress as string) === "login"
                                         ? "Redirecting…"
@@ -605,11 +634,18 @@ function LoginView({ authError }: { authError?: string | null }) {
                             <ArrowRight className="w-4 h-4 text-primary-fg" />
                         </button>
 
-                        <CardFooter />
+                        <div className="flex items-center justify-center gap-1.5 mt-7 text-[10px] tracking-[0.1em] text-white/50">
+                            <ShieldCheck className="w-3.5 h-3.5 text-accent" />
+                            256-BIT TLS ENCRYPTED CONNECTION
+                        </div>
                     </div>
                 </div>
             </main>
-        </PageShell>
+
+            <p className="relative z-10 text-center pb-6 text-[10px] tracking-[0.15em] text-white/55 drop-shadow-md">
+                SECURED · SHAREPOINT EMBEDDED · © 2026 NISSEN KAIUN
+            </p>
+        </div>
     );
 }
 

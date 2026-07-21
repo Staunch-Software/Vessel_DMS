@@ -33,11 +33,27 @@ def drawing_classifier(name, categories):
     return {"name": name, "kind": "drawing_classifier", "children": [leaf(c) for c in categories]}
 
 
-# The three top-level main folders.
+# Recognised "not yet classified" fallback leaf names used across the tree.
+# Most folders fall back to "To be Classified"; the Drawing and Manual
+# subfolders (under "Drawings and Manuals") use "Other Drawings" / "Other
+# Manuals" instead. Reject-upload routing reuses whichever one already
+# exists in a given folder rather than always defaulting to the generic name.
+FALLBACK_LEAF_NAMES = {"to be classified", "other drawings", "other manuals"}
+
+
+# The top-level main folders.
 MAIN_FOLDERS = [
     "Technical & Crewing",
     "Commercial & Chartering",
     "Insurance",
+    "Kaizen - Knowledge Bank",
+]
+
+# Main folders that are flat and shared: same content for every user, no
+# per-vessel ship folder and no "Common for all ships" split (unlike the
+# other main folders, which are cloned per vessel via SHIP_TEMPLATE below).
+FLAT_MAIN_FOLDERS = [
+    "Kaizen - Knowledge Bank",
 ]
 
 # ---------------------------------------------------------------------------
@@ -95,7 +111,7 @@ SHIP_TEMPLATE = {
                                 leaf("Ship Structure Access Manuals"),
                                 leaf("Docking Plan"),
                                 leaf("Emergency Towing Booklet"),
-                                leaf("To be Classified"),
+                                leaf("Other Drawings"),
                             ],
                         ),
                         folder(
@@ -113,7 +129,7 @@ SHIP_TEMPLATE = {
                                 leaf("Rudder and Rudder Stock"),
                                 leaf("Painting Schedule"),
                                 leaf("Cargo Securing Manual"),
-                                leaf("To be Classified"),
+                                leaf("Other Drawings"),
                             ],
                         ),
                         folder(
@@ -121,7 +137,7 @@ SHIP_TEMPLATE = {
                             [
                                 leaf("Life Saving Appliances Plan"),
                                 leaf("Fire Control Plan"),
-                                leaf("To be Classified"),
+                                leaf("Other Drawings"),
                             ],
                         ),
                         folder(
@@ -139,7 +155,7 @@ SHIP_TEMPLATE = {
                                 leaf("Lube Oil System"),
                                 leaf("Cooling Water System"),
                                 leaf("Air System"),
-                                leaf("To be Classified"),
+                                leaf("Other Drawings"),
                             ],
                         ),
                         folder(
@@ -149,7 +165,7 @@ SHIP_TEMPLATE = {
                                 leaf("Main Switchboard Arrangement"),
                                 leaf("Emergency Switchboard Arrangement"),
                                 leaf("Power Distribution Diagram"),
-                                leaf("To be Classified"),
+                                leaf("Other Drawings"),
                             ],
                         ),
                     ],
@@ -161,21 +177,21 @@ SHIP_TEMPLATE = {
                             "Main Engine",
                             [
                                 leaf("Operation & Maintenance Manual"),
-                                leaf("To be Classified"),
+                                leaf("Other Manuals"),
                             ],
                         ),
                         folder(
                             "Auxiliary Engine",
                             [
                                 leaf("Operation & Maintenance Manual"),
-                                leaf("To be Classified"),
+                                leaf("Other Manuals"),
                             ],
                         ),
                         folder(
                             "Boiler",
                             [
                                 leaf("Operation & Maintenance Manual"),
-                                leaf("To be Classified"),
+                                leaf("Other Manuals"),
                             ],
                         ),
                         folder(
@@ -183,7 +199,7 @@ SHIP_TEMPLATE = {
                             [
                                 leaf("Stern Tube Manual"),
                                 leaf("CPP Manual"),
-                                leaf("To be Classified"),
+                                leaf("Other Manuals"),
                             ],
                         ),
                         folder(
@@ -191,21 +207,21 @@ SHIP_TEMPLATE = {
                             [
                                 leaf("Operation Manual"),
                                 leaf("Maintenance Manual"),
-                                leaf("To be Classified"),
+                                leaf("Other Manuals"),
                             ],
                         ),
                         folder(
                             "Propulsion",
                             [
                                 leaf("Shaft Generator Manual"),
-                                leaf("To be Classified"),
+                                leaf("Other Manuals"),
                             ],
                         ),
                         folder(
                             "Thrusters",
                             [
                                 leaf("Operation & Maintenance Manual"),
-                                leaf("To be Classified"),
+                                leaf("Other Manuals"),
                             ],
                         ),
                         folder(
@@ -213,7 +229,7 @@ SHIP_TEMPLATE = {
                             [
                                 leaf("Power Management System"),
                                 leaf("Main Switchboard Manual"),
-                                leaf("To be Classified"),
+                                leaf("Other Manuals"),
                             ],
                         ),
                         folder(
@@ -221,7 +237,7 @@ SHIP_TEMPLATE = {
                             [
                                 leaf("Alarm Monitoring System"),
                                 leaf("Engine Control System"),
-                                leaf("To be Classified"),
+                                leaf("Other Manuals"),
                             ],
                         ),
                         folder(
@@ -234,7 +250,7 @@ SHIP_TEMPLATE = {
                                 leaf("IG System Manual"),
                                 leaf("COW Manual"),
                                 leaf("ODME Manual"),
-                                leaf("To be Classified"),
+                                leaf("Other Manuals"),
                             ],
                         ),
                         folder(
@@ -244,7 +260,7 @@ SHIP_TEMPLATE = {
                                 leaf("Fire Alarm Manual"),
                                 leaf("CO2 System Manual"),
                                 leaf("Emergency Generator Manual"),
-                                leaf("To be Classified"),
+                                leaf("Other Manuals"),
                             ],
                         ),
                         folder(
@@ -257,14 +273,14 @@ SHIP_TEMPLATE = {
                                 leaf("Exhaust Gas Scrubber Manual"),
                                 leaf("SCR System Manual"),
                                 leaf("EGR System Manual"),
-                                leaf("To be Classified"),
+                                leaf("Other Manuals"),
                             ],
                         ),
                         folder(
                             "Refrigeration",
                             [
                                 leaf("AC Plant Manual"),
-                                leaf("To be Classified"),
+                                leaf("Other Manuals"),
                             ],
                         ),
                         folder(
@@ -273,7 +289,7 @@ SHIP_TEMPLATE = {
                                 leaf("Windlass Manual"),
                                 leaf("Mooring Winch Manual"),
                                 leaf("Hydraulic Manual"),
-                                leaf("To be Classified"),
+                                leaf("Other Manuals"),
                             ],
                         ),
                     ],
@@ -349,4 +365,28 @@ COMMON_TEMPLATE = {
         "Common (Not Ship Specific)",
         [leaf("Agreements"), leaf("Miscellaneous")],
     ),
+}
+
+# ---------------------------------------------------------------------------
+# Flat, shared sub-tree for each entry in FLAT_MAIN_FOLDERS — placed directly
+# under the main folder itself (no ship/common split).
+# ---------------------------------------------------------------------------
+FLAT_TEMPLATE = {
+    "Kaizen - Knowledge Bank": [
+        leaf("Templates"),
+        leaf("Procedures and Work Instructions"),
+        leaf("Lessons Learned"),
+        folder(
+            "Circulars and Guidance",
+            [
+                leaf("Equipment Maker"),
+                leaf("Class"),
+                # Uses U+2044 (fraction slash), not ASCII "/" — SharePoint
+                # rejects "/" in folder names since it's the path separator.
+                leaf("Flag ⁄ Port State"),
+                leaf("SIRE⁄OCIMF⁄RightShip"),
+                leaf("Shipyard"),
+            ],
+        ),
+    ],
 }
