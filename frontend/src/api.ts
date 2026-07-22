@@ -98,6 +98,21 @@ export function clearSessionId() {
   delete api.defaults.headers.common["X-Session-ID"];
 }
 
+// ── 401 interceptor: dispatch session:unauthorized with reason ────────────────
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      const detail = error.response.data?.detail;
+      const reason = typeof detail === "object" ? detail?.reason : undefined;
+      window.dispatchEvent(
+        new CustomEvent("session:unauthorized", { detail: { reason } })
+      );
+    }
+    return Promise.reject(error);
+  }
+);
+
 export async function listVessels(): Promise<Vessel[]> {
   return (await api.get("/vessels")).data;
 }

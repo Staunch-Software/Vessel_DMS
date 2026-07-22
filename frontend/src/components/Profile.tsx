@@ -6,7 +6,7 @@ import {
   Building2, Activity, RefreshCw, UserCheck,
   AlertCircle, Upload, FolderOpen, Trash2, FolderPlus, LogIn,
   Settings, Shield, Monitor, Smartphone, Tablet, Globe,
-  XCircle, Timer, LogIn as LoginIcon, Briefcase, Key, Lock,
+  XCircle, Timer, LogIn as LoginIcon,
 } from "lucide-react";
 import { useMsal } from "@azure/msal-react";
 
@@ -14,11 +14,11 @@ import type { FolderNode, UserProfile, ProfileUpdatePayload, SessionInfo, Sessio
 import { getProfile, updateProfile, listSessions, listSessionAudit, revokeSession } from "../api";
 
 
-// â”€â”€ palette â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// GöÇGöÇ palette GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
 const danger   = "#e11d48";
 const ink      = "#1e293b";
 
-// â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// GöÇGöÇ helpers GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return "\u2014";
   try {
@@ -53,7 +53,7 @@ function yearsLabel(iso: string | null | undefined): string | null {
   return `${yrs}${sfx} year`;
 }
 
-// â”€â”€ edit form type â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// GöÇGöÇ edit form type GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
 interface EditForm {
   employee_id: string;
   first_name: string;
@@ -82,7 +82,7 @@ function initForm(p: UserProfile | null): EditForm {
   };
 }
 
-// â”€â”€ Validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// GöÇGöÇ Validation GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
 type FormErrors = Partial<Record<keyof EditForm, string>>;
 
 function validateForm(f: EditForm): FormErrors {
@@ -124,7 +124,7 @@ function validateForm(f: EditForm): FormErrors {
   return err;
 }
 
-// â”€â”€ Card wrapper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// GöÇGöÇ Card wrapper GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
 interface CardProps {
   title: string;
   icon: React.ReactNode;
@@ -171,7 +171,7 @@ function Card({ title, icon, eyebrow, action, children }: CardProps) {
   );
 }
 
-// â”€â”€ FieldRow â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// GöÇGöÇ FieldRow GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
 interface FieldRowProps {
   icon: React.ReactNode;
   label: string;
@@ -249,7 +249,7 @@ function FieldRow({
 
 
 
-// â”€â”€ Profile Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// GöÇGöÇ Profile Page GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
 interface ProfilePageProps {
   userEmail: string;
   onBack: () => void;
@@ -257,7 +257,7 @@ interface ProfilePageProps {
   onGlobalSignOut: () => void;
   onSettings?: () => void;
   onPhotoUpdate?: (photo: string | null) => void;
-  // kept for API compat â€” no longer used for sidebar rendering
+  // kept for API compat GÇö no longer used for sidebar rendering
   mains?: FolderNode[];
   onDashboard?: () => void;
 }
@@ -652,7 +652,7 @@ export default function ProfilePage({
                 </div>
               </div>
 
-              {/* Cards grid â€” 1 col on mobile, 3 on large desktop */}
+              {/* Cards grid GÇö 1 col on mobile, 3 on large desktop */}
               <div className="grid grid-cols-1 gap-4 dms-page-px dms-page-py lg:grid-cols-3">
 
                 {/* Left Column (spans 2 columns on desktop) */}
@@ -662,9 +662,8 @@ export default function ProfilePage({
                     <div style={{ borderTop: "1px dashed var(--color-border)" }}>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5">
                         <FieldRow icon={<Hash className="h-3.5 w-3.5" />} label="Employee ID" value={profile?.employee_id} editing={editing} inputValue={form.employee_id} onInputChange={(v) => setField("employee_id", v)} placeholder="e.g. EMP-4471" mono error={formErrors.employee_id} />
+                        <FieldRow icon={<Mail className="h-3.5 w-3.5" />} label="Work Email" value={profile?.email} readOnly />
                         <FieldRow icon={<Building2 className="h-3.5 w-3.5" />} label="Department" value={profile?.department} editing={editing} inputValue={form.department} onInputChange={(v) => setField("department", v)} placeholder="e.g. Documentation & Compliance" error={formErrors.department} />
-                        <FieldRow icon={<Building2 className="h-3.5 w-3.5" />} label="Office Name" value={profile?.office_name} editing={editing} inputValue={form.office_name} onInputChange={(v) => setField("office_name", v)} placeholder="e.g. Nissen HQ" error={formErrors.office_name} />
-                        <FieldRow icon={<MapPin className="h-3.5 w-3.5" />} label="Office Location" value={profile?.office_location} editing={editing} inputValue={form.office_location} onInputChange={(v) => setField("office_location", v)} placeholder="e.g. Singapore" error={formErrors.office_location} />
                         <FieldRow icon={<Users className="h-3.5 w-3.5" />} label="Reports To (Manager)" value={profile?.manager_name ? `${profile.manager_name}${profile.manager_email ? ` \u2014 ${profile.manager_email}` : ""}` : null} editing={editing} inputValue={form.manager_name} onInputChange={(v) => setField("manager_name", v)} placeholder="e.g. Rakesh Iyer (Fleet Manager)" error={formErrors.manager_name} />
                         {editing && <FieldRow icon={<Mail className="h-3.5 w-3.5" />} label="Manager Email" value={profile?.manager_email} editing={editing} inputValue={form.manager_email} onInputChange={(v) => setField("manager_email", v)} placeholder="e.g. r.iyer@company.com" error={formErrors.manager_email} />}
                         <FieldRow icon={<Calendar className="h-3.5 w-3.5" />} label="Date of Joining" value={profile?.date_of_joining ? fmtOnlyDate(profile.date_of_joining) : null} editing={editing} inputValue={form.date_of_joining} type="date" onInputChange={(v) => setField("date_of_joining", v)} placeholder="Select date" error={formErrors.date_of_joining} />
@@ -683,49 +682,8 @@ export default function ProfilePage({
                     <div style={{ borderTop: "1px dashed var(--color-border)" }}>
                       <FieldRow icon={<Users className="h-3.5 w-3.5" />} label="First Name" value={profile?.first_name} editing={editing} inputValue={form.first_name} onInputChange={(v) => setField("first_name", v)} placeholder="e.g. Anjali" error={formErrors.first_name} />
                       <FieldRow icon={<Users className="h-3.5 w-3.5" />} label="Last Name" value={profile?.last_name} editing={editing} inputValue={form.last_name} onInputChange={(v) => setField("last_name", v)} placeholder="e.g. Menon" error={formErrors.last_name} />
-                      <FieldRow icon={<Mail className="h-3.5 w-3.5" />} label="Email" value={profile?.email} readOnly asLink />
-                      <FieldRow icon={<Briefcase className="h-3.5 w-3.5" />} label="Job Title" value={profile?.job_title} readOnly />
-                      <FieldRow icon={<Building2 className="h-3.5 w-3.5" />} label="Company" value={profile?.company_name} readOnly />
                       <FieldRow icon={<Phone className="h-3.5 w-3.5" />} label="Phone" value={profile?.phone} editing={editing} inputValue={form.phone} type="tel" onInputChange={(v) => setField("phone", v.replace(/[^\d+\-() ]/g, ""))} placeholder="e.g. +65 8123 4477" error={formErrors.phone} />
                       <FieldRow icon={<Clock className="h-3.5 w-3.5" />} label="Last Login" value={fmtDate(profile?.last_login)} readOnly mono />
-                      <FieldRow icon={<Calendar className="h-3.5 w-3.5" />} label="Account Created" value={fmtOnlyDate(profile?.created_at)} readOnly mono />
-                    </div>
-                  </Card>
-
-                  {/* 2. ACCOUNT & SECURITY */}
-                  <Card title="Account & Security" icon={<Shield className="h-3.5 w-3.5" />} eyebrow="Identity">
-                    <div style={{ borderTop: "1px dashed var(--color-border)" }}>
-                      <FieldRow
-                        icon={<Lock className="h-3.5 w-3.5" />}
-                        label="Two-Factor Auth"
-                        value={profile?.two_factor_enabled ? "Enabled" : "Disabled"}
-                        readOnly
-                      />
-                      <FieldRow
-                        icon={<Key className="h-3.5 w-3.5" />}
-                        label="Password Last Changed"
-                        value={fmtDate(profile?.password_changed_at)}
-                        readOnly
-                        mono
-                      />
-                      {profile?.azure_oid && (
-                        <FieldRow
-                          icon={<Hash className="h-3.5 w-3.5" />}
-                          label="Azure Object ID"
-                          value={profile.azure_oid}
-                          readOnly
-                          mono
-                        />
-                      )}
-                      {profile?.tenant_id && (
-                        <FieldRow
-                          icon={<Hash className="h-3.5 w-3.5" />}
-                          label="Tenant ID"
-                          value={profile.tenant_id}
-                          readOnly
-                          mono
-                        />
-                      )}
                     </div>
                   </Card>
                 </div>
@@ -811,7 +769,7 @@ export default function ProfilePage({
                                         {pathSegments.map((seg, si) => (
                                           <span key={si} className="flex items-center gap-x-0.5">
                                             {si > 0 && (
-                                              <span className="text-[10px]" style={{ color: "var(--color-muted)" }}>â€º</span>
+                                              <span className="text-[10px]" style={{ color: "var(--color-muted)" }}>GÇ¦</span>
                                             )}
                                             <span
                                               className="rounded px-1 py-0.5 text-[11px] font-medium leading-none"
@@ -842,24 +800,24 @@ export default function ProfilePage({
 
               </div>
 
-        {/* â”€â”€ Session Security Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-        {!loading && !fetchError && (
-          <div className="dms-page-px pb-8">
-            <SessionSecurityCard
-              sessions={sessions}
-              auditLog={auditLog}
-              loading={sessionsLoading}
-              currentSessionId={currentSessionId}
-              revokingId={revokingId}
-              onRevoke={async (sid) => {
-                setRevokingId(sid);
-                try { await revokeSession(sid); await loadSessions(); } catch { /* ignore */ }
-                finally { setRevokingId(null); }
-              }}
-              onRefresh={loadSessions}
-            />
-          </div>
-        )}
+              <div className="dms-page-px pb-8">
+                <SessionSecurityCard
+                  sessions={sessions}
+                  auditLog={auditLog}
+                  loading={sessionsLoading}
+                  currentSessionId={currentSessionId}
+                  revokingId={revokingId}
+                  onRevoke={async (sid) => {
+                    setRevokingId(sid);
+                    try { await revokeSession(sid); await loadSessions(); } catch { /* ignore */ }
+                    finally { setRevokingId(null); }
+                  }}
+                  onRefresh={loadSessions}
+                />
+              </div>
+            </>
+          )}
+        </div>
 
         {/* Full Photo Modal */}
         {showFullPhoto && profile?.photo_base64 && (
@@ -893,7 +851,7 @@ export default function ProfilePage({
   );
 }
 
-// â”€â”€ SessionSecurityCard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// GöÇGöÇ SessionSecurityCard GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
 
 interface SessionSecurityCardProps {
   sessions: SessionInfo[];
@@ -940,7 +898,7 @@ const STATUS_STYLE: Record<string, { bg: string; fg: string }> = {
 };
 
 function fmtTs(iso: string | null | undefined): string {
-  if (!iso) return "â€”";
+  if (!iso) return "GÇö";
   try {
     return new Date(iso).toLocaleString("en-GB", {
       day: "2-digit", month: "short", year: "numeric",
@@ -992,7 +950,7 @@ function SessionSecurityCard({
 
       <div className="p-6 space-y-8">
 
-        {/* â”€â”€ Active Sessions â”€â”€ */}
+        {/* GöÇGöÇ Active Sessions GöÇGöÇ */}
         <section>
           <p className="mb-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--color-muted)" }}>
             Active Sessions
@@ -1066,7 +1024,7 @@ function SessionSecurityCard({
           </div>
         </section>
 
-        {/* â”€â”€ Past Sessions â”€â”€ */}
+        {/* GöÇGöÇ Past Sessions GöÇGöÇ */}
         {pastSessions.length > 0 && (
           <section>
             <p className="mb-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--color-muted)" }}>
@@ -1092,7 +1050,7 @@ function SessionSecurityCard({
                         </div>
                         <div className="text-[11px]" style={{ color: "var(--color-muted)" }}>
                           {fmtTs(s.login_time)}
-                          {s.logout_time && <span className="ml-2">â†’ {fmtTs(s.logout_time)}</span>}
+                          {s.logout_time && <span className="ml-2">GåÆ {fmtTs(s.logout_time)}</span>}
                         </div>
                       </div>
                     </div>
@@ -1109,7 +1067,7 @@ function SessionSecurityCard({
           </section>
         )}
 
-        {/* â”€â”€ Audit Trail â”€â”€ */}
+        {/* GöÇGöÇ Audit Trail GöÇGöÇ */}
         <section>
           <p className="mb-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--color-muted)" }}>
             Security Audit Trail
@@ -1153,11 +1111,11 @@ function SessionSecurityCard({
                         <td className="px-3 py-2.5" style={{ color: "var(--color-muted)", whiteSpace: "nowrap" }}>
                           <span className="flex items-center gap-1">
                             <BrowserIcon browser={e.browser} />
-                            {e.browser || "â€”"}
+                            {e.browser || "GÇö"}
                           </span>
                         </td>
                         <td className="px-3 py-2.5 font-mono" style={{ color: "var(--color-muted)", whiteSpace: "nowrap" }}>
-                          {e.ip_address || "â€”"}
+                          {e.ip_address || "GÇö"}
                         </td>
                         <td className="px-3 py-2.5 font-mono" style={{ color: "var(--color-muted)", whiteSpace: "nowrap" }}>
                           {fmtTs(e.login_time)}
@@ -1172,7 +1130,7 @@ function SessionSecurityCard({
                               {e.active_duration_formatted}
                             </span>
                           ) : (
-                            <span style={{ color: "var(--color-muted)" }}>â€”</span>
+                            <span style={{ color: "var(--color-muted)" }}>GÇö</span>
                           )}
                         </td>
                         <td className="px-3 py-2.5">
@@ -1183,7 +1141,7 @@ function SessionSecurityCard({
                             >
                               {e.status.toUpperCase()}
                             </span>
-                          ) : <span style={{ color: "var(--color-muted)" }}>â€”</span>}
+                          ) : <span style={{ color: "var(--color-muted)" }}>GÇö</span>}
                         </td>
                       </tr>
                     );

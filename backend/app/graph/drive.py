@@ -28,7 +28,10 @@ async def get_root_item_id(drive_id: str) -> str:
 
 
 async def list_children(drive_id: str, item_id: str) -> list[dict]:
-    items, url = [], f"/drives/{drive_id}/items/{item_id}/children?$top=200"
+    items, url = [], (
+        f"/drives/{drive_id}/items/{item_id}/children"
+        "?$top=200&$select=id,name,folder,file,size,lastModifiedDateTime,parentReference"
+    )
     while url:
         data = await graph().get(url)
         items.extend(data.get("value", []))
@@ -107,8 +110,11 @@ async def _upload_large(drive_id, parent_id, name, content) -> dict:
     return result
 
 
-async def get_item(drive_id: str, item_id: str) -> dict:
-    return await graph().get(f"/drives/{drive_id}/items/{item_id}")
+async def get_item(drive_id: str, item_id: str, select: str | None = None) -> dict:
+    url = f"/drives/{drive_id}/items/{item_id}"
+    if select:
+        url += f"?$select={select}"
+    return await graph().get(url)
 
 
 async def move_item(

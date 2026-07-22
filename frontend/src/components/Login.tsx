@@ -36,6 +36,8 @@ interface LoginPageProps {
     onSignBackIn?: () => void;
     /** Set when the session expired automatically (inactivity or token limit) */
     sessionExpired?: "inactivity" | "token_expiry";
+    /** Set when arriving at /signout with a reason=expired query param */
+    sessionExpiredFromSignout?: "inactivity" | "token_expiry";
     /** Error surfaced from a failed SSO redirect/backend login, shown on load */
     authError?: string | null;
 }
@@ -131,40 +133,6 @@ function FeatureCard({
             </div>
             <div className="text-sm font-semibold text-primary mb-1">{title}</div>
             <div className="text-xs text-fg/75 leading-relaxed">{copy}</div>
-        </div>
-    );
-}
-
-function StatusRow({
-    dotColor,
-    title,
-    subtitle,
-    status,
-    statusColor,
-    last = false,
-}: {
-    dotColor: string;
-    title: string;
-    subtitle: string;
-    status: string;
-    statusColor: string;
-    last?: boolean;
-}) {
-    return (
-        <div
-            className={`flex items-center justify-between px-5 py-4 ${!last ? "border-b border-border" : ""
-                }`}
-        >
-            <div className="flex items-start gap-3">
-                <span className={`w-2 h-2 rounded-full mt-1.5 inline-block ${dotColor}`} />
-                <div>
-                    <div className="text-sm font-semibold text-primary">{title}</div>
-                    <div className="text-xs text-fg/70">{subtitle}</div>
-                </div>
-            </div>
-            <div className={`text-xs font-bold tracking-wide ${statusColor}`}>
-                {status}
-            </div>
         </div>
     );
 }
@@ -324,7 +292,7 @@ function SessionExpiredView({
 /* ───────────────────────────────────────────────────────────────────────────── *//*  Signed-out view                                                              */
 /* ─────────────────────────────────────────────────────────────────────────── */
 
-function SignedOutView({ onSignBackIn }: { onSignBackIn: () => void }) {
+function SignedOutView({ onSignBackIn, expiredReason }: { onSignBackIn: () => void; expiredReason?: "inactivity" | "token_expiry" }) {
     return (
         <div className="min-h-screen w-full relative overflow-hidden flex flex-col text-white">
             {/* Hero photo background */}
@@ -395,15 +363,23 @@ function SignedOutView({ onSignBackIn }: { onSignBackIn: () => void }) {
 
                     <div className="dms-auth-card animate-card-float rounded-[34px] p-9 md:p-11">
                         <h2 className="text-2xl font-semibold text-white mb-1.5 text-center">
-                            Signed Out
+                            {expiredReason ? "Session Expired" : "Signed Out"}
                         </h2>
                         <p className="text-sm text-white/65 mb-6 text-center tracking-wide uppercase">
-                            Your session was securely closed
+                            {expiredReason ? "24-HOUR SESSION LIMIT REACHED" : "Your session was securely closed"}
                         </p>
 
+                        {expiredReason ? (
+                            <div className="mb-6 rounded-xl border border-yellow-400/30 bg-yellow-400/10 px-4 py-3.5">
+                                <p className="text-sm text-yellow-200 leading-relaxed text-center">
+                                    Your session has expired. Please sign in again to continue.
+                                </p>
+                            </div>
+                        ) : (
                         <p className="text-sm text-white/80 leading-relaxed text-center mb-6">
                             Thank you for using the Vessel Document Management System. You have been successfully signed out of your account.
                         </p>
+                        )}
 
                         <button
                             onClick={onSignBackIn}
@@ -644,6 +620,7 @@ export function LoginPage({
     signedOut = false,
     onSignBackIn,
     sessionExpired,
+    sessionExpiredFromSignout,
     authError,
 }: LoginPageProps) {
     void onAuthenticated;
@@ -658,6 +635,7 @@ export function LoginPage({
     if (signedOut) {
         return (
             <SignedOutView
+                expiredReason={sessionExpiredFromSignout}
                 onSignBackIn={onSignBackIn ?? (() => (window.location.href = "/"))}
             />
         );

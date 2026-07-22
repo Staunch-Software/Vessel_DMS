@@ -192,8 +192,8 @@ class RealBackend:
             row = self._folder_by_item(db, folder_id)
             if row:
                 return row.path
-        # Fallback: derive from Graph parentReference.
-        item = await gd.get_item(drive_id, folder_id)
+        # Fallback: derive from Graph parentReference (fetch only needed fields).
+        item = await gd.get_item(drive_id, folder_id, select="id,name,parentReference")
         ref = (item.get("parentReference") or {}).get("path", "")
         rel = ref.split("root:", 1)[1].lstrip("/") if "root:" in ref else ""
         return f"{rel}/{item['name']}".strip("/") if rel else item["name"]
@@ -387,13 +387,22 @@ class RealBackend:
     async def ensure_base_structure(self):
         drive_id = await self._drive()
         with SessionLocal() as db:
-            have = {r.path for r in db.query(models.Folder).filter_by(kind="main")}
-            if len(have) >= len(template.MAIN_FOLDERS):
+            existing_rows = {
+                r.path: r
+                for r in db.query(models.Folder).filter_by(kind="main")
+            }
+            missing = [m for m in template.MAIN_FOLDERS if m not in existing_rows]
+            if not missing:
                 self._base_ready = True
                 return
             root = await gd.get_root_item_id(drive_id)
             main_items = {}
             for main in template.MAIN_FOLDERS:
+                row = existing_rows.get(main)
+                if row is not None and row.drive_item_id:
+                    main_items[main] = row.drive_item_id
+                    continue
+
                 item = await gd.ensure_folder(drive_id, root, main)
                 self._upsert(db, main, main, "main", item["id"], False, None)
                 main_items[main] = item["id"]
@@ -852,8 +861,6 @@ class RealBackend:
             items = await gd.list_children(drive_id, folder_id)
         except GraphError as e:
             if e.status == 404:
-                # The drive_item_id is stale — remove it from the DB cache so it
-                # doesn't block future lookups, then tell the caller the folder is gone.
                 with SessionLocal() as db:
                     stale = db.query(models.Folder).filter_by(drive_item_id=folder_id).one_or_none()
                     if stale:
@@ -866,27 +873,28 @@ class RealBackend:
                 )
             raise
 
-        # Check if parent_path corresponds to a ship (or flat shared main)
-        # template node, and dynamically create any missing subfolders on demand.
         parts = parent_path.split("/") if parent_path else []
-        node_spec = None
+
+        # Only check for missing template folders when we're inside a vessel
+        # subtree (parts >= 2) or a flat main — skip for main-level folders
+        # to avoid unnecessary Graph calls on every top-level navigation.
         if parts:
             main_folder = parts[0]
             if main_folder in template.FLAT_MAIN_FOLDERS:
-                # No ship/common segment — everything after the main folder
-                # itself is a direct path into FLAT_TEMPLATE.
                 node_spec = _get_template_node_for_path(main_folder, parts[1:])
             elif len(parts) >= 2:
                 node_spec = _get_template_node_for_path(main_folder, parts[2:])
-        if node_spec is not None:
-            if "children" in node_spec:
+            else:
+                node_spec = None
+
+            if node_spec is not None and "children" in node_spec:
                 expected_specs = node_spec["children"]
                 existing_names = {it["name"].lower() for it in items}
                 missing_specs = [
                     spec for spec in expected_specs
                     if spec["name"].lower() not in existing_names
+                    and spec.get("kind") != "month_driven"
                 ]
-                
                 if missing_specs:
                     with SessionLocal() as db:
                         parent_row = self._folder_by_item(db, folder_id)
@@ -912,39 +920,39 @@ class RealBackend:
                         if item:
                             items.append(item)
 
-        parent_parts = parent_path.split("/") if parent_path else []
+        parent_parts = parts
         out = []
+
+        # Determine if any item in this listing could be a ship folder
+        # (only true when parent is a main folder, i.e. parts length == 1).
+        # Avoid the JOIN query entirely for deeper levels.
+        is_main_level = len(parts) == 1
+
         with SessionLocal() as db:
             parent_row = self._folder_by_item(db, folder_id)
             parent_vessel_id = parent_row.vessel_id if parent_row else None
 
-            # Build a quick lookup: drive_item_id -> vessel.name for ship folders
-            # This lets us display the canonical DB vessel name instead of the
-            # raw SharePoint folder name which may be out of sync.
-            # Single JOIN query: folders.drive_item_id -> vessels.name
-            ship_rows = (
-                db.query(models.Folder.drive_item_id, models.Vessel.name)
-                .join(models.Vessel, models.Folder.vessel_id == models.Vessel.id)
-                .filter(models.Folder.kind == "ship")
-                .all()
-            )
-            # Map: drive_item_id -> canonical vessel name from DB
-            ship_id_to_name: dict[str, str] = {
-                row.drive_item_id: row.name for row in ship_rows if row.drive_item_id
-            }
+            # Only load ship->vessel name map when at main-folder level
+            ship_id_to_name: dict[str, str] = {}
+            if is_main_level:
+                ship_rows = (
+                    db.query(models.Folder.drive_item_id, models.Vessel.name)
+                    .join(models.Vessel, models.Folder.vessel_id == models.Vessel.id)
+                    .filter(models.Folder.kind == "ship")
+                    .all()
+                )
+                ship_id_to_name = {
+                    row.drive_item_id: row.name for row in ship_rows if row.drive_item_id
+                }
 
             for it in items:
                 sharepoint_name = it["name"]
                 if "folder" in it:
-                    parts = parent_parts + [sharepoint_name]
-                    flags = classify(parts)
+                    child_parts = parent_parts + [sharepoint_name]
+                    flags = classify(child_parts)
                     vessel_id = parent_vessel_id
 
-                    # If this is a ship folder, determine its vessel_id from
-                    # the cache (the upsert below will also do it, but we need
-                    # the ID to correctly rebuild parts/path for the child).
                     if flags["kind"] == "ship":
-                        # Check existing cache for this drive_item_id
                         existing = (
                             db.query(models.Folder)
                             .filter_by(drive_item_id=it["id"])
@@ -954,11 +962,10 @@ class RealBackend:
                             vessel_id = existing.vessel_id
 
                     self._upsert(
-                        db, "/".join(parts), sharepoint_name, flags["kind"], it["id"],
+                        db, "/".join(child_parts), sharepoint_name, flags["kind"], it["id"],
                         flags["month_driven"], vessel_id,
                     )
 
-                    # Use the canonical DB vessel name for ship folders
                     display_name = sharepoint_name
                     if flags["kind"] == "ship" and it["id"] in ship_id_to_name:
                         display_name = ship_id_to_name[it["id"]]

@@ -39,11 +39,21 @@ app.add_middleware(
 )
 
 
+# Read-only folder/children endpoints that are safe to cache briefly in the browser
+_CACHEABLE_PREFIXES = ("/api/folders/", "/api/mains", "/api/vessels")
+
 @app.middleware("http")
 async def add_no_cache_headers(request, call_next):
     response = await call_next(request)
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    response.headers["Pragma"] = "no-cache"
+    path = request.url.path
+    method = request.method
+    # Allow short-lived browser cache (10 s) for GET folder/children/mains/vessels
+    # so rapid back-navigation is instant without hitting Graph API again.
+    if method == "GET" and any(path.startswith(p) for p in _CACHEABLE_PREFIXES):
+        response.headers["Cache-Control"] = "private, max-age=10"
+    else:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
     return response
 
 
@@ -455,18 +465,13 @@ async def check_email(payload: CheckEmailIn):
                 )
             # Any other error from Graph — fail open
             return {"allowed": True}
-    except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.TimeoutException) as timeout_err:
-        print("ConnectTimeout or ReadTimeout")
-        raise HTTPException(
-            status_code=500,
-            detail="connection time-out and unreachable authentication request"
-        )
-    except httpx.RequestError as req_err:
-        print("ConnectTimeout or ReadTimeout")
-        raise HTTPException(
-            status_code=500,
-            detail="connection time-out and unreachable authentication request"
-        )
+    except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.TimeoutException):
+        # Pre-check must never block sign-in when Graph is temporarily slow.
+        # We fail open here and let the real token exchange happen in auth_login.
+        return {"allowed": True}
+    except httpx.RequestError:
+        # Same fail-open behavior for transient network/TLS issues.
+        return {"allowed": True}
 
 
 @app.post("/api/auth/login")
@@ -524,17 +529,23 @@ async def auth_login(request: Request, payload: LoginIn):
         }
 
     # ── Fetch /me from Graph ─────────────────────────────────────────────────
-    async with httpx.AsyncClient(verify=graph_tls_verify()) as client:
-        me_resp = await client.get(
-            f"{settings.graph_base_url}/me",
-            params={
-                "$select": (
-                    "id,displayName,givenName,surname,mail,userPrincipalName,"
-                    "jobTitle,department,mobilePhone,businessPhones,"
-                    "officeLocation,companyName,employeeId"
-                )
-            },
-            headers={"Authorization": f"Bearer {payload.access_token}"},
+    try:
+        async with httpx.AsyncClient(verify=graph_tls_verify(), timeout=15.0) as client:
+            me_resp = await client.get(
+                f"{settings.graph_base_url}/me",
+                params={
+                    "$select": (
+                        "id,displayName,givenName,surname,mail,userPrincipalName,"
+                        "jobTitle,department,mobilePhone,businessPhones,"
+                        "officeLocation,companyName,employeeId"
+                    )
+                },
+                headers={"Authorization": f"Bearer {payload.access_token}"},
+            )
+    except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.TimeoutException, httpx.RequestError):
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication service is temporarily unavailable. Please try again.",
         )
 
     if me_resp.status_code != 200:
@@ -1078,6 +1089,99 @@ async def repair_vessel_links():
     Safe to call at any time — only fills in missing links, never removes data.
     """
     return await get_backend().repair_vessel_links()
+
+
+@app.post("/api/admin/migrate-drawing-folder")
+async def migrate_drawing_folder():
+    """One-time migration: for every vessel, collapse the 'Drawing' wrapper
+    folder inside 'Drawings and Manuals' by moving its children one level up
+    and deleting the now-empty 'Drawing' folder.
+    Safe to call multiple times — skips vessels where 'Drawing' no longer exists.
+    """
+    from .graph import drive as gd
+    from .graph.client import GraphError
+    from .db.base import SessionLocal
+    from .db import models as db_models
+    from .services import get_backend
+
+    be = get_backend()
+    drive_id = await be._drive()
+
+    results = []
+
+    with SessionLocal() as db:
+        # Find all 'Drawings and Manuals' folders across all vessels
+        dam_rows = (
+            db.query(db_models.Folder)
+            .filter(db_models.Folder.name == "Drawings and Manuals", db_models.Folder.kind == "folder")
+            .all()
+        )
+        dam_list = [(r.drive_item_id, r.path, r.vessel_id) for r in dam_rows]
+
+    for dam_id, dam_path, vessel_id in dam_list:
+        # Find the 'Drawing' child folder
+        try:
+            drawing_item = await gd.find_child(drive_id, dam_id, "Drawing")
+        except Exception as e:
+            results.append({"dam_path": dam_path, "status": "error", "detail": str(e)})
+            continue
+
+        if not drawing_item or "folder" not in drawing_item:
+            results.append({"dam_path": dam_path, "status": "skipped", "detail": "No Drawing folder found"})
+            continue
+
+        drawing_id = drawing_item["id"]
+        drawing_path = f"{dam_path}/Drawing"
+
+        # List children of Drawing
+        try:
+            children = await gd.list_children(drive_id, drawing_id)
+        except Exception as e:
+            results.append({"dam_path": dam_path, "status": "error", "detail": f"list children: {e}"})
+            continue
+
+        moved = []
+        for child in children:
+            if "folder" not in child:
+                continue
+            try:
+                await gd.move_item(drive_id, child["id"], dam_id)
+                moved.append(child["name"])
+                # Update DB cache: rewrite path from Drawing/X -> X under dam_path
+                old_child_path = f"{drawing_path}/{child['name']}"
+                new_child_path = f"{dam_path}/{child['name']}"
+                with SessionLocal() as db:
+                    # Update the child folder row
+                    row = db.query(db_models.Folder).filter_by(path=old_child_path).one_or_none()
+                    if row:
+                        row.path = new_child_path
+                    # Update all descendant paths
+                    descendants = (
+                        db.query(db_models.Folder)
+                        .filter(db_models.Folder.path.like(f"{old_child_path}/%"))
+                        .all()
+                    )
+                    for d in descendants:
+                        d.path = new_child_path + d.path[len(old_child_path):]
+                    db.commit()
+            except Exception as e:
+                results.append({"dam_path": dam_path, "status": "error", "detail": f"move {child['name']}: {e}"})
+
+        # Delete the now-empty Drawing folder
+        try:
+            await gd.delete_item(drive_id, drawing_id)
+            with SessionLocal() as db:
+                row = db.query(db_models.Folder).filter_by(path=drawing_path).one_or_none()
+                if row:
+                    db.delete(row)
+                db.commit()
+        except Exception as e:
+            results.append({"dam_path": dam_path, "status": "error", "detail": f"delete Drawing: {e}"})
+            continue
+
+        results.append({"dam_path": dam_path, "status": "ok", "moved": moved})
+
+    return {"results": results}
 
 
 @app.get("/api/mains")
