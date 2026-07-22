@@ -159,8 +159,8 @@ export async function getFolder(id: string): Promise<FolderNode> {
   return (await api.get(`/folders/${id}`)).data;
 }
 
-export async function getChildren(id: string): Promise<FolderNode[]> {
-  return (await api.get(`/folders/${id}/children`)).data;
+export async function getChildren(id: string, signal?: AbortSignal): Promise<FolderNode[]> {
+  return (await api.get(`/folders/${id}/children`, { signal })).data;
 }
 
 export async function getStats(): Promise<Stats> {
@@ -377,7 +377,7 @@ export async function listApprovals(
   status?: ApprovalStatus | "all",
   q?: string
 ): Promise<ApprovalRequest[]> {
-  const params: Record<string, string> = { admin: adminEmail };
+  const params: Record<string, string> = { admin_email: adminEmail };
   if (status && status !== "all") params.status = status;
   if (q) params.q = q;
   return (await api.get("/approvals", { params })).data;
@@ -393,7 +393,7 @@ export async function listMyApprovals(
 
 
 export async function approveRequest(adminEmail: string, requestId: string): Promise<void> {
-  await api.post(`/approvals/${requestId}/approve`, null, { params: { admin: adminEmail } });
+  await api.post(`/approvals/${requestId}/approve`, null, { params: { admin_email: adminEmail } });
 }
 
 export async function rejectRequest(
@@ -401,7 +401,7 @@ export async function rejectRequest(
   requestId: string,
   reason: string
 ): Promise<void> {
-  await api.post(`/approvals/${requestId}/reject`, { reason }, { params: { admin: adminEmail } });
+  await api.post(`/approvals/${requestId}/reject`, { reason }, { params: { admin_email: adminEmail } });
 }
 
 export function approvalPreviewUrl(requestId: string, adminEmail: string): string {

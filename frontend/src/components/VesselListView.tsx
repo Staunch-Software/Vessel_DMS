@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { ExternalLink, Search, AlertCircle } from "lucide-react";
-import { getChildren, fileContentUrl, type FolderNode } from "../api";
+import { ExternalLink, Search, AlertCircle, Upload, Loader2 } from "lucide-react";
+import { getChildren, fileContentUrl, getJob, monthUpload, uploadFile, type FolderNode } from "../api";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -11,7 +11,11 @@ interface FlatRow {
   subFolderPath: string;
   fileName: string | null;
   fileId: string | null;
+  fileNode: FolderNode | null;
   groupKey: string;
+  uploadFolderId: string;
+  monthDriven: boolean;
+  canUpload: boolean;
 }
 
 interface LeafEntry {
@@ -19,27 +23,97 @@ interface LeafEntry {
   category: string;
   pathParts: string[];
   files: FolderNode[];
+  folder: FolderNode;
 }
 
-// ── Parallel recursive flattener ─────────────────────────────────────────────
-// All sibling folders are fetched in parallel via Promise.all to avoid
-// the O(n) sequential round-trip problem.
+interface UploadTarget {
+  groupKey: string;
+  uploadFolderId: string;
+  monthDriven: boolean;
+}
+
+// ── Bounded-concurrency recursive flattener ──────────────────────────────────
+
+const FETCH_CONCURRENCY = 10;
+const vesselRowsCache = new Map<string, FlatRow[]>();
+
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) return [];
+
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const i = nextIndex;
+      nextIndex += 1;
+      if (i >= items.length) return;
+      results[i] = await mapper(items[i], i);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}
+
+function leafToRows(leaf: LeafEntry, index: number): FlatRow[] {
+  const baseSr = String(index);
+  const subPath = leaf.pathParts.join(" › ");
+  const groupKey = `${leaf.group}||${leaf.category}||${subPath}`;
+  const suffixes = "abcdefghijklmnopqrstuvwxyz";
+  const canUpload = leaf.folder.upload || leaf.folder.month_driven;
+
+  if (leaf.files.length === 0) {
+    return [{
+      srNo: baseSr,
+      group: leaf.group,
+      category: leaf.category,
+      subFolderPath: subPath,
+      fileName: null,
+      fileId: null,
+      fileNode: null,
+      groupKey,
+      uploadFolderId: leaf.folder.id,
+      monthDriven: leaf.folder.month_driven,
+      canUpload,
+    }];
+  }
+
+  return leaf.files.map((f, idx) => ({
+    srNo: idx === 0 ? baseSr : `${baseSr}${suffixes[idx - 1]}`,
+    group: leaf.group,
+    category: leaf.category,
+    subFolderPath: subPath,
+    fileName: f.name,
+    fileId: f.id,
+    fileNode: f,
+    groupKey,
+    uploadFolderId: leaf.folder.id,
+    monthDriven: leaf.folder.month_driven,
+    canUpload,
+  }));
+}
 
 async function walkFolder(
   node: FolderNode,
   pathParts: string[],
-  signal: AbortSignal
-): Promise<LeafEntry[]> {
-  if (signal.aborted) return [];
+  signal: AbortSignal,
+  emitLeaf: (leaf: LeafEntry) => void
+): Promise<void> {
+  if (signal.aborted) return;
 
   let kids: FolderNode[];
   try {
-    kids = await getChildren(node.id);
+    kids = await getChildren(node.id, signal);
   } catch {
-    return [];
+    return;
   }
 
-  if (signal.aborted) return [];
+  if (signal.aborted) return;
 
   const files = kids.filter((k) => k.kind === "file");
   const subFolders = kids.filter((k) => k.kind !== "file");
@@ -47,85 +121,68 @@ async function walkFolder(
   const group = pathParts[0] ?? node.name;
   const category = pathParts[1] ?? node.name;
 
-  const results: LeafEntry[] = [];
-
   // This node is a leaf if it has files OR has no sub-folders
   if (files.length > 0 || subFolders.length === 0) {
-    results.push({ group, category, pathParts, files });
+    emitLeaf({ group, category, pathParts, files, folder: node });
   }
 
-  // Recurse into all sub-folders IN PARALLEL
+  // Recurse into sub-folders with bounded concurrency.
   if (subFolders.length > 0) {
-    const nested = await Promise.all(
-      subFolders.map((sf) => walkFolder(sf, [...pathParts, sf.name], signal))
+    await mapLimit(
+      subFolders,
+      FETCH_CONCURRENCY,
+      async (sf) => walkFolder(sf, [...pathParts, sf.name], signal, emitLeaf)
     );
-    for (const n of nested) results.push(...n);
   }
-
-  return results;
 }
 
-async function flattenVessel(vesselId: string, signal: AbortSignal): Promise<FlatRow[]> {
-  // Level 1: groups (parallel)
-  const groups = await getChildren(vesselId);
+async function flattenVesselProgress(
+  vesselId: string,
+  signal: AbortSignal,
+  onAppendRows: (rows: FlatRow[]) => void
+): Promise<FlatRow[]> {
+  const groups = await getChildren(vesselId, signal);
   if (signal.aborted) return [];
 
   const folderGroups = groups.filter((g) => g.kind !== "file");
-
-  // Level 2: categories for all groups (parallel)
-  const groupCategoryPairs = await Promise.all(
-    folderGroups.map(async (g) => {
-      try {
-        const cats = await getChildren(g.id);
-        return { group: g, cats: cats.filter((c) => c.kind !== "file") };
-      } catch {
-        return { group: g, cats: [] };
-      }
-    })
-  );
-  if (signal.aborted) return [];
-
-  // Level 3+: walk all categories in parallel
-  const allLeaves: LeafEntry[] = [];
-  await Promise.all(
-    groupCategoryPairs.flatMap(({ group, cats }) =>
-      cats.map(async (cat) => {
-        const leaves = await walkFolder(cat, [group.name, cat.name], signal);
-        allLeaves.push(...leaves);
-      })
-    )
-  );
-  if (signal.aborted) return [];
-
-  // Assign Sr. numbers and build rows
-  const rows: FlatRow[] = [];
+  const finalRows: FlatRow[] = [];
   let srCounter = 0;
-  const suffixes = "abcdefghijklmnopqrstuvwxyz";
 
-  for (const leaf of allLeaves) {
-    srCounter++;
-    const baseSr = String(srCounter);
-    const subPath = leaf.pathParts.join(" › ");
-    const groupKey = `${leaf.group}||${leaf.category}||${subPath}`;
+  const emitLeaf = (leaf: LeafEntry) => {
+    srCounter += 1;
+    const nextRows = leafToRows(leaf, srCounter);
+    finalRows.push(...nextRows);
+    onAppendRows(nextRows);
+  };
 
-    if (leaf.files.length === 0) {
-      rows.push({ srNo: baseSr, group: leaf.group, category: leaf.category, subFolderPath: subPath, fileName: null, fileId: null, groupKey });
-    } else {
-      leaf.files.forEach((f, idx) => {
-        rows.push({
-          srNo: idx === 0 ? baseSr : `${baseSr}${suffixes[idx - 1]}`,
-          group: leaf.group,
-          category: leaf.category,
-          subFolderPath: subPath,
-          fileName: f.name,
-          fileId: f.id,
-          groupKey,
-        });
-      });
+  // Level 2+: walk groups/categories with bounded concurrency.
+  await mapLimit(folderGroups, FETCH_CONCURRENCY, async (g) => {
+    if (signal.aborted) return;
+
+    let kids: FolderNode[] = [];
+    try {
+      kids = await getChildren(g.id, signal);
+    } catch {
+      return;
     }
-  }
 
-  return rows;
+    if (signal.aborted) return;
+    const cats = kids.filter((c) => c.kind !== "file");
+    const files = kids.filter((c) => c.kind === "file");
+
+    if (cats.length === 0) {
+      emitLeaf({ group: g.name, category: g.name, pathParts: [g.name], files, folder: g });
+      return;
+    }
+
+    await mapLimit(
+      cats,
+      FETCH_CONCURRENCY,
+      async (cat) => walkFolder(cat, [g.name, cat.name], signal, emitLeaf)
+    );
+  });
+
+  return finalRows;
 }
 
 // ── Group color palette ──────────────────────────────────────────────────────
@@ -153,12 +210,18 @@ function groupBadge(name: string) {
 interface Props {
   vesselId: string;
   vesselName: string;
+  onPreviewFile?: (file: FolderNode) => void;
 }
 
-export function VesselListView({ vesselId, vesselName }: Props) {
+export function VesselListView({ vesselId, vesselName, onPreviewFile }: Props) {
   const [rows, setRows] = useState<FlatRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [uploadingGroupKey, setUploadingGroupKey] = useState<string | null>(null);
+  const [uploadInfo, setUploadInfo] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
 
   const [textFilter, setTextFilter] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
@@ -167,22 +230,72 @@ export function VesselListView({ vesselId, vesselName }: Props) {
 
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true);
+    let timedOut = false;
+    const cachedRows = vesselRowsCache.get(vesselId);
+    if (cachedRows && cachedRows.length > 0) {
+      setRows(cachedRows);
+      setLoading(true);
+    } else {
+      setRows([]);
+      setLoading(true);
+    }
     setError(null);
-    setRows([]);
+    setSelectedFileIds(new Set());
+    const liveRows: FlatRow[] = [];
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const flushLiveRows = () => {
+      flushTimer = null;
+      if (controller.signal.aborted) return;
+      const snapshot = [...liveRows];
+      vesselRowsCache.set(vesselId, snapshot);
+      setRows(snapshot);
+    };
+
+    const queueFlush = () => {
+      if (flushTimer !== null) return;
+      flushTimer = setTimeout(flushLiveRows, 80);
+    };
 
     // 30-second timeout guard
-    const timer = setTimeout(() => controller.abort(), 30_000);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 30_000);
 
-    flattenVessel(vesselId, controller.signal)
+    flattenVesselProgress(vesselId, controller.signal, (chunk) => {
+      if (!controller.signal.aborted && chunk.length > 0) {
+        liveRows.push(...chunk);
+        queueFlush();
+      }
+    })
       .then((r) => {
         if (!controller.signal.aborted) {
-          setRows(r);
+          if (flushTimer !== null) {
+            clearTimeout(flushTimer);
+            flushLiveRows();
+          }
+          if (r.length === 0 && (!cachedRows || cachedRows.length === 0)) setRows([]);
           setLoading(false);
         }
       })
       .catch((e) => {
+        if (controller.signal.aborted) {
+          if (timedOut) {
+            if (flushTimer !== null) {
+              clearTimeout(flushTimer);
+              flushLiveRows();
+            }
+            setError("List view timed out while loading folders. Showing partial results.");
+            setLoading(false);
+          }
+          return;
+        }
         if (!controller.signal.aborted) {
+          if (flushTimer !== null) {
+            clearTimeout(flushTimer);
+            flushLiveRows();
+          }
           setError(e?.message ?? "Failed to load document list.");
           setLoading(false);
         }
@@ -191,9 +304,10 @@ export function VesselListView({ vesselId, vesselName }: Props) {
 
     return () => {
       controller.abort();
+      if (flushTimer !== null) clearTimeout(flushTimer);
       clearTimeout(timer);
     };
-  }, [vesselId]);
+  }, [vesselId, reloadKey]);
 
   const groups = useMemo(() => Array.from(new Set(rows.map((r) => r.group))).sort(), [rows]);
   const categories = useMemo(
@@ -217,45 +331,155 @@ export function VesselListView({ vesselId, vesselName }: Props) {
           r.subFolderPath.toLowerCase().includes(q) ||
           (r.fileName ?? "").toLowerCase().includes(q)
       );
-    if (sort === "name_asc") return [...out].sort((a, b) => (a.fileName ?? "").localeCompare(b.fileName ?? ""));
-    if (sort === "name_desc") return [...out].sort((a, b) => (b.fileName ?? "").localeCompare(a.fileName ?? ""));
     return out;
-  }, [rows, textFilter, groupFilter, catFilter, sort]);
-
-  // Rowspan map: index → span count (0 = not a group-start row)
-  const rowspanMap = useMemo(() => {
-    const map: number[] = new Array(filtered.length).fill(0);
-    let i = 0;
-    while (i < filtered.length) {
-      const key = filtered[i].groupKey;
-      let j = i;
-      while (j < filtered.length && filtered[j].groupKey === key) j++;
-      map[i] = j - i;
-      i = j;
-    }
-    return map;
-  }, [filtered]);
+  }, [rows, textFilter, groupFilter, catFilter]);
 
   const fileCount = rows.filter((r) => r.fileId !== null).length;
   const catCount = new Set(rows.map((r) => r.category)).size;
 
-  if (loading) {
+  const groupedRows = useMemo(() => {
+    const map = new Map<string, {
+      srNo: string;
+      group: string;
+      category: string;
+      subFolderPath: string;
+      groupKey: string;
+      uploadFolderId: string;
+      monthDriven: boolean;
+      canUpload: boolean;
+      files: Array<{ id: string; name: string; node: FolderNode }>;
+    }>();
+
+    for (const row of filtered) {
+      const existing = map.get(row.groupKey);
+      if (!existing) {
+        map.set(row.groupKey, {
+          srNo: row.srNo,
+          group: row.group,
+          category: row.category,
+          subFolderPath: row.subFolderPath,
+          groupKey: row.groupKey,
+          uploadFolderId: row.uploadFolderId,
+          monthDriven: row.monthDriven,
+          canUpload: row.canUpload,
+          files: row.fileId && row.fileName && row.fileNode ? [{ id: row.fileId, name: row.fileName, node: row.fileNode }] : [],
+        });
+      } else if (row.fileId && row.fileName && row.fileNode) {
+        existing.files.push({ id: row.fileId, name: row.fileName, node: row.fileNode });
+      }
+    }
+
+    const grouped = Array.from(map.values());
+    for (const g of grouped) {
+      g.files.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    if (sort === "group_asc") {
+      return grouped;
+    }
+
+    const keyFor = (g: (typeof grouped)[number]) => g.files[0]?.name?.toLowerCase() ?? "";
+    grouped.sort((a, b) => {
+      const ka = keyFor(a);
+      const kb = keyFor(b);
+      // Keep "No attachment" rows at the end for both name sort directions.
+      if (!ka && !kb) return 0;
+      if (!ka) return 1;
+      if (!kb) return -1;
+      return sort === "name_asc" ? ka.localeCompare(kb) : kb.localeCompare(ka);
+    });
+
+    return grouped;
+  }, [filtered, sort]);
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const toggleFileSelection = (fileId: string) => {
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(fileId)) next.delete(fileId);
+      else next.add(fileId);
+      return next;
+    });
+  };
+
+  const handleAttachUpload = async (row: UploadTarget, files: File[]) => {
+    if (!files.length) return;
+    setUploadingGroupKey(row.groupKey);
+    setUploadError(null);
+    setUploadInfo(
+      files.length === 1
+        ? `Uploading ${files[0].name}...`
+        : `Uploading ${files.length} files...`
+    );
+
+    let doneCount = 0;
+    let pendingCount = 0;
+    let failedCount = 0;
+
+    try {
+      for (const file of files) {
+        const job = row.monthDriven
+          ? await monthUpload(row.uploadFolderId, file)
+          : await uploadFile(row.uploadFolderId, file);
+
+        let final = job;
+        for (let i = 0; i < 10 && final.status === "processing"; i++) {
+          await sleep(500);
+          final = await getJob(job.id);
+        }
+
+        if (final.status === "done") doneCount += 1;
+        else if (final.status === "pending") pendingCount += 1;
+        else failedCount += 1;
+      }
+
+      if (failedCount === 0) {
+        if (pendingCount > 0) {
+          setUploadInfo(`${doneCount} uploaded and ${pendingCount} sent for approval.`);
+        } else {
+          setUploadInfo(
+            doneCount === 1 ? "Attachment uploaded successfully." : `${doneCount} attachments uploaded successfully.`
+          );
+        }
+      } else {
+        setUploadError(
+          `${failedCount} file(s) failed. Uploaded: ${doneCount}, Pending approval: ${pendingCount}.`
+        );
+      }
+
+      setRows([]);
+      setSelectedFileIds(new Set());
+      setReloadKey((k) => k + 1);
+    } catch {
+      setUploadError("Upload failed. Please retry.");
+    } finally {
+      setUploadingGroupKey(null);
+    }
+  };
+
+  if (loading && rows.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-3">
         <div className="w-7 h-7 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
         <p className="text-sm text-muted">Building document list for {vesselName}…</p>
-        <p className="text-xs text-muted/60">Fetching all folders in parallel…</p>
+        <p className="text-xs text-muted/60">Loading folders in batches…</p>
       </div>
     );
   }
 
-  if (error) {
+  if (error && rows.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-3">
         <AlertCircle className="h-8 w-8 text-rose-400" />
         <p className="text-sm text-rose-600 font-medium">{error}</p>
         <button
-          onClick={() => { setLoading(true); setError(null); }}
+          onClick={() => {
+            setLoading(true);
+            setError(null);
+            setRows([]);
+            setReloadKey((k) => k + 1);
+          }}
           className="rounded-lg border border-border px-4 py-2 text-xs font-semibold text-fg hover:bg-surface2 transition"
         >
           Retry
@@ -266,6 +490,21 @@ export function VesselListView({ vesselId, vesselName }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
+      {loading && rows.length > 0 && (
+        <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-medium text-sky-700">
+          Loading more folders... current rows are visible.
+        </p>
+      )}
+      {uploadInfo && (
+        <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">
+          {uploadInfo}
+        </p>
+      )}
+      {uploadError && (
+        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
+          {uploadError}
+        </p>
+      )}
       <p className="text-xs text-muted">
         {groups.length} group{groups.length !== 1 ? "s" : ""} · {catCount} categor{catCount !== 1 ? "ies" : "y"} · {fileCount} file{fileCount !== 1 ? "s" : ""} with attachments · flattened list view
       </p>
@@ -308,7 +547,7 @@ export function VesselListView({ vesselId, vesselName }: Props) {
         </select>
       </div>
 
-      {filtered.length === 0 ? (
+      {groupedRows.length === 0 ? (
         <p className="dms-card rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
           {rows.length === 0 ? "No documents found in this vessel." : "No documents match your filter."}
         </p>
@@ -326,57 +565,93 @@ export function VesselListView({ vesselId, vesselName }: Props) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((row, idx) => {
-                const span = rowspanMap[idx];
-                const isGroupStart = span > 0;
-                const isGrouped = !isGroupStart;
+              {groupedRows.map((row, idx) => {
+                const selectedInRow = row.files.filter((f) => selectedFileIds.has(f.id));
+                const openTargets = selectedInRow.length > 0 ? selectedInRow : row.files;
 
                 return (
                   <tr
                     key={`${row.groupKey}-${idx}`}
-                    className={
-                      "transition " +
-                      (isGrouped ? "bg-surface2/40" : "border-t border-border hover:bg-bg")
-                    }
+                    className="border-t border-border transition hover:bg-bg"
                   >
-                    <td className="px-3 py-2 text-xs text-muted font-mono whitespace-nowrap">{row.srNo}</td>
-
-                    {isGroupStart && (
-                      <td rowSpan={span} className="px-3 py-2 align-top border-r border-border">
-                        {groupBadge(row.group)}
-                      </td>
-                    )}
-                    {isGroupStart && (
-                      <td rowSpan={span} className="px-3 py-2 text-sm text-fg font-medium align-top border-r border-border">
-                        {row.category}
-                      </td>
-                    )}
-                    {isGroupStart && (
-                      <td rowSpan={span} className="px-3 py-2 text-xs text-muted align-top border-r border-border max-w-[220px]">
-                        <span className="block" title={row.subFolderPath}>{row.subFolderPath}</span>
-                      </td>
-                    )}
-
-                    <td className="px-3 py-2 text-sm text-fg max-w-[200px]">
-                      {row.fileName
-                        ? <span className="block truncate" title={row.fileName}>{row.fileName}</span>
-                        : <span className="text-muted italic text-xs">—</span>}
+                    <td className="px-3 py-2 text-xs text-muted font-mono whitespace-nowrap align-top">{row.srNo}</td>
+                    <td className="px-3 py-2 align-top border-r border-border">{groupBadge(row.group)}</td>
+                    <td className="px-3 py-2 text-sm text-fg font-medium align-top border-r border-border">{row.category}</td>
+                    <td className="px-3 py-2 text-xs text-muted align-top border-r border-border max-w-[220px]">
+                      <span className="block" title={row.subFolderPath}>{row.subFolderPath}</span>
+                    </td>
+                    <td className="px-3 py-2 text-sm text-fg max-w-[280px] align-top">
+                      {row.files.length > 0 ? (
+                        <div className="space-y-1.5">
+                          {row.files.map((f) => (
+                            <label key={f.id} className="flex items-start gap-2">
+                              <input
+                                type="checkbox"
+                                checked={selectedFileIds.has(f.id)}
+                                onChange={() => toggleFileSelection(f.id)}
+                                className="mt-0.5 h-3.5 w-3.5 rounded border-border"
+                              />
+                              <span className="block truncate" title={f.name}>{f.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-muted italic text-xs">—</span>
+                      )}
                     </td>
 
-                    <td className="px-3 py-2 text-right whitespace-nowrap">
-                      {row.fileId ? (
-                        <a
-                          href={fileContentUrl(row.fileId)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary hover:bg-primary/20 transition"
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                          Open
-                        </a>
-                      ) : (
-                        <span className="text-xs text-muted italic">No attachment</span>
-                      )}
+                    <td className="px-3 py-2 align-top">
+                      <div className="flex flex-col items-end gap-1.5">
+                        {row.files.length > 0 ? (
+                          <button
+                            onClick={() => {
+                              const target = openTargets[0];
+                              if (!target) return;
+                              if (onPreviewFile) {
+                                onPreviewFile(target.node);
+                                return;
+                              }
+                              window.location.href = fileContentUrl(target.id);
+                            }}
+                            className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary hover:bg-primary/20 transition"
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                            {selectedInRow.length > 0
+                              ? `Open selected (${selectedInRow.length})`
+                              : `Open (${row.files.length})`}
+                          </button>
+                        ) : (
+                          <span className="text-xs text-muted italic">No attachment</span>
+                        )}
+
+                        {row.canUpload && (
+                          <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-semibold text-fg hover:bg-surface2 transition">
+                            <input
+                              type="file"
+                              multiple
+                              className="hidden"
+                              disabled={uploadingGroupKey === row.groupKey}
+                              onChange={(e) => {
+                                const nextFiles = Array.from(e.target.files || []);
+                                e.currentTarget.value = "";
+                                if (nextFiles.length === 0) return;
+                                void handleAttachUpload(row, nextFiles);
+                              }}
+                            />
+                            {uploadingGroupKey === row.groupKey ? (
+                              <>
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Uploading
+                              </>
+                            ) : (
+                              <>
+                                <Upload className="h-3 w-3" />
+                                Upload files
+                              </>
+                            )}
+                          </label>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { LayoutDashboard, ClipboardCheck, Layers, Plus, LogOut, ShieldOff, Archive, Trash2, X, Anchor, Menu, Wrench, BriefcaseBusiness, Shield, Ship } from "lucide-react";
+import { LayoutDashboard, ClipboardCheck, Layers, LogOut, ShieldOff, Archive, Trash2, X, Anchor, Menu, Wrench, BriefcaseBusiness, Shield, Ship } from "lucide-react";
 import type { FolderNode } from "../api";
 import { MAIN_ACCENTS } from "./nodeStyle";
 
@@ -12,7 +12,6 @@ interface Props {
   onSelectMain: (node: FolderNode) => void;
   onDashboard: () => void;
   onVessels: () => void;
-  onNewVessel: () => void;
   onSignOut: () => void;
   onGlobalSignOut: () => void;
   onProfile: () => void;
@@ -42,7 +41,6 @@ export function Sidebar({
   onSelectMain,
   onDashboard,
   onVessels,
-  onNewVessel,
   onSignOut,
   onGlobalSignOut,
   onProfile,
@@ -159,16 +157,6 @@ export function Sidebar({
             </button>
           </div>
         )}
-
-        {!collapsed && <div className="px-4 pb-2">
-          <button
-            onClick={() => handleNavClick(onNewVessel)}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-fg shadow-sm transition hover:bg-primary-hover cursor-pointer"
-          >
-            <Plus className="h-3.5 w-3.5 text-primary-fg" />
-            New Vessel
-          </button>
-        </div>}
 
         <nav className={`flex-1 space-y-0.5 overflow-y-hidden ${collapsed ? "px-2" : "px-3"} pb-2`}>
           <button

@@ -1927,6 +1927,24 @@ class RealBackend:
         is_month_upload=False, category=None, detected_month=None,
         department=None, vessel_id=None, vessel_name=None, message=None,
     ):
+        # Prevent duplicate requests when the same file is uploaded again
+        # before an existing approval has been decided.
+        with SessionLocal() as db:
+            existing_pending = (
+                db.query(models.ApprovalRequest)
+                .filter(
+                    models.ApprovalRequest.status == "pending",
+                    models.ApprovalRequest.action_type == "upload",
+                    models.ApprovalRequest.destination_folder_id == destination_folder_id,
+                    func.lower(models.ApprovalRequest.filename) == filename.lower(),
+                )
+                .first()
+            )
+            if existing_pending is not None:
+                raise Conflict(
+                    f"A request for '{filename}' in this folder is already pending approval"
+                )
+
         staged_item_id = await self._stage_file(drive_id, filename, content, content_type)
         try:
             with SessionLocal() as db:

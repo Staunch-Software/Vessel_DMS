@@ -101,7 +101,9 @@ def _is_admin_email(email: str | None) -> bool:
 
 
 def _require_admin(
-    x_user_email: str | None = Header(default=None), admin_email: str | None = None
+    x_user_email: str | None = Header(default=None),
+    admin_email: str | None = Query(default=None),
+    admin: str | None = Query(default=None),
 ) -> str:
     """Approval decisions are restricted to settings.admin_emails.
 
@@ -113,7 +115,7 @@ def _require_admin(
     can't attach custom headers, so it's allowed to pass the email as a query
     param instead — same admin-list check either way.
     """
-    email = (x_user_email or admin_email or "").strip().lower()
+    email = (x_user_email or admin_email or admin or "").strip().lower()
     if not email or not _is_admin_email(email):
         raise HTTPException(403, "Administrator access required")
     return email
