@@ -86,6 +86,7 @@ import { ThemeSettings } from "./components/ThemeSettings";
 import { SettingsPage } from "./components/SettingsPage";
 import { Approvals } from "./components/Approvals";
 import { VesselListView } from "./components/VesselListView";
+import { MainFolderListView } from "./components/MainFolderListView";
 import { captureDiagnostics } from "./historyProbe";
 
 
@@ -336,6 +337,8 @@ export default function App() {
   const [recycleSelectIds, setRecycleSelectIds] = useState<Set<string>>(new Set());
   const [showBulkRestoreRecycleModal, setShowBulkRestoreRecycleModal] = useState(false);
   const [showBulkDeleteRecycleModal, setShowBulkDeleteRecycleModal] = useState(false);
+  const [showRecyclePreviewModal, setShowRecyclePreviewModal] = useState(false);
+  const [recyclePreviewNode, setRecyclePreviewNode] = useState<FolderNode | null>(null);
   const [selectedVesselByPage, setSelectedVesselByPage] = useState<Record<string, string | null>>({});
   const [searchQueryByPage, setSearchQueryByPage] = useState<Record<string, string>>({});
   const [pendingApprovalRequests, setPendingApprovalRequests] = useState<ApprovalResultItem[]>([]);
@@ -1683,6 +1686,14 @@ export default function App() {
     setShowBulkRestoreRecycleModal(true);
   }, [deletedNodes]);
 
+  const openRecyclePreviewConfirm = useCallback((node: FolderNode) => {
+    const itemTypeLc = (node.item_type || "").toLowerCase();
+    const isFile = node.kind === "file" || (itemTypeLc.includes("file") && !itemTypeLc.includes("folder"));
+    if (!isFile) return;
+    setRecyclePreviewNode(node);
+    setShowRecyclePreviewModal(true);
+  }, []);
+
   const executeBulkPermanentDelete = useCallback(async () => {
     setShowBulkDeleteRecycleModal(false);
     if (recycleSelectIds.size === 0) return;
@@ -2073,7 +2084,9 @@ export default function App() {
     const isCommonLike = current.name.toLowerCase().includes("common");
     return isDepthTwo && current.kind !== "main" && !isCommonLike;
   }, [view, current, path.length]);
-  const showToolbar = view === "explorer" && !!current && children.length > 0 && (!isShipRoot || shipViewMode === "folder");
+  const isMainRoot = view === "explorer" && !!current && current.kind === "main" && path.length === 1;
+  const showListModeToggle = isShipRoot || isMainRoot;
+  const showToolbar = view === "explorer" && !!current && children.length > 0 && (!showListModeToggle || shipViewMode === "folder");
   // Show a neutral loading screen while MSAL is handling any interaction
   // or when we are in the process of auto-authenticating a cached account.
   // This prevents the login page from briefly flashing before moving to the home page.
@@ -2604,7 +2617,8 @@ export default function App() {
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {sortedDeleted.map((n) => {
-                          const isFile = n.kind === "file";
+                          const itemTypeLc = (n.item_type || "").toLowerCase();
+                          const isFile = n.kind === "file" || (itemTypeLc.includes("file") && !itemTypeLc.includes("folder"));
                           const iconInfo = iconFor(n);
                           const IconComponent = isFile ? (iconInfo?.Icon || FileText) : FolderOpen;
                           const iconCls = isFile ? (iconInfo?.cls || "text-slate-400") : "text-amber-500";
@@ -2631,7 +2645,17 @@ export default function App() {
                                 </div>
                               </td>
                               <td className="px-3 py-2.5 font-medium text-slate-800 max-w-[200px]">
-                                <span className="block truncate" title={n.name}>{n.name}</span>
+                                {isFile ? (
+                                  <button
+                                    onClick={() => openRecyclePreviewConfirm(n)}
+                                    className="block max-w-[200px] truncate text-left hover:text-brand-700 hover:underline"
+                                    title={`Preview ${n.name}`}
+                                  >
+                                    {n.name}
+                                  </button>
+                                ) : (
+                                  <span className="block truncate" title={n.name}>{n.name}</span>
+                                )}
                               </td>
                               <td className="px-3 py-2.5 text-slate-500 max-w-[220px]">
                                 <span className="block truncate text-xs" title={n.original_path || "—"}>{n.original_path || "—"}</span>
@@ -2649,17 +2673,20 @@ export default function App() {
                                 {fmtDate(n.modified)}
                               </td>
                               <td className="px-3 py-2.5">
-                                <button
-                                  onClick={() => {
-                                    setRecycleSelectIds(new Set([n.id]));
-                                    setShowBulkRestoreRecycleModal(true);
-                                  }}
-                                  className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition"
-                                  title="Restore"
-                                >
-                                  <ArchiveRestore className="h-3 w-3" />
-                                  Restore
-                                </button>
+                                <div className="flex items-center justify-end gap-1.5">
+                                  {isFile ? (
+                                    <button
+                                      onClick={() => openRecyclePreviewConfirm(n)}
+                                      className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-brand-700 bg-brand-50 hover:bg-brand-100 transition"
+                                      title="Preview"
+                                    >
+                                      <Eye className="h-3 w-3" />
+                                      Preview
+                                    </button>
+                                  ) : (
+                                    <span className="text-[11px] text-slate-400">-</span>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           );
@@ -2671,7 +2698,8 @@ export default function App() {
                   /* ── GRID VIEW ── */
                   <div className="grid grid-cols-1 gap-3 py-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                     {sortedDeleted.map((n) => {
-                      const isFile = n.kind === "file";
+                      const itemTypeLc = (n.item_type || "").toLowerCase();
+                      const isFile = n.kind === "file" || (itemTypeLc.includes("file") && !itemTypeLc.includes("folder"));
                       const iconInfo = iconFor(n);
                       const IconComponent = isFile ? (iconInfo?.Icon || FileText) : FolderOpen;
                       const iconCls = isFile ? (iconInfo?.cls || "text-slate-400") : "text-amber-500";
@@ -2708,16 +2736,15 @@ export default function App() {
                               <span>{fmtBytes(n.size)}</span>
                             </div>
                           </div>
-                          <button
-                            onClick={() => {
-                              setRecycleSelectIds(new Set([n.id]));
-                              setShowBulkRestoreRecycleModal(true);
-                            }}
-                            className="mt-1 w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition"
-                          >
-                            <ArchiveRestore className="h-3.5 w-3.5" />
-                            Restore
-                          </button>
+                          {isFile && (
+                            <button
+                              onClick={() => openRecyclePreviewConfirm(n)}
+                              className="mt-1 w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100 transition"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              Preview
+                            </button>
+                          )}
                         </div>
                       );
                     })}
@@ -2912,7 +2939,7 @@ export default function App() {
                 </h2>
                 <p className="mt-0.5 text-sm text-muted">
                   {current
-                    ? isShipRoot && shipViewMode === "list"
+                    ? showListModeToggle && shipViewMode === "list"
                       ? "Flattened list view"
                       : current.month_driven
                       ? `Upload here — auto-filed into monthly folders · ${displayed.filter((c) => c.kind !== "file").length} folders · ${displayed.filter((c) => c.kind === "file").length} files`
@@ -2921,7 +2948,7 @@ export default function App() {
                 </p>
               </div>
               <div className="header-actions flex flex-wrap items-center gap-2">
-                {isShipRoot && (
+                {showListModeToggle && (
                   <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white p-1">
                     <button
                       onClick={() => setShipViewMode("folder")}
@@ -2967,7 +2994,7 @@ export default function App() {
                         <span className="dms-action-btn-text">Create Folder</span>
                       </button>
                     )}
-                    {current?.kind !== "main" && children.some((c) => c.kind !== "file") && (
+                    {current?.kind !== "main" && children.some((c) => c.kind !== "file") && !(showListModeToggle && shipViewMode === "list") && (
                       <button
                         onClick={() => { setDeleteFolderIds(new Set()); setShowDeleteModal(true); }}
                         className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg bg-slate-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-500 cursor-pointer"
@@ -2994,13 +3021,24 @@ export default function App() {
             </header>
 
             <div className="dms-page-bg flex-1 overflow-y-auto dms-page-px dms-page-py">
-              {isShipRoot && shipViewMode === "list" ? (
+              {showListModeToggle && shipViewMode === "list" ? (
                 <div className="mx-auto max-w-6xl">
-                  <VesselListView
-                    vesselId={current!.id}
-                    vesselName={current!.name}
-                    onPreviewFile={setPreview}
-                  />
+                  {isShipRoot ? (
+                    <VesselListView
+                      vesselId={current!.id}
+                      vesselName={current!.name}
+                      onPreviewFile={setPreview}
+                      onDeleteFile={handleDelete}
+                      refreshSignal={deletedNodes.length}
+                    />
+                  ) : (
+                    <MainFolderListView
+                      mainFolderId={current!.id}
+                      mainFolderName={current!.name}
+                      onPreviewFile={setPreview}
+                      onDeleteFile={handleDelete}
+                    />
+                  )}
                 </div>
               ) : showToolbar && (
                 <FolderToolbar
@@ -3014,7 +3052,7 @@ export default function App() {
                   setView={setLayout}
                 />
               )}
-              {!isShipRoot || shipViewMode === "folder"
+              {!showListModeToggle || shipViewMode === "folder"
                 ? loadingChildren ? (
                 <FolderGridSkeleton />
               ) : displayed.length === 0 ? (
@@ -3457,6 +3495,47 @@ export default function App() {
                 className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-500 cursor-pointer"
               >
                 Permanently Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRecyclePreviewModal && recyclePreviewNode && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="absolute inset-0" onClick={() => { setShowRecyclePreviewModal(false); setRecyclePreviewNode(null); }} />
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-50">
+                <Eye className="h-5 w-5 text-brand-700" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-slate-800">Open Preview?</h2>
+                <p className="text-xs text-slate-500">You are about to preview a file from Recycle Bin.</p>
+              </div>
+            </div>
+            <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              <p className="truncate font-semibold" title={recyclePreviewNode.name}>{recyclePreviewNode.name}</p>
+              <p className="mt-1 text-xs text-slate-500 truncate" title={recyclePreviewNode.original_path || ""}>
+                {recyclePreviewNode.original_path || "Original location not available"}
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setShowRecyclePreviewModal(false); setRecyclePreviewNode(null); }}
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setPreview(recyclePreviewNode);
+                  setShowRecyclePreviewModal(false);
+                  setRecyclePreviewNode(null);
+                }}
+                className="flex-1 rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-500"
+              >
+                Preview
               </button>
             </div>
           </div>

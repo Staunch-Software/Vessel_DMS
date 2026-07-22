@@ -385,6 +385,8 @@ class RealBackend:
         return month_item
 
     async def ensure_base_structure(self):
+        if self._base_ready:
+            return
         drive_id = await self._drive()
         with SessionLocal() as db:
             existing_rows = {
@@ -541,25 +543,62 @@ class RealBackend:
             }
             db.commit()
 
+        created_ship_roots: list[tuple[str, str]] = []
+
         async def provision_main(main):
             ship = await gd.ensure_folder(drive_id, main_ids[main], name)
             ship_path = f"{main}/{name}"
+            created_ship_roots.append((ship["id"], ship_path))
             with SessionLocal() as db:
                 self._upsert(db, ship_path, name, "ship", ship["id"], False, vessel_id)
                 db.commit()
+            # Create full vessel subtree immediately so new vessels never open
+            # as empty roots in explorer/list views.
+            await asyncio.gather(
+                *(
+                    self._ensure_node(drive_id, ship["id"], ship_path, spec, vessel_id)
+                    for spec in template.SHIP_TEMPLATE[main]
+                )
+            )
 
         try:
-            await asyncio.gather(*(
-                provision_main(m) for m in template.MAIN_FOLDERS
+            mains_to_provision = [
+                m for m in template.MAIN_FOLDERS
                 if m not in template.FLAT_MAIN_FOLDERS
-            ))
+            ]
+            results = await asyncio.gather(
+                *(provision_main(m) for m in mains_to_provision),
+                return_exceptions=True,
+            )
+            first_error = next((r for r in results if isinstance(r, Exception)), None)
+            if first_error is not None:
+                raise first_error
         except Exception as provision_err:
-            # Roll back: remove the vessel row so the user can retry.
+            # Roll back: remove partially created DB rows + vessel row, and try
+            # to clean up newly created ship roots to avoid empty orphan vessels.
             with SessionLocal() as db:
+                for _, ship_path in created_ship_roots:
+                    rows = db.query(models.Folder).filter(
+                        sa_or(
+                            models.Folder.path == ship_path,
+                            models.Folder.path.like(f"{ship_path}/%")
+                        )
+                    ).all()
+                    for row in rows:
+                        db.delete(row)
                 orphan = db.query(models.Vessel).filter_by(id=vessel_id).one_or_none()
                 if orphan:
                     db.delete(orphan)
-                    db.commit()
+                db.commit()
+
+            for ship_id, _ in created_ship_roots:
+                try:
+                    await gd.delete_item(drive_id, ship_id)
+                except Exception:
+                    # Best-effort cleanup only; DB rollback above already
+                    # ensures the vessel can be retried safely.
+                    pass
+
             raise BadRequest(
                 f"Could not provision SharePoint folders for vessel '{name}'. "
                 f"Please try again. ({type(provision_err).__name__}: {provision_err})"
@@ -875,50 +914,9 @@ class RealBackend:
 
         parts = parent_path.split("/") if parent_path else []
 
-        # Only check for missing template folders when we're inside a vessel
-        # subtree (parts >= 2) or a flat main — skip for main-level folders
-        # to avoid unnecessary Graph calls on every top-level navigation.
-        if parts:
-            main_folder = parts[0]
-            if main_folder in template.FLAT_MAIN_FOLDERS:
-                node_spec = _get_template_node_for_path(main_folder, parts[1:])
-            elif len(parts) >= 2:
-                node_spec = _get_template_node_for_path(main_folder, parts[2:])
-            else:
-                node_spec = None
-
-            if node_spec is not None and "children" in node_spec:
-                expected_specs = node_spec["children"]
-                existing_names = {it["name"].lower() for it in items}
-                missing_specs = [
-                    spec for spec in expected_specs
-                    if spec["name"].lower() not in existing_names
-                    and spec.get("kind") != "month_driven"
-                ]
-                if missing_specs:
-                    with SessionLocal() as db:
-                        parent_row = self._folder_by_item(db, folder_id)
-                        vessel_id = parent_row.vessel_id if parent_row else None
-
-                    async def create_missing(spec):
-                        try:
-                            item = await gd.ensure_folder(drive_id, folder_id, spec["name"])
-                            path = f"{parent_path}/{spec['name']}"
-                            with SessionLocal() as db:
-                                self._upsert(
-                                    db, path, spec["name"], spec["kind"], item["id"],
-                                    spec["kind"] == "month_driven", vessel_id
-                                )
-                                db.commit()
-                            return item
-                        except Exception as create_err:
-                            log.warning("On-demand folder creation failed for %s: %s", spec["name"], create_err)
-                            return None
-
-                    created_items = await asyncio.gather(*(create_missing(spec) for spec in missing_specs))
-                    for item in created_items:
-                        if item:
-                            items.append(item)
+        # Keep folder listing fast: do not reconcile/create missing template
+        # folders during navigation. Structural fixes should use explicit admin
+        # actions (e.g. reprovision/migrations), not browse-time side effects.
 
         parent_parts = parts
         out = []

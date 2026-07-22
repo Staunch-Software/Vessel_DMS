@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { ExternalLink, Search, AlertCircle, Upload, Loader2, Trash2 } from "lucide-react";
+import { AlertCircle, ExternalLink, Loader2, Search, Upload, Trash2 } from "lucide-react";
 import { getChildren, fileContentUrl, getJob, monthUpload, uploadFile, type FolderNode } from "../api";
-
-// ── Types ────────────────────────────────────────────────────────────────────
 
 interface FlatRow {
   srNo: string;
@@ -20,6 +18,7 @@ interface FlatRow {
 }
 
 interface LeafEntry {
+  vesselName: string;
   group: string;
   category: string;
   pathParts: string[];
@@ -33,10 +32,16 @@ interface UploadTarget {
   monthDriven: boolean;
 }
 
-// ── Bounded-concurrency recursive flattener ──────────────────────────────────
+interface Props {
+  mainFolderId: string;
+  mainFolderName: string;
+  onPreviewFile?: (file: FolderNode) => void;
+  onDeleteFile?: (file: FolderNode) => void;
+}
 
 const FETCH_CONCURRENCY = 10;
-const vesselRowsCache = new Map<string, FlatRow[]>();
+const VESSEL_PAGE_SIZE = 4;
+const mainRowsCache = new Map<string, FlatRow[]>();
 
 async function mapLimit<T, R>(
   items: T[],
@@ -61,17 +66,17 @@ async function mapLimit<T, R>(
   return results;
 }
 
-function leafToRows(leaf: LeafEntry, index: number, vesselName: string): FlatRow[] {
+function leafToRows(leaf: LeafEntry, index: number): FlatRow[] {
   const baseSr = String(index);
-  const subPath = [vesselName, ...leaf.pathParts].join(" > ");
-  const groupKey = `${vesselName}||${leaf.group}||${leaf.category}||${subPath}`;
+  const subPath = [leaf.vesselName, ...leaf.pathParts].join(" > ");
+  const groupKey = `${leaf.vesselName}||${leaf.group}||${leaf.category}||${subPath}`;
   const suffixes = "abcdefghijklmnopqrstuvwxyz";
   const canUpload = leaf.folder.upload || leaf.folder.month_driven;
 
   if (leaf.files.length === 0) {
     return [{
       srNo: baseSr,
-      vesselName,
+      vesselName: leaf.vesselName,
       group: leaf.group,
       category: leaf.category,
       subFolderPath: subPath,
@@ -87,7 +92,7 @@ function leafToRows(leaf: LeafEntry, index: number, vesselName: string): FlatRow
 
   return leaf.files.map((f, idx) => ({
     srNo: idx === 0 ? baseSr : `${baseSr}${suffixes[idx - 1]}`,
-    vesselName,
+    vesselName: leaf.vesselName,
     group: leaf.group,
     category: leaf.category,
     subFolderPath: subPath,
@@ -103,6 +108,7 @@ function leafToRows(leaf: LeafEntry, index: number, vesselName: string): FlatRow
 
 async function walkFolder(
   node: FolderNode,
+  vesselName: string,
   pathParts: string[],
   signal: AbortSignal,
   emitLeaf: (leaf: LeafEntry) => void
@@ -120,107 +126,96 @@ async function walkFolder(
 
   const files = kids.filter((k) => k.kind === "file");
   const subFolders = kids.filter((k) => k.kind !== "file");
-
   const group = pathParts[0] ?? node.name;
   const category = pathParts[1] ?? node.name;
 
-  // This node is a leaf if it has files OR has no sub-folders
   if (files.length > 0 || subFolders.length === 0) {
-    emitLeaf({ group, category, pathParts, files, folder: node });
+    emitLeaf({ vesselName, group, category, pathParts, files, folder: node });
   }
 
-  // Recurse into sub-folders with bounded concurrency.
   if (subFolders.length > 0) {
     await mapLimit(
       subFolders,
       FETCH_CONCURRENCY,
-      async (sf) => walkFolder(sf, [...pathParts, sf.name], signal, emitLeaf)
+      async (sf) => walkFolder(sf, vesselName, [...pathParts, sf.name], signal, emitLeaf)
     );
   }
 }
 
-async function flattenVesselProgress(
-  vesselId: string,
-  vesselName: string,
+async function flattenMainFolderProgress(
+  mainFolderId: string,
   signal: AbortSignal,
-  onAppendRows: (rows: FlatRow[]) => void
+  onAppendRows: (rows: FlatRow[]) => void,
+  onVesselsResolved?: (vesselNames: string[]) => void
 ): Promise<FlatRow[]> {
-  const groups = await getChildren(vesselId, signal);
+  const top = await getChildren(mainFolderId, signal);
   if (signal.aborted) return [];
 
-  const folderGroups = groups.filter((g) => g.kind !== "file");
+  const ships = top.filter((n) => n.kind === "ship");
+  onVesselsResolved?.(ships.map((s) => s.name).sort((a, b) => a.localeCompare(b)));
   const finalRows: FlatRow[] = [];
   let srCounter = 0;
 
   const emitLeaf = (leaf: LeafEntry) => {
     srCounter += 1;
-    const nextRows = leafToRows(leaf, srCounter, vesselName);
+    const nextRows = leafToRows(leaf, srCounter);
     finalRows.push(...nextRows);
     onAppendRows(nextRows);
   };
 
-  // Level 2+: walk groups/categories with bounded concurrency.
-  await mapLimit(folderGroups, FETCH_CONCURRENCY, async (g) => {
+  await mapLimit(ships, FETCH_CONCURRENCY, async (ship) => {
     if (signal.aborted) return;
 
-    let kids: FolderNode[] = [];
+    let groups: FolderNode[] = [];
     try {
-      kids = await getChildren(g.id, signal);
+      groups = await getChildren(ship.id, signal);
     } catch {
       return;
     }
 
     if (signal.aborted) return;
-    const cats = kids.filter((c) => c.kind !== "file");
-    const files = kids.filter((c) => c.kind === "file");
 
-    if (cats.length === 0) {
-      emitLeaf({ group: g.name, category: g.name, pathParts: [g.name], files, folder: g });
-      return;
-    }
+    const folderGroups = groups.filter((g) => g.kind !== "file");
+    await mapLimit(folderGroups, FETCH_CONCURRENCY, async (g) => {
+      if (signal.aborted) return;
 
-    await mapLimit(
-      cats,
-      FETCH_CONCURRENCY,
-      async (cat) => walkFolder(cat, [g.name, cat.name], signal, emitLeaf)
-    );
+      let kids: FolderNode[] = [];
+      try {
+        kids = await getChildren(g.id, signal);
+      } catch {
+        return;
+      }
+
+      if (signal.aborted) return;
+      const cats = kids.filter((c) => c.kind !== "file");
+      const files = kids.filter((c) => c.kind === "file");
+
+      if (cats.length === 0) {
+        emitLeaf({
+          vesselName: ship.name,
+          group: g.name,
+          category: g.name,
+          pathParts: [g.name],
+          files,
+          folder: g,
+        });
+        return;
+      }
+
+      await mapLimit(
+        cats,
+        FETCH_CONCURRENCY,
+        async (cat) => walkFolder(cat, ship.name, [g.name, cat.name], signal, emitLeaf)
+      );
+    });
   });
 
   return finalRows;
 }
 
-// ── Group color palette ──────────────────────────────────────────────────────
-
-const GROUP_COLORS: Record<string, { bg: string; text: string }> = {
-  Electrical: { bg: "bg-orange-100", text: "text-orange-700" },
-  Hull: { bg: "bg-blue-100", text: "text-blue-700" },
-  Machinery: { bg: "bg-purple-100", text: "text-purple-700" },
-  "Technical & Crewing": { bg: "bg-orange-100", text: "text-orange-700" },
-  "Commercial & Chartering": { bg: "bg-emerald-100", text: "text-emerald-700" },
-  Insurance: { bg: "bg-amber-100", text: "text-amber-700" },
-};
-
-function groupBadge(name: string) {
-  const c = GROUP_COLORS[name] ?? { bg: "bg-slate-100", text: "text-slate-700" };
-  return (
-    <span className={`inline-block rounded-full px-2.5 py-0.5 text-[11px] font-semibold whitespace-nowrap ${c.bg} ${c.text}`}>
-      {name}
-    </span>
-  );
-}
-
-// ── Main component ───────────────────────────────────────────────────────────
-
-interface Props {
-  vesselId: string;
-  vesselName: string;
-  onPreviewFile?: (file: FolderNode) => void;
-  onDeleteFile?: (file: FolderNode) => void;
-  refreshSignal?: number;
-}
-
-export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFile, refreshSignal }: Props) {
+export function MainFolderListView({ mainFolderId, mainFolderName, onPreviewFile, onDeleteFile }: Props) {
   const [rows, setRows] = useState<FlatRow[]>([]);
+  const [allVessels, setAllVessels] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -230,19 +225,27 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
 
   const [textFilter, setTextFilter] = useState("");
+  const [vesselFilter, setVesselFilter] = useState("all");
   const [groupFilter, setGroupFilter] = useState("all");
   const [catFilter, setCatFilter] = useState("all");
   const [sort, setSort] = useState<"name_asc" | "name_desc" | "group_asc">("group_asc");
+  const [visibleVesselCount, setVisibleVesselCount] = useState(VESSEL_PAGE_SIZE);
+
+  useEffect(() => {
+    setVisibleVesselCount(VESSEL_PAGE_SIZE);
+  }, [mainFolderId]);
 
   useEffect(() => {
     const controller = new AbortController();
     let timedOut = false;
-    const cachedRows = vesselRowsCache.get(vesselId);
+    const cachedRows = mainRowsCache.get(mainFolderId);
     if (cachedRows && cachedRows.length > 0) {
       setRows(cachedRows);
+      setAllVessels(Array.from(new Set(cachedRows.map((r) => r.vesselName))).sort((a, b) => a.localeCompare(b)));
       setLoading(true);
     } else {
       setRows([]);
+      setAllVessels([]);
       setLoading(true);
     }
     setError(null);
@@ -254,7 +257,7 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
       flushTimer = null;
       if (controller.signal.aborted) return;
       const snapshot = [...liveRows];
-      vesselRowsCache.set(vesselId, snapshot);
+      mainRowsCache.set(mainFolderId, snapshot);
       setRows(snapshot);
     };
 
@@ -263,18 +266,26 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
       flushTimer = setTimeout(flushLiveRows, 80);
     };
 
-    // 30-second timeout guard
     const timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
     }, 30_000);
 
-    flattenVesselProgress(vesselId, vesselName, controller.signal, (chunk) => {
-      if (!controller.signal.aborted && chunk.length > 0) {
-        liveRows.push(...chunk);
-        queueFlush();
+    flattenMainFolderProgress(
+      mainFolderId,
+      controller.signal,
+      (chunk) => {
+        if (!controller.signal.aborted && chunk.length > 0) {
+          liveRows.push(...chunk);
+          queueFlush();
+        }
+      },
+      (vesselNames) => {
+        if (!controller.signal.aborted) {
+          setAllVessels(vesselNames);
+        }
       }
-    })
+    )
       .then((r) => {
         if (!controller.signal.aborted) {
           if (flushTimer !== null) {
@@ -313,35 +324,58 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
       if (flushTimer !== null) clearTimeout(flushTimer);
       clearTimeout(timer);
     };
-  }, [vesselId, vesselName, reloadKey, refreshSignal]);
+  }, [mainFolderId, reloadKey]);
 
+  const vessels = useMemo(
+    () => (allVessels.length > 0 ? allVessels : Array.from(new Set(rows.map((r) => r.vesselName))).sort((a, b) => a.localeCompare(b))),
+    [allVessels, rows]
+  );
+  const visibleVesselNames = useMemo(
+    () => new Set(vessels.slice(0, visibleVesselCount)),
+    [vessels, visibleVesselCount]
+  );
   const groups = useMemo(() => Array.from(new Set(rows.map((r) => r.group))).sort(), [rows]);
   const categories = useMemo(
     () =>
       Array.from(
-        new Set(rows.filter((r) => groupFilter === "all" || r.group === groupFilter).map((r) => r.category))
+        new Set(
+          rows
+            .filter((r) =>
+              (vesselFilter === "all" || r.vesselName === vesselFilter) &&
+              (groupFilter === "all" || r.group === groupFilter)
+            )
+            .map((r) => r.category)
+        )
       ).sort(),
-    [rows, groupFilter]
+    [rows, vesselFilter, groupFilter]
   );
 
   const filtered = useMemo(() => {
     const q = textFilter.trim().toLowerCase();
     let out = rows;
+    if (vesselFilter !== "all") {
+      out = out.filter((r) => r.vesselName === vesselFilter);
+    } else if (!q) {
+      // Default main-folder list mode shows first vessels in batches.
+      out = out.filter((r) => visibleVesselNames.has(r.vesselName));
+    }
     if (groupFilter !== "all") out = out.filter((r) => r.group === groupFilter);
     if (catFilter !== "all") out = out.filter((r) => r.category === catFilter);
-    if (q)
+    if (q) {
       out = out.filter(
         (r) =>
+          r.vesselName.toLowerCase().includes(q) ||
           r.group.toLowerCase().includes(q) ||
           r.category.toLowerCase().includes(q) ||
           r.subFolderPath.toLowerCase().includes(q) ||
           (r.fileName ?? "").toLowerCase().includes(q)
       );
+    }
     return out;
-  }, [rows, textFilter, groupFilter, catFilter]);
+  }, [rows, textFilter, vesselFilter, groupFilter, catFilter, visibleVesselNames]);
 
-  const fileCount = rows.filter((r) => r.fileId !== null).length;
-  const catCount = new Set(rows.map((r) => r.category)).size;
+  const canShowMoreVessels = vesselFilter === "all" && textFilter.trim() === "" && visibleVesselCount < vessels.length;
+  const canShowLessVessels = vesselFilter === "all" && textFilter.trim() === "" && visibleVesselCount > VESSEL_PAGE_SIZE;
 
   const groupedRows = useMemo(() => {
     const map = new Map<string, {
@@ -382,15 +416,12 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
       g.files.sort((a, b) => a.name.localeCompare(b.name));
     }
 
-    if (sort === "group_asc") {
-      return grouped;
-    }
+    if (sort === "group_asc") return grouped;
 
     const keyFor = (g: (typeof grouped)[number]) => g.files[0]?.name?.toLowerCase() ?? "";
     grouped.sort((a, b) => {
       const ka = keyFor(a);
       const kb = keyFor(b);
-      // Keep "No attachment" rows at the end for both name sort directions.
       if (!ka && !kb) return 0;
       if (!ka) return 1;
       if (!kb) return -1;
@@ -425,11 +456,7 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
     if (!files.length) return;
     setUploadingGroupKey(row.groupKey);
     setUploadError(null);
-    setUploadInfo(
-      files.length === 1
-        ? `Uploading ${files[0].name}...`
-        : `Uploading ${files.length} files...`
-    );
+    setUploadInfo(files.length === 1 ? `Uploading ${files[0].name}...` : `Uploading ${files.length} files...`);
 
     let doneCount = 0;
     let pendingCount = 0;
@@ -456,14 +483,10 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
         if (pendingCount > 0) {
           setUploadInfo(`${doneCount} uploaded and ${pendingCount} sent for approval.`);
         } else {
-          setUploadInfo(
-            doneCount === 1 ? "Attachment uploaded successfully." : `${doneCount} attachments uploaded successfully.`
-          );
+          setUploadInfo(doneCount === 1 ? "Attachment uploaded successfully." : `${doneCount} attachments uploaded successfully.`);
         }
       } else {
-        setUploadError(
-          `${failedCount} file(s) failed. Uploaded: ${doneCount}, Pending approval: ${pendingCount}.`
-        );
+        setUploadError(`${failedCount} file(s) failed. Uploaded: ${doneCount}, Pending approval: ${pendingCount}.`);
       }
 
       setRows([]);
@@ -476,12 +499,15 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
     }
   };
 
+  const fileCount = rows.filter((r) => r.fileId !== null).length;
+  const catCount = new Set(rows.map((r) => `${r.vesselName}::${r.category}`)).size;
+
   if (loading && rows.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-3">
         <div className="w-7 h-7 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
-        <p className="text-sm text-muted">Building document list for {vesselName}…</p>
-        <p className="text-xs text-muted/60">Loading folders in batches…</p>
+        <p className="text-sm text-muted">Building document list for {mainFolderName}...</p>
+        <p className="text-xs text-muted/60">Loading folders in batches...</p>
       </div>
     );
   }
@@ -523,11 +549,11 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
           {uploadError}
         </p>
       )}
+
       <p className="text-xs text-muted">
-        {groups.length} group{groups.length !== 1 ? "s" : ""} · {catCount} categor{catCount !== 1 ? "ies" : "y"} · {fileCount} file{fileCount !== 1 ? "s" : ""} with attachments · flattened list view
+        {vessels.length} vessel{vessels.length !== 1 ? "s" : ""} - {groups.length} group{groups.length !== 1 ? "s" : ""} - {catCount} categor{catCount !== 1 ? "ies" : "y"} - {fileCount} file{fileCount !== 1 ? "s" : ""} with attachments
       </p>
 
-      {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle" />
@@ -538,30 +564,22 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
             className="dms-input w-full py-1.5 pl-9 pr-3 text-sm text-fg"
           />
         </div>
-        <select
-          value={groupFilter}
-          onChange={(e) => { setGroupFilter(e.target.value); setCatFilter("all"); }}
-          className="dms-input rounded-lg px-2.5 py-1.5 text-xs text-muted"
-        >
+        <select value={vesselFilter} onChange={(e) => setVesselFilter(e.target.value)} className="dms-input rounded-lg px-2.5 py-1.5 text-xs text-muted">
+          <option value="all">All vessels</option>
+          {vessels.map((v) => <option key={v} value={v}>{v}</option>)}
+        </select>
+        <select value={groupFilter} onChange={(e) => { setGroupFilter(e.target.value); setCatFilter("all"); }} className="dms-input rounded-lg px-2.5 py-1.5 text-xs text-muted">
           <option value="all">All groups</option>
           {groups.map((g) => <option key={g} value={g}>{g}</option>)}
         </select>
-        <select
-          value={catFilter}
-          onChange={(e) => setCatFilter(e.target.value)}
-          className="dms-input rounded-lg px-2.5 py-1.5 text-xs text-muted"
-        >
+        <select value={catFilter} onChange={(e) => setCatFilter(e.target.value)} className="dms-input rounded-lg px-2.5 py-1.5 text-xs text-muted">
           <option value="all">All categories</option>
           {categories.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
-        <select
-          value={sort}
-          onChange={(e) => setSort(e.target.value as typeof sort)}
-          className="dms-input rounded-lg px-2.5 py-1.5 text-xs text-muted"
-        >
+        <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className="dms-input rounded-lg px-2.5 py-1.5 text-xs text-muted">
           <option value="group_asc">Default order</option>
-          <option value="name_asc">Name A–Z</option>
-          <option value="name_desc">Name Z–A</option>
+          <option value="name_asc">Name A-Z</option>
+          <option value="name_desc">Name Z-A</option>
         </select>
       </div>
 
@@ -584,7 +602,7 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
 
       {groupedRows.length === 0 ? (
         <p className="dms-card rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
-          {rows.length === 0 ? "No documents found in this vessel." : "No documents match your filter."}
+          {rows.length === 0 ? "No documents found in this main folder." : "No documents match your filter."}
         </p>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-border bg-surface">
@@ -594,7 +612,7 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
                 <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted w-14">Sr.</th>
                 <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted">Vessel Name</th>
                 <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted">Group</th>
-                <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted">Category</th>
+                <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted">Sub-category</th>
                 <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted">Folder path</th>
                 <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted">File name</th>
                 <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted text-right">Attachment</th>
@@ -606,13 +624,10 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
                 const openTargets = selectedInRow.length > 0 ? selectedInRow : row.files;
 
                 return (
-                  <tr
-                    key={`${row.groupKey}-${idx}`}
-                    className="border-t border-border transition hover:bg-bg"
-                  >
+                  <tr key={`${row.groupKey}-${idx}`} className="border-t border-border transition hover:bg-bg">
                     <td className="px-3 py-2 text-xs text-muted font-mono whitespace-nowrap align-top">{row.srNo}</td>
                     <td className="px-3 py-2 text-sm text-fg font-semibold align-top border-r border-border">{row.vesselName}</td>
-                    <td className="px-3 py-2 align-top border-r border-border">{groupBadge(row.group)}</td>
+                    <td className="px-3 py-2 align-top border-r border-border">{row.group}</td>
                     <td className="px-3 py-2 text-sm text-fg font-medium align-top border-r border-border">{row.category}</td>
                     <td className="px-3 py-2 text-xs text-muted align-top border-r border-border max-w-[220px]">
                       <span className="block" title={row.subFolderPath}>{row.subFolderPath}</span>
@@ -621,24 +636,21 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
                       {row.files.length > 0 ? (
                         <div className="space-y-1.5">
                           {row.files.map((f) => (
-                            <div key={f.id} className="flex items-start justify-between gap-2">
-                              <label className="flex min-w-0 items-start gap-2">
-                                <input
-                                  type="checkbox"
-                                  checked={selectedFileIds.has(f.id)}
-                                  onChange={() => toggleFileSelection(f.id)}
-                                  className="mt-0.5 h-3.5 w-3.5 rounded border-border"
-                                />
-                                <span className="block truncate" title={f.name}>{f.name}</span>
-                              </label>
-                            </div>
+                            <label key={f.id} className="flex items-start gap-2">
+                              <input
+                                type="checkbox"
+                                checked={selectedFileIds.has(f.id)}
+                                onChange={() => toggleFileSelection(f.id)}
+                                className="mt-0.5 h-3.5 w-3.5 rounded border-border"
+                              />
+                              <span className="block truncate" title={f.name}>{f.name}</span>
+                            </label>
                           ))}
                         </div>
                       ) : (
-                        <span className="text-muted italic text-xs">—</span>
+                        <span className="text-muted italic text-xs">-</span>
                       )}
                     </td>
-
                     <td className="px-3 py-2 align-top">
                       <div className="flex flex-col items-end gap-1.5">
                         {row.files.length > 0 ? (
@@ -697,6 +709,32 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {vesselFilter === "all" && textFilter.trim() === "" && vessels.length > VESSEL_PAGE_SIZE && (
+        <div className="flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2">
+          <p className="text-xs text-muted">
+            Showing {Math.min(visibleVesselCount, vessels.length)} of {vessels.length} vessels
+          </p>
+          <div className="flex items-center gap-2">
+            {canShowMoreVessels && (
+              <button
+                onClick={() => setVisibleVesselCount(vessels.length)}
+                className="rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+              >
+                More vessels
+              </button>
+            )}
+            {canShowLessVessels && (
+              <button
+                onClick={() => setVisibleVesselCount(VESSEL_PAGE_SIZE)}
+                className="rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+              >
+                Show less
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
