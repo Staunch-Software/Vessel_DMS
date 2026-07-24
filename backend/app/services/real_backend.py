@@ -2026,7 +2026,10 @@ class RealBackend:
             if not row:
                 row = models.ArchivedItem(item_id=item_id, item_type=item_type)
                 db.add(row)
-                db.commit()
+            else:
+                row.created_at = datetime.utcnow()
+            db.commit()
+            db.refresh(row)
         return {"archived": True}
 
     async def restore_item(
@@ -2071,9 +2074,11 @@ class RealBackend:
 
     async def get_archived_nodes(self):
         drive_id = await self._drive()
-        ids = await self.get_archived_ids()
+        with SessionLocal() as db:
+            rows = db.query(models.ArchivedItem).order_by(models.ArchivedItem.created_at.desc()).all()
+            id_to_date = {r.item_id: r.created_at.isoformat() + "Z" if r.created_at else None for r in rows}
         out = []
-        for i in ids:
+        for i, archived_at in id_to_date.items():
             try:
                 it = await gd.get_item(drive_id, i)
                 is_folder = "folder" in it
@@ -2094,6 +2099,7 @@ class RealBackend:
                     "has_children": is_folder and it.get("folder", {}).get("childCount", 0) > 0,
                     "main_folder": main_folder,
                     "original_path": original_path,
+                    "archived_at": archived_at,
                 }
                 if not is_folder:
                     node["ext"] = it["name"].rsplit(".", 1)[-1].lower() if "." in it["name"] else ""
@@ -2102,6 +2108,8 @@ class RealBackend:
                 out.append(node)
             except Exception:
                 pass
+        # Sort most-recently-archived first
+        out.sort(key=lambda x: x.get("archived_at") or "", reverse=True)
         return out
 
     async def get_deleted_ids(self) -> list[str]:

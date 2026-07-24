@@ -701,9 +701,9 @@ class StubBackend:
         return "/".join(path_parts)
 
     async def get_archived_nodes(self):
-        ids = store.get_archived_ids()
+        id_to_date = store.get_archived_id_to_date()
         out = []
-        for i in ids:
+        for i, archived_at in id_to_date.items():
             node = store.get_node(i)
             if node:
                 s = store.serialize(node, depth=0)
@@ -711,7 +711,10 @@ class StubBackend:
                 main_folder = original_path.split("/", 1)[0] if "/" in original_path else original_path
                 s["main_folder"] = main_folder
                 s["original_path"] = original_path
+                s["archived_at"] = archived_at
                 out.append(s)
+        # Sort most-recently-archived first
+        out.sort(key=lambda x: x.get("archived_at") or "", reverse=True)
         return out
 
     async def get_deleted_ids(self) -> list[str]:

@@ -531,7 +531,7 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
       {/* Filter bar */}
       <div className="dms-sticky-filter-bar flex flex-wrap items-center justify-between gap-1.5">
         <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
-          <div className="relative w-72 min-w-[180px]">
+          <div className="relative w-60 min-w-[150px]">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-subtle" />
             <input
               value={textFilter}
@@ -543,7 +543,7 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
           <select
             value={groupFilter}
             onChange={(e) => { setGroupFilter(e.target.value); setCatFilter("all"); }}
-            className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted"
+            className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted max-w-[130px] truncate"
           >
             <option value="all">All groups</option>
             {groups.map((g) => <option key={g} value={g}>{g}</option>)}
@@ -551,7 +551,7 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
           <select
             value={catFilter}
             onChange={(e) => setCatFilter(e.target.value)}
-            className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted"
+            className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted max-w-[130px] truncate"
           >
             <option value="all">All categories</option>
             {categories.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -559,7 +559,7 @@ export function VesselListView({ vesselId, vesselName, onPreviewFile, onDeleteFi
           <select
             value={sort}
             onChange={(e) => setSort(e.target.value as typeof sort)}
-            className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted"
+            className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted max-w-[130px] truncate"
           >
             <option value="group_asc">Default order</option>
             <option value="name_asc">Name A–Z</option>

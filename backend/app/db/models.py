@@ -131,7 +131,7 @@ class ArchivedItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     item_id: Mapped[str] = mapped_column(String(256), unique=True, index=True)
     item_type: Mapped[str] = mapped_column(String(20))  # "folder" or "file"
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class ApprovalRequest(Base):

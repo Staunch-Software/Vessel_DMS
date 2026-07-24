@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { createPortal } from "react-dom";
-import { ChevronRight, ChevronDown, ChevronUp, Menu, MoreVertical, Download, RotateCcw, FolderOpen, FolderPlus, Trash2, X, Archive, ArchiveRestore, Eye, FileText, ShieldOff, Plus, Ship, Clock3, Anchor, LayoutGrid, Rows3 } from "lucide-react";
+import { ChevronRight, ChevronDown, ChevronUp, Menu, MoreVertical, Download, RotateCcw, FolderOpen, FolderPlus, Trash2, X, Archive, ArchiveRestore, Eye, FileText, ShieldOff, Plus, Ship, Clock3, Anchor, LayoutGrid, Rows3, Search } from "lucide-react";
 import { ApprovalResultPopup, type ApprovalResultItem } from "./components/ApprovalResultPopup";
 import { DuplicateFilePopup, type DuplicateFileInfo } from "./components/DuplicateFilePopup";
 import { listMyApprovals, listApprovals } from "./api";
@@ -153,15 +153,15 @@ function parseMonthFolderDate(name: string): Date | null {
   if (!name) return null;
   const t = name.toLowerCase();
   const monthShort = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-  
+
   // Find a month name
   const monthRegex = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i;
   const mMatch = monthRegex.exec(t);
-  
+
   // Find a year (a 4-digit number starting with 20)
   const yearRegex = /(20\d{2})/;
   const yMatch = yearRegex.exec(t);
-  
+
   if (mMatch && yMatch) {
     const monthStr = mMatch[1].toLowerCase().slice(0, 3);
     const monthIdx = monthShort.indexOf(monthStr);
@@ -274,7 +274,7 @@ const mapPathnameToState = (pathname: string, search: string): { view: string; p
     const params = new URLSearchParams(search);
     const pStr = params.get("path");
     if (pStr) {
-      try { return { view: "explorer", path: JSON.parse(pStr) }; } catch {}
+      try { return { view: "explorer", path: JSON.parse(pStr) }; } catch { }
     }
     return { view: "explorer", path: [{ id: "01W22VD2A5KQBB6TF5SVAYBSHIXCZFIDN3", name: "Technical & Crewing" }] };
   }
@@ -282,7 +282,7 @@ const mapPathnameToState = (pathname: string, search: string): { view: string; p
     const params = new URLSearchParams(search);
     const pStr = params.get("path");
     if (pStr) {
-      try { return { view: "explorer", path: JSON.parse(pStr) }; } catch {}
+      try { return { view: "explorer", path: JSON.parse(pStr) }; } catch { }
     }
     return { view: "explorer", path: [{ id: "01W22VD2DDRIV4CAFT5VBITQ3GLKI2ZTXU", name: "Commercial & Chartering" }] };
   }
@@ -290,7 +290,7 @@ const mapPathnameToState = (pathname: string, search: string): { view: string; p
     const params = new URLSearchParams(search);
     const pStr = params.get("path");
     if (pStr) {
-      try { return { view: "explorer", path: JSON.parse(pStr) }; } catch {}
+      try { return { view: "explorer", path: JSON.parse(pStr) }; } catch { }
     }
     return { view: "explorer", path: [{ id: "01W22VD2AMFWFVBRCXPZEZRJZ24HM4DCMV", name: "Insurance" }] };
   }
@@ -298,7 +298,7 @@ const mapPathnameToState = (pathname: string, search: string): { view: string; p
     const params = new URLSearchParams(search);
     const pStr = params.get("path");
     if (pStr) {
-      try { return { view: "explorer", path: JSON.parse(pStr) }; } catch {}
+      try { return { view: "explorer", path: JSON.parse(pStr) }; } catch { }
     }
     return { view: "explorer", path: [{ id: "01W22VD2FQOXL5AGZH5FCZMCC5DUKRYEMV", name: "Kaizen - Knowledge Bank" }] };
   }
@@ -325,7 +325,7 @@ const mapPathnameToState = (pathname: string, search: string): { view: string; p
   if (pStr) {
     try {
       parsedPath = JSON.parse(pStr);
-    } catch {}
+    } catch { }
   }
   if (v === "explorer" || v === "profile" || v === "dashboard" || v === "listvessels" || v === "archive" || v === "recycle_bin" || v === "approvals" || v === "settings" || v === "appearance") {
     return { view: v, path: parsedPath };
@@ -580,7 +580,7 @@ export default function App() {
         if (!result || !result.account) {
           console.info(
             "[auth] No redirect result on this load (expected on a normal page load; " +
-              "unexpected right after approving Microsoft sign-in)."
+            "unexpected right after approving Microsoft sign-in)."
           );
           return;
         }
@@ -622,7 +622,7 @@ export default function App() {
               const errBody = await res.json();
               if (errBody?.detail?.message) errMsg = errBody.detail.message;
               else if (typeof errBody?.detail === "string") errMsg = errBody.detail;
-            } catch {}
+            } catch { }
             setAuthError(errMsg);
             authRequestRef.current = "idle";
           }
@@ -707,7 +707,7 @@ export default function App() {
                 const errBody = JSON.parse(body);
                 if (errBody?.detail?.message) errMsg = errBody.detail.message;
                 else if (typeof errBody?.detail === "string") errMsg = errBody.detail;
-              } catch {}
+              } catch { }
               console.error("Backend validation failed during auto-login:", res.status, body);
               setAuthError(errMsg);
               authRequestRef.current = "idle";
@@ -737,7 +737,7 @@ export default function App() {
       .then((data) => {
         setProfilePhoto(data.photo_base64 || null);
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [user]);
 
   // Marks this browser as having completed a successful login before, so the
@@ -780,7 +780,7 @@ export default function App() {
     if (!user) return;
     try {
       const isAdmin = ADMIN_EMAILS.includes(user.email.toLowerCase());
-      
+
       // Fetch notifications feed
       let rawApprovals = [];
       try {
@@ -833,10 +833,10 @@ export default function App() {
       // something they already did themselves.
       const myApprovals = await listMyApprovals();
       const decided = myApprovals.filter(a => a.status === "approved" || a.status === "rejected");
-      
+
       const seenKey = `seen_approvals_${user.email}`;
       const seenIds = JSON.parse(localStorage.getItem(seenKey) || "[]") as string[];
-      
+
       if (isFirstCheckRef.current) {
         // Suppress showing toast alerts for historical approvals decided in the past
         const decidedIds = decided.map(a => a.id);
@@ -856,7 +856,7 @@ export default function App() {
           rejectionReason: a.rejection_reason,
           finalPath: a.final_path,
         }));
-        
+
         // Mark them as seen immediately so we don't trigger updates/popups on subsequent polls
         const updatedSeenIds = [...seenIds, ...itemsToShow.map(x => x.id)];
         localStorage.setItem(seenKey, JSON.stringify(updatedSeenIds));
@@ -882,10 +882,10 @@ export default function App() {
   // Polling for user's pending/decided approvals & notifications
   useEffect(() => {
     if (!user) return;
-    
+
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 30000);
-    
+
     return () => {
       clearInterval(interval);
     };
@@ -1316,15 +1316,13 @@ export default function App() {
 
 
   const refreshAfterMutation = useCallback(async () => {
-    // Await only the fast, immediately-visible refreshes.
     await Promise.all([
       loadCurrent(),
       getStats().then(setStats),
+      getArchivedNodes().then(setArchivedNodes).catch(() => { }),
+      getArchivedIds().then((ids) => setArchivedFolderIds(new Set(ids))).catch(() => { }),
     ]);
-    // Recycle bin and archive counts update in the background — they are
-    // slow (SharePoint enumeration) and only needed when those views open.
-    void getDeletedNodes().then(setDeletedNodes).catch(() => {});
-    void getArchivedNodes().then(setArchivedNodes).catch(() => {});
+    void getDeletedNodes().then(setDeletedNodes).catch(() => { });
   }, [loadCurrent]);
 
   const handleUpload = useCallback(
@@ -1387,7 +1385,7 @@ export default function App() {
 
         if (isDuplicate) {
           await refreshAfterMutation();
-          
+
           let currentVesselName = "";
           if (path.length >= 2) {
             currentVesselName = path[1].name;
@@ -1518,7 +1516,7 @@ export default function App() {
         }
       };
       await downloadAll(node.id);
-      
+
       upsertToast({
         id: toastId,
         status: "done",
@@ -1603,15 +1601,8 @@ export default function App() {
     }
 
     if (completedNodes.length > 0) {
-      setArchivedFolderIds((prev) => {
-        const next = new Set(prev);
-        completedNodes.forEach((n) => next.add(n.id));
-        return next;
-      });
-      setArchivedNodes((prev) => {
-        const existingIds = new Set(prev.map((n) => n.id));
-        return [...prev, ...completedNodes.filter((n) => !existingIds.has(n.id))];
-      });
+      await refreshAfterMutation();
+      navigateTo("archive", []);
       if (user?.email) {
         completedNodes.forEach((n) =>
           logActivity(user.email, n.kind === "file" ? "archive_file" : "archive_folder", `Archived ${n.kind === "file" ? "file" : "folder"}: ${n.name}`)
@@ -1637,7 +1628,7 @@ export default function App() {
       detail,
     });
     setTimeout(() => dismissToast(tid), 4000);
-  }, [archiveSelectIds, children, user]);
+  }, [archiveSelectIds, children, user, refreshAfterMutation, navigateTo]);
 
   const handleFolderArchive = useCallback(async (node: FolderNode) => {
     const isRestoring = archivedNodes.some((n) => n.id === node.id);
@@ -1663,16 +1654,10 @@ export default function App() {
       return;
     }
 
-    setArchivedFolderIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(node.id)) { next.delete(node.id); } else { next.add(node.id); }
-      return next;
-    });
-    setArchivedNodes((prev) =>
-      prev.some((n) => n.id === node.id)
-        ? prev.filter((n) => n.id !== node.id)   // restore: remove from list
-        : [...prev, node]                          // archive: add to list
-    );
+    await refreshAfterMutation();
+    if (!isRestoring) {
+      navigateTo("archive", []);
+    }
     // Log activity
     if (user?.email) {
       logActivity(
@@ -1689,7 +1674,7 @@ export default function App() {
       detail: isRestoring ? "Item is visible again" : "Item hidden from main view",
     });
     setTimeout(() => dismissToast(tid2), 4000);
-  }, [archivedNodes, user]);
+  }, [archivedNodes, user, refreshAfterMutation, navigateTo]);
 
   const handleBulkFolderDelete = useCallback(async () => {
     if (deleteFolderIds.size === 0) return;
@@ -1805,6 +1790,119 @@ export default function App() {
   const [recycleSortDir, setRecycleSortDir] = useState<"asc" | "desc">("desc");
   const [recycleLayout, setRecycleLayout] = useState<"list" | "grid">("list");
 
+  const [archiveLayout, setArchiveLayout] = useState<"list" | "grid">("grid");
+
+  const [archiveQuery, setArchiveQuery] = useState("");
+  const [archiveVessel, setArchiveVessel] = useState("all");
+  const [archiveMain, setArchiveMain] = useState("all");
+  const [archiveSubFolder, setArchiveSubFolder] = useState("all");
+
+  const [recycleQuery, setRecycleQuery] = useState("");
+  const [recycleVessel, setRecycleVessel] = useState("all");
+  const [recycleMain, setRecycleMain] = useState("all");
+
+  const [archiveSortKey, setArchiveSortKey] = useState<"recent" | "name_az" | "name_za" | "size" | "modified">("recent");
+  const [recycleSort, setRecycleSort] = useState<"recent" | "name_az" | "name_za" | "size" | "deleted">("recent");
+
+  const vesselsWithArchivedNodes = useMemo(() => {
+    const names = new Set<string>();
+    archivedNodes.forEach((node) => {
+      if (node.original_path) {
+        const parts = node.original_path.split("/");
+        const vesselName = parts[1];
+        if (vesselName) {
+          names.add(vesselName);
+        }
+      }
+    });
+    return vessels.filter((v) => names.has(v.name));
+  }, [archivedNodes, vessels]);
+
+  // Unique sub-folder names extracted from original_path (segment after main/vessel)
+  const subFoldersWithArchivedNodes = useMemo(() => {
+    const names = new Set<string>();
+    archivedNodes.forEach((node) => {
+      if (node.original_path) {
+        const parts = node.original_path.split("/");
+        // parts[0]=main, parts[1]=vessel (for ship folders), parts[2]=sub-folder
+        // For flat folders (Knowledge Bank) parts[1] might already be the sub
+        const isFlatMain = node.main_folder === "Kaizen - Knowledge Bank";
+        const subIdx = isFlatMain ? 1 : 2;
+        if (parts[subIdx]) {
+          names.add(parts[subIdx]);
+        }
+      }
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [archivedNodes]);
+
+  const filteredArchivedNodes = useMemo(() => {
+    return archivedNodes.filter((f) => {
+      if (archiveQuery.trim() !== "") {
+        const q = archiveQuery.toLowerCase();
+        const nameMatch = f.name.toLowerCase().includes(q);
+        const pathMatch = f.original_path?.toLowerCase().includes(q) ?? false;
+        if (!nameMatch && !pathMatch) return false;
+      }
+      if (archiveVessel !== "all") {
+        if (!f.original_path) return false;
+        const parts = f.original_path.split("/");
+        const vName = parts[1] || "";
+        if (vName !== archiveVessel) return false;
+      }
+      if (archiveMain !== "all") {
+        if (f.main_folder !== archiveMain) return false;
+      }
+      if (archiveSubFolder !== "all") {
+        if (!f.original_path) return false;
+        const parts = f.original_path.split("/");
+        const isFlatMain = f.main_folder === "Kaizen - Knowledge Bank";
+        const subIdx = isFlatMain ? 1 : 2;
+        const sub = parts[subIdx] || "";
+        if (sub !== archiveSubFolder) return false;
+      }
+      return true;
+    });
+  }, [archivedNodes, archiveQuery, archiveVessel, archiveMain, archiveSubFolder]);
+
+  const sortedArchivedNodes = useMemo(() => {
+    const toMs = (s: string | null | undefined) => s ? new Date(s).getTime() : 0;
+    return [...filteredArchivedNodes].sort((a, b) => {
+      if (archiveSortKey === "name_az") return a.name.localeCompare(b.name);
+      if (archiveSortKey === "name_za") return b.name.localeCompare(a.name);
+      if (archiveSortKey === "size") return (b.size ?? 0) - (a.size ?? 0);
+      if (archiveSortKey === "modified") {
+        return toMs(b.archived_at ?? b.modified) - toMs(a.archived_at ?? a.modified);
+      }
+      // recent: most recently archived first (default)
+      return toMs(b.archived_at) - toMs(a.archived_at);
+    });
+  }, [filteredArchivedNodes, archiveSortKey]);
+
+  const filteredDeletedNodes = useMemo(() => {
+    return deletedNodes.filter((n) => {
+      if (recycleQuery.trim() !== "") {
+        const q = recycleQuery.toLowerCase();
+        const nameMatch = n.name.toLowerCase().includes(q);
+        const pathMatch = n.original_path?.toLowerCase().includes(q) ?? false;
+        if (!nameMatch && !pathMatch) return false;
+      }
+      if (recycleVessel !== "all") {
+        if (!n.original_path) return false;
+        const parts = n.original_path.split("/");
+        const vName = parts[1] || "";
+        if (vName !== recycleVessel) return false;
+      }
+      if (recycleMain !== "all") {
+        if (!n.original_path) return false;
+        const parts = n.original_path.split("/");
+        const mName = parts[0] || "";
+        if (mName !== recycleMain) return false;
+      }
+      return true;
+    });
+  }, [deletedNodes, recycleQuery, recycleVessel, recycleMain]);
+
   const handleBulkPermanentDelete = useCallback(() => {
     if (recycleSelectIds.size === 0) return;
     setShowBulkDeleteRecycleModal(true);
@@ -1916,7 +2014,7 @@ export default function App() {
         try {
           const [node, kids] = await Promise.all([getFolder(currentId), getChildren(currentId)]);
           setCurrent(node); setChildren(kids);
-        } catch {}
+        } catch { }
       }
       setView("explorer");
     } catch (e) {
@@ -1925,7 +2023,7 @@ export default function App() {
     }
   };
 
-    const handleUpdateVessel = async (vesselId: string, data: Partial<import("./api").VesselInput>) => {
+  const handleUpdateVessel = async (vesselId: string, data: Partial<import("./api").VesselInput>) => {
     const toastId = Date.now() + Math.floor(Math.random() * 1000);
     upsertToast({
       id: toastId,
@@ -2362,7 +2460,7 @@ export default function App() {
 
           {/* Center/Left (on Desktop): Search Bar (if applicable) */}
           <div className="flex-1 flex items-center justify-start gap-4 ml-2 lg:ml-0">
-            {view !== "settings" && view !== "approvals" && view !== "profile" && view !== "dashboard" && (
+            {view !== "settings" && view !== "approvals" && view !== "profile" && view !== "dashboard" && view !== "archive" && view !== "recycle_bin" && (
               <SearchBar
                 onNavigate={navigateToResult}
                 vessels={vessels}
@@ -2546,18 +2644,13 @@ export default function App() {
           </>
         ) : view === "recycle_bin" ? (() => {
           // Sort recycle bin nodes
-          const sortedDeleted = [...deletedNodes].sort((a, b) => {
-            let cmp = 0;
-            if (recycleSortKey === "name") {
-              cmp = a.name.localeCompare(b.name);
-            } else if (recycleSortKey === "deleted_at") {
-              cmp = (a.deleted_at ?? "").localeCompare(b.deleted_at ?? "");
-            } else if (recycleSortKey === "size") {
-              cmp = (a.size ?? 0) - (b.size ?? 0);
-            } else if (recycleSortKey === "modified") {
-              cmp = (a.modified ?? "").localeCompare(b.modified ?? "");
-            }
-            return recycleSortDir === "desc" ? -cmp : cmp;
+          const sortedDeleted = [...filteredDeletedNodes].sort((a, b) => {
+            if (recycleSort === "name_az") return a.name.localeCompare(b.name);
+            if (recycleSort === "name_za") return b.name.localeCompare(a.name);
+            if (recycleSort === "size") return (b.size ?? 0) - (a.size ?? 0);
+            if (recycleSort === "deleted") return (b.deleted_at ?? "").localeCompare(a.deleted_at ?? "");
+            // recent: by deleted_at desc
+            return (b.deleted_at ?? "").localeCompare(a.deleted_at ?? "");
           });
 
           const handleRecycleSort = (key: typeof recycleSortKey) => {
@@ -2594,37 +2687,49 @@ export default function App() {
             <>
               {/* Header */}
               <div className="dms-top-chrome border-b border-slate-200 bg-white">
-                <div className="dms-page-px py-3 flex items-center gap-2 flex-wrap">
-                  <div className="flex items-center gap-2 mr-1">
-                    <Trash2 className="h-5 w-5 text-rose-500" />
-                    <span className="font-semibold text-slate-800 text-base">Recycle Bin</span>
+                <div className="dms-page-px py-2.5 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Trash2 className="h-5 w-5 text-rose-500" />
+                      <span className="font-semibold text-slate-800 text-base">Recycle Bin</span>
+                    </div>
+                    {/* Inline filters */}
+                    <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                      <div className="relative w-56 min-w-[140px]">
+                        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-subtle" />
+                        <input
+                          value={recycleQuery}
+                          onChange={(e) => setRecycleQuery(e.target.value)}
+                          placeholder="Filter deleted items..."
+                          className="dms-input w-full py-1 pl-8 pr-2.5 text-xs text-fg"
+                        />
+                      </div>
+                      <select value={recycleVessel} onChange={(e) => setRecycleVessel(e.target.value)} className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted max-w-[120px] truncate">
+                        <option value="all">All vessels</option>
+                        {vessels.map((v) => <option key={v.id} value={v.name}>{v.name}</option>)}
+                      </select>
+                      <select value={recycleMain} onChange={(e) => setRecycleMain(e.target.value)} className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted max-w-[120px] truncate">
+                        <option value="all">All main folders</option>
+                        {["Technical & Crewing", "Commercial & Chartering", "Insurance", "Kaizen - Knowledge Bank"].map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={recycleSort}
+                        onChange={(e) => setRecycleSort(e.target.value as typeof recycleSort)}
+                        className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted max-w-[130px] truncate"
+                      >
+                        <option value="recent">Recent</option>
+                        <option value="name_az">Name A–Z</option>
+                        <option value="name_za">Name Z–A</option>
+                        <option value="size">Size</option>
+                        <option value="deleted">Date Deleted</option>
+                      </select>
+                    </div>
                   </div>
 
                   {/* Toolbar buttons */}
                   <div className="flex items-center gap-1 flex-wrap">
-                    {/* Sort dropdown */}
-                    <div className="relative group">
-                      <button className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition">
-                        <ChevronUp className="h-3.5 w-3.5" />
-                        Sort
-                        <ChevronDown className="h-3 w-3 text-slate-400" />
-                      </button>
-                      <div className="absolute top-full left-0 mt-1 w-44 bg-white border border-slate-200 rounded-lg shadow-xl z-50 py-1 hidden group-hover:block">
-                        {(["name", "deleted_at", "size", "modified"] as const).map(k => (
-                          <button
-                            key={k}
-                            onClick={() => handleRecycleSort(k)}
-                            className={`w-full text-left px-3 py-2 text-xs transition hover:bg-slate-50 flex items-center justify-between ${recycleSortKey === k ? "font-semibold text-brand-600" : "text-slate-700"}`}
-                          >
-                            {{ name: "Name", deleted_at: "Date Deleted", size: "Size", modified: "Date Modified" }[k]}
-                            {recycleSortKey === k && (
-                              recycleSortDir === "desc" ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
                     {/* View toggle */}
                     <div className="flex items-center gap-0.5 border border-slate-200 rounded px-1 py-1">
                       <button
@@ -2653,7 +2758,7 @@ export default function App() {
                     {/* Selection controls */}
                     <button
                       onClick={() => setRecycleSelectIds(new Set(sortedDeleted.map((n) => n.id)))}
-                      disabled={deletedNodes.length === 0}
+                      disabled={sortedDeleted.length === 0}
                       className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       Select all
@@ -2708,7 +2813,7 @@ export default function App() {
                   </div>
 
                   <div className="ml-auto text-xs text-slate-400">
-                    {deletedNodes.length} item{deletedNodes.length !== 1 ? "s" : ""}
+                    Showing {sortedDeleted.length} of {deletedNodes.length} item{deletedNodes.length !== 1 ? "s" : ""}
                   </div>
                 </div>
               </div>
@@ -2721,13 +2826,19 @@ export default function App() {
                     <h3 className="text-base font-semibold text-slate-600">Recycle Bin is empty</h3>
                     <p className="mt-1.5 text-sm text-slate-400">Items you delete will appear here before being permanently removed.</p>
                   </div>
+                ) : sortedDeleted.length === 0 ? (
+                  <div className="flex h-full flex-col items-center justify-center py-28 text-center">
+                    <Trash2 className="h-16 w-16 text-slate-200 mb-4" />
+                    <h3 className="text-base font-semibold text-slate-600">No matching items</h3>
+                    <p className="mt-1.5 text-sm text-slate-400">Try adjusting your filters or search terms.</p>
+                  </div>
                 ) : recycleLayout === "list" ? (
                   /* ── LIST / TABLE VIEW ── */
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
+                  <div>
+                    <table className="w-full text-sm table-fixed" style={{ borderCollapse: "separate", borderSpacing: 0 }}>
                       <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50">
-                          <th className="w-10 px-3 py-2.5 text-left">
+                        <tr className="border-b border-slate-200">
+                          <th className="dms-sticky-th w-10 px-3 py-2.5 text-left">
                             <input
                               type="checkbox"
                               className="h-4 w-4 rounded accent-rose-600"
@@ -2741,38 +2852,42 @@ export default function App() {
                               }}
                             />
                           </th>
-                          <th className="w-8 px-3 py-2.5" />
+                          <th className="dms-sticky-th w-8 px-3 py-2.5" />
                           <th
-                            className="text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-800 select-none whitespace-nowrap"
+                            style={{width: "18%"}}
+                            className="dms-sticky-th text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-800 select-none"
                             onClick={() => handleRecycleSort("name")}
                           >
-                            Name <SortIcon col="name" />
+                            File Name <SortIcon col="name" />
                           </th>
-                          <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
-                            Original Location
+                          <th style={{width: "12%"}} className="dms-sticky-th text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                            Vessel Name
                           </th>
-                          <th
-                            className="text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-800 select-none whitespace-nowrap"
+                          <th style={{width: "26%"}} className="dms-sticky-th text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                            File Path
+                          </th>
+                          <th style={{width: "14%"}}
+                            className="dms-sticky-th text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-800 select-none whitespace-nowrap"
                             onClick={() => handleRecycleSort("deleted_at")}
                           >
                             Date Deleted <SortIcon col="deleted_at" />
                           </th>
-                          <th
-                            className="text-right px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-800 select-none whitespace-nowrap"
+                          <th style={{width: "7%"}}
+                            className="dms-sticky-th text-right px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-800 select-none whitespace-nowrap"
                             onClick={() => handleRecycleSort("size")}
                           >
                             Size <SortIcon col="size" />
                           </th>
-                          <th className="text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                          <th style={{width: "9%"}} className="dms-sticky-th text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
                             Item Type
                           </th>
-                          <th
-                            className="text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-800 select-none whitespace-nowrap"
+                          <th style={{width: "10%"}}
+                            className="dms-sticky-th text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-800 select-none whitespace-nowrap"
                             onClick={() => handleRecycleSort("modified")}
                           >
                             Date Modified <SortIcon col="modified" />
                           </th>
-                          <th className="px-3 py-2.5" />
+                          <th className="dms-sticky-th px-3 py-2.5 w-16" />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -2804,12 +2919,12 @@ export default function App() {
                                   <IconComponent className={`h-4 w-4 ${iconCls}`} />
                                 </div>
                               </td>
-                              <td className="px-3 py-2.5 font-medium text-slate-800 max-w-[200px]">
+                              <td className="px-3 py-2.5 font-medium text-slate-800">
                                 {isFile ? (
                                   <button
                                     onClick={() => openRecyclePreviewConfirm(n)}
-                                    className="block max-w-[200px] truncate text-left hover:text-brand-700 hover:underline"
-                                    title={`Preview ${n.name}`}
+                                    className="block w-full truncate text-left hover:text-brand-700 hover:underline"
+                                    title={n.name}
                                   >
                                     {n.name}
                                   </button>
@@ -2817,7 +2932,18 @@ export default function App() {
                                   <span className="block truncate" title={n.name}>{n.name}</span>
                                 )}
                               </td>
-                              <td className="px-3 py-2.5 text-slate-500 max-w-[220px]">
+                              <td className="px-3 py-2.5 text-slate-700 text-xs whitespace-nowrap">
+                                {(() => {
+                                  if (!n.original_path) return <span className="text-slate-400">—</span>;
+                                  const parts = n.original_path.split("/");
+                                  const isFlatMain = n.main_folder === "Kaizen - Knowledge Bank";
+                                  const vesselName = isFlatMain ? "" : (parts[1] || "");
+                                  return vesselName
+                                    ? <span className="font-medium text-slate-700">{vesselName}</span>
+                                    : <span className="text-slate-400">—</span>;
+                                })()}
+                              </td>
+                              <td className="px-3 py-2.5 text-slate-500">
                                 <span className="block truncate text-xs" title={n.original_path || "—"}>{n.original_path || "—"}</span>
                               </td>
                               <td className="px-3 py-2.5 text-slate-500 text-xs whitespace-nowrap">
@@ -2914,339 +3040,541 @@ export default function App() {
             </>
           );
         })()
-        : view === "archive" ? (
-          (() => {
-            const firstArchivedIdx = path.findIndex(crumb => archivedFolderIds.has(crumb.id) || archivedNodes.some(n => n.id === crumb.id));
-            const isBrowsingArchivedSubfolder = current && firstArchivedIdx !== -1;
-            
-            return (
-              <>
-                <div className="border-b border-border bg-surface dms-page-px py-3 flex items-center justify-between gap-3">
-                  <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-muted min-w-0">
-                    <button 
-                      onClick={() => { 
-                        if (firstArchivedIdx !== -1) {
-                          navigateTo("archive", path.slice(0, firstArchivedIdx)); 
-                        } else {
-                          navigateTo("archive", []);
-                        }
-                      }} 
-                      className="hover:text-fg transition shrink-0"
-                    >
-                      Archived Folders
-                    </button>
-                    {isBrowsingArchivedSubfolder && (() => {
-                      const archivedCrumbs = path.slice(firstArchivedIdx);
-                      return archivedCrumbs.map((crumb, idx) => (
-                        <span key={crumb.id} className="flex items-center gap-2 min-w-0">
-                          <ChevronRight className="h-3 w-3 text-muted shrink-0" />
-                          <button 
-                            onClick={() => navigateTo("archive", path.slice(0, firstArchivedIdx + idx + 1))} 
-                            className={"hover:text-fg transition truncate " + (idx === archivedCrumbs.length - 1 ? "text-fg font-semibold cursor-default" : "")}
-                          >
-                            {crumb.name}
-                          </button>
-                        </span>
-                      ));
-                    })()}
-                  </div>
-                  <button
-                    onClick={() => setView("explorer")}
-                    className="shrink-0 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-fg hover:bg-surface2 transition"
-                  >
-                    Back to Explorer
-                  </button>
-                </div>
+          : view === "archive" ? (
+            (() => {
+              const firstArchivedIdx = path.findIndex(crumb => archivedFolderIds.has(crumb.id) || archivedNodes.some(n => n.id === crumb.id));
+              const isBrowsingArchivedSubfolder = current && firstArchivedIdx !== -1;
 
-                {isBrowsingArchivedSubfolder ? (
-                  <>
-                    <header className="dms-page-header flex items-center justify-between gap-4 border-b border-slate-100 bg-white dms-page-px py-4">
-                      <div className="min-w-0">
-                        <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-slate-800">
-                          <Archive className="h-5 w-5 text-amber-600 animate-pulse" />
-                          <span className="truncate">{current?.name}</span> <span className="shrink-0 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 border border-amber-200">Archived</span>
-                        </h2>
-                        <p className="mt-0.5 text-sm text-slate-500">
-                          {children.filter((c) => c.kind !== "file").length} folder(s) · {children.filter((c) => c.kind === "file").length} file(s) inside this archive
-                        </p>
-                      </div>
-                    </header>
-                    <div className="flex-1 overflow-y-auto bg-slate-50 dms-page-px dms-page-py">
-                      {loadingChildren ? (
-                        <FolderGridSkeleton />
-                      ) : children.length === 0 ? (
-                        <EmptyFolder canUpload={false} />
-                      ) : (
-                        <FolderGrid
-                          items={children}
-                          accent={accent}
-                          layout={layout}
-                          onOpen={(n) => navigateTo("archive", [...path, { id: n.id, name: n.name }])}
-                          onPreview={setPreview}
-                          onDelete={handleDelete}
-                          onDownload={handleDownload}
-                          onRenew={handleRenew}
-                          isMainFolder={path.length === 1 && view === "archive"}
-                        />
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <header className="dms-page-header flex items-center justify-between gap-4 border-b border-slate-100 bg-white dms-page-px py-4">
-                      <div className="min-w-0">
-                        <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-slate-800">
-                          <Archive className="h-5 w-5 text-amber-600" />
-                          Archived Folders
-                        </h2>
-                        <p className="mt-0.5 text-sm text-slate-500">
-                          Showing {archivedNodes.length} folder(s) archived from this container
-                        </p>
-                      </div>
-                    </header>
-
-                    <div className="flex-1 overflow-y-auto bg-slate-50 dms-page-px dms-page-py">
-                      {archivedNodes.length === 0 ? (
-                        <div className="flex h-full flex-col items-center justify-center py-20 text-center">
-                          <Archive className="h-10 w-10 text-slate-300 mb-3" />
-                          <h3 className="text-sm font-semibold text-slate-700">No archived items</h3>
-                          <p className="mt-1 text-xs text-slate-500">Folders and files you archive will show up here.</p>
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                          {archivedNodes.map((f) => (
-                            <div 
-                              key={f.id} 
-                              className="group flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-amber-300 hover:shadow-md relative cursor-pointer"
-                              onClick={(e) => {
-                                if ((e.target as HTMLElement).closest(".action-menu")) return;
-                                if (f.kind === "file") {
-                                  setPreview(f);
-                                } else {
-                                  navigateTo("archive", [...path, { id: f.id, name: f.name }]);
-                                }
-                              }}
+              return (
+                <>
+                  <div className="border-b border-border bg-surface dms-page-px py-3 flex items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-muted min-w-0">
+                      <button
+                        onClick={() => {
+                          if (firstArchivedIdx !== -1) {
+                            navigateTo("archive", path.slice(0, firstArchivedIdx));
+                          } else {
+                            navigateTo("archive", []);
+                          }
+                        }}
+                        className="hover:text-fg transition shrink-0"
+                      >
+                        Archived Folders
+                      </button>
+                      {isBrowsingArchivedSubfolder && (() => {
+                        const archivedCrumbs = path.slice(firstArchivedIdx);
+                        return archivedCrumbs.map((crumb, idx) => (
+                          <span key={crumb.id} className="flex items-center gap-2 min-w-0">
+                            <ChevronRight className="h-3 w-3 text-muted shrink-0" />
+                            <button
+                              onClick={() => navigateTo("archive", path.slice(0, firstArchivedIdx + idx + 1))}
+                              className={"hover:text-fg transition truncate " + (idx === archivedCrumbs.length - 1 ? "text-fg font-semibold cursor-default" : "")}
                             >
-                              <div className="flex items-start gap-4">
-                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-50">
-                                  {f.kind === "file" ? (
-                                    <FileText className="h-5 w-5 text-slate-500" />
-                                  ) : (
-                                    <Archive className="h-5 w-5 text-amber-600" />
-                                  )}
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <h3 className="truncate text-sm font-semibold text-slate-800" title={f.name}>
-                                    {f.name}
-                                  </h3>
-                                  <p className="mt-0.5 text-xs text-slate-400 font-medium">
-                                    {f.kind === "file" ? "Archived File" : "Archived Folder"}
-                                  </p>
-                                  {f.main_folder && (
-                                    <p className="mt-1 text-[11px] font-semibold text-amber-600 uppercase tracking-wider bg-amber-50/50 px-2 py-0.5 rounded border border-amber-100 inline-block">
-                                      {f.main_folder}
-                                    </p>
-                                  )}
-                                  {f.original_path && (
-                                    <p className="mt-1.5 text-[11px] text-slate-500 truncate" title={f.original_path}>
-                                      Path: {f.original_path}
-                                    </p>
-                                  )}
-                                </div>
-                                <div className="relative action-menu" onClick={(e) => e.stopPropagation()}>
-                                  <button
-                                    onClick={(e) => handleArchiveMenuToggle(e, f.id)}
-                                    className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition"
-                                    title="More actions"
+                              {crumb.name}
+                            </button>
+                          </span>
+                        ));
+                      })()}
+                    </div>
+                    <button
+                      onClick={() => setView("explorer")}
+                      className="shrink-0 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-fg hover:bg-surface2 transition"
+                    >
+                      Back to Explorer
+                    </button>
+                  </div>
+
+                  {isBrowsingArchivedSubfolder ? (
+                    <>
+                      <header className="dms-page-header flex items-center justify-between gap-4 border-b border-slate-100 bg-white dms-page-px py-4">
+                        <div className="min-w-0">
+                          <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-slate-800">
+                            <Archive className="h-5 w-5 text-amber-600 animate-pulse" />
+                            <span className="truncate">{current?.name}</span> <span className="shrink-0 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 border border-amber-200">Archived</span>
+                          </h2>
+                          <p className="mt-0.5 text-sm text-slate-500">
+                            {children.filter((c) => c.kind !== "file").length} folder(s) · {children.filter((c) => c.kind === "file").length} file(s) inside this archive
+                          </p>
+                        </div>
+                        {/* View toggle */}
+                        <div className="flex items-center gap-0.5 border border-slate-200 rounded-lg p-1 bg-white">
+                          <button
+                            onClick={() => setArchiveLayout("list")}
+                            className={`rounded p-1 transition ${archiveLayout === "list" ? "bg-amber-100 text-amber-700" : "text-slate-400 hover:text-slate-600"}`}
+                            title="List view"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                              <line x1="2" y1="4" x2="14" y2="4" /><line x1="2" y1="8" x2="14" y2="8" /><line x1="2" y1="12" x2="14" y2="12" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => setArchiveLayout("grid")}
+                            className={`rounded p-1 transition ${archiveLayout === "grid" ? "bg-amber-100 text-amber-700" : "text-slate-400 hover:text-slate-600"}`}
+                            title="Grid view"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                              <rect x="1" y="1" width="6" height="6" rx="1" /><rect x="9" y="1" width="6" height="6" rx="1" />
+                              <rect x="1" y="9" width="6" height="6" rx="1" /><rect x="9" y="9" width="6" height="6" rx="1" />
+                            </svg>
+                          </button>
+                        </div>
+                      </header>
+                      <div className="flex-1 overflow-y-auto bg-slate-50 dms-page-px dms-page-py">
+                        {loadingChildren ? (
+                          <FolderGridSkeleton />
+                        ) : children.length === 0 ? (
+                          <EmptyFolder canUpload={false} />
+                        ) : (
+                          <FolderGrid
+                            items={children}
+                            accent={accent}
+                            layout={archiveLayout}
+                            onOpen={(n) => navigateTo("archive", [...path, { id: n.id, name: n.name }])}
+                            onPreview={setPreview}
+                            onDelete={handleDelete}
+                            onDownload={handleDownload}
+                            onRenew={handleRenew}
+                            isMainFolder={path.length === 1 && view === "archive"}
+                          />
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <header className="dms-page-header flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 bg-white dms-page-px py-4">
+                        <div className="min-w-0">
+                          <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-slate-800">
+                            <Archive className="h-5 w-5 text-amber-600" />
+                            Archived Folders
+                          </h2>
+                          <p className="mt-0.5 text-sm text-slate-500">
+                            Showing {sortedArchivedNodes.length} of {archivedNodes.length} folder(s) archived from this container
+                          </p>
+                        </div>
+                        {/* Inline filters & Layout Toggle */}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <div className="relative w-56 min-w-[140px]">
+                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-subtle" />
+                            <input
+                              value={archiveQuery}
+                              onChange={(e) => setArchiveQuery(e.target.value)}
+                              placeholder="Filter archived items..."
+                              className="dms-input w-full py-1 pl-8 pr-2.5 text-xs text-fg"
+                            />
+                          </div>
+                          <select value={archiveVessel} onChange={(e) => setArchiveVessel(e.target.value)} className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted max-w-[120px] truncate">
+                            <option value="all">All vessels</option>
+                            {vesselsWithArchivedNodes.map((v) => <option key={v.id} value={v.name}>{v.name}</option>)}
+                          </select>
+                          <select value={archiveMain} onChange={(e) => { setArchiveMain(e.target.value); setArchiveSubFolder("all"); }} className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted max-w-[120px] truncate">
+                            <option value="all">All main folders</option>
+                            {["Technical & Crewing", "Commercial & Chartering", "Insurance", "Kaizen - Knowledge Bank"].map((m) => (
+                              <option key={m} value={m}>{m}</option>
+                            ))}
+                          </select>
+                          <select value={archiveSubFolder} onChange={(e) => setArchiveSubFolder(e.target.value)} className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted max-w-[130px] truncate">
+                            <option value="all">All sub-folders</option>
+                            {subFoldersWithArchivedNodes
+                              .filter((sf) => {
+                                if (archiveMain === "all" && archiveVessel === "all") return true;
+                                return archivedNodes.some((node) => {
+                                  if (archiveMain !== "all" && node.main_folder !== archiveMain) return false;
+                                  if (archiveVessel !== "all") {
+                                    const parts = (node.original_path || "").split("/");
+                                    if ((parts[1] || "") !== archiveVessel) return false;
+                                  }
+                                  const isFlatMain = node.main_folder === "Kaizen - Knowledge Bank";
+                                  const subIdx = isFlatMain ? 1 : 2;
+                                  return ((node.original_path || "").split("/")[subIdx] || "") === sf;
+                                });
+                              })
+                              .map((sf) => (
+                                <option key={sf} value={sf}>{sf}</option>
+                              ))}
+                          </select>
+
+                          {/* Sort select */}
+                          <select
+                            value={archiveSortKey}
+                            onChange={(e) => setArchiveSortKey(e.target.value as typeof archiveSortKey)}
+                            className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted max-w-[130px] truncate"
+                          >
+                            <option value="recent">Recent</option>
+                            <option value="name_az">Name A–Z</option>
+                            <option value="name_za">Name Z–A</option>
+                            <option value="size">Size</option>
+                            <option value="modified">Date Archived</option>
+                          </select>
+
+                          {/* View toggle */}
+                          <div className="flex items-center gap-0.5 border border-slate-200 rounded-lg p-1 bg-white">
+                            <button
+                              onClick={() => setArchiveLayout("list")}
+                              className={`rounded p-1 transition ${archiveLayout === "list" ? "bg-amber-100 text-amber-700" : "text-slate-400 hover:text-slate-600"}`}
+                              title="List view"
+                            >
+                              <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                <line x1="2" y1="4" x2="14" y2="4" /><line x1="2" y1="8" x2="14" y2="8" /><line x1="2" y1="12" x2="14" y2="12" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={() => setArchiveLayout("grid")}
+                              className={`rounded p-1 transition ${archiveLayout === "grid" ? "bg-amber-100 text-amber-700" : "text-slate-400 hover:text-slate-600"}`}
+                              title="Grid view"
+                            >
+                              <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                <rect x="1" y="1" width="6" height="6" rx="1" /><rect x="9" y="1" width="6" height="6" rx="1" />
+                                <rect x="1" y="9" width="6" height="6" rx="1" /><rect x="9" y="9" width="6" height="6" rx="1" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+                      </header>
+
+                      <div className="flex-1 overflow-y-auto bg-white dms-page-px">
+                        {archivedNodes.length === 0 ? (
+                          <div className="flex h-full flex-col items-center justify-center py-20 text-center">
+                            <Archive className="h-10 w-10 text-slate-300 mb-3" />
+                            <h3 className="text-sm font-semibold text-slate-700">No archived items</h3>
+                            <p className="mt-1 text-xs text-slate-500">Folders and files you archive will show up here.</p>
+                          </div>
+                        ) : sortedArchivedNodes.length === 0 ? (
+                          <div className="flex h-full flex-col items-center justify-center py-20 text-center">
+                            <Archive className="h-10 w-10 text-slate-300 mb-3" />
+                            <h3 className="text-sm font-semibold text-slate-700">No matching items</h3>
+                            <p className="mt-1 text-xs text-slate-500">Try adjusting your filters or search terms.</p>
+                          </div>
+                        ) : archiveLayout === "list" ? (
+                          /* ── LIST VIEW ── */
+                          <div>
+                            <table className="w-full text-sm" style={{ borderCollapse: "separate", borderSpacing: 0 }}>
+                              <thead>
+                                <tr className="border-b border-slate-200">
+                                  <th className="dms-sticky-th w-10 px-4 py-3" />
+                                  <th className="dms-sticky-th text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                                    File/Folder Name
+                                  </th>
+                                  <th className="dms-sticky-th text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                                    Vessel Name
+                                  </th>
+                                  <th className="dms-sticky-th text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                                    Main Folder
+                                  </th>
+                                  <th className="dms-sticky-th text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                                    Original Location
+                                  </th>
+                                  <th className="dms-sticky-th text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                                    Item Type
+                                  </th>
+                                  <th className="dms-sticky-th text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                                    Date Archived
+                                  </th>
+                                  <th className="dms-sticky-th px-4 py-3 w-12" />
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 bg-white">
+                                {sortedArchivedNodes.map((f) => (
+                                  <tr
+                                    key={f.id}
+                                    className="group hover:bg-slate-50 transition cursor-pointer"
+                                    onClick={(e) => {
+                                      if ((e.target as HTMLElement).closest(".action-menu")) return;
+                                      if (f.kind === "file") {
+                                        setPreview(f);
+                                      } else {
+                                        navigateTo("archive", [...path, { id: f.id, name: f.name }]);
+                                      }
+                                    }}
                                   >
-                                    <MoreVertical className="h-4 w-4" />
-                                  </button>
+                                    <td className="px-4 py-3 w-10">
+                                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50">
+                                        {f.kind === "file" ? (
+                                          <FileText className="h-4 w-4 text-slate-500" />
+                                        ) : (
+                                          <Archive className="h-4 w-4 text-amber-600" />
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td className="px-4 py-3 font-semibold text-slate-800 truncate max-w-[240px]" title={f.name}>
+                                      {f.name}
+                                    </td>
+                                    <td className="px-4 py-3 text-slate-700 text-xs whitespace-nowrap">
+                                      {(() => {
+                                        const parts = (f.original_path || "").split("/");
+                                        const isFlatMain = f.main_folder === "Kaizen - Knowledge Bank";
+                                        const vesselName = isFlatMain ? "" : (parts[1] || "");
+                                        return vesselName || <span className="text-slate-400">—</span>;
+                                      })()}
+                                    </td>
+                                    <td className="px-4 py-3 text-xs">
+                                      {f.main_folder ? (
+                                        <span className="font-semibold text-amber-600 uppercase tracking-wider bg-amber-50/50 px-2 py-0.5 rounded border border-amber-100 inline-block">
+                                          {f.main_folder}
+                                        </span>
+                                      ) : (
+                                        <span className="text-slate-400">—</span>
+                                      )}
+                                    </td>
+                                    <td className="px-4 py-3 text-slate-500 text-xs truncate max-w-[280px]" title={f.original_path || "—"}>
+                                      {f.original_path || "—"}
+                                    </td>
+                                    <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">
+                                      {f.kind === "file" ? "Archived File" : "Archived Folder"}
+                                    </td>
+                                    <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">
+                                      {formatDate(f.archived_at || f.modified)}
+                                    </td>
+                                    <td className="px-4 py-3 w-12 text-right">
+                                      <div className="relative action-menu inline-block" onClick={(e) => e.stopPropagation()}>
+                                        <button
+                                          onClick={(e) => handleArchiveMenuToggle(e, f.id)}
+                                          className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition"
+                                          title="More actions"
+                                        >
+                                          <MoreVertical className="h-4 w-4" />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          /* ── GRID VIEW ── */
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 py-4">
+                            {sortedArchivedNodes.map((f) => (
+                              <div
+                                key={f.id}
+                                className="group flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-amber-300 hover:shadow-md relative cursor-pointer"
+                                onClick={(e) => {
+                                  if ((e.target as HTMLElement).closest(".action-menu")) return;
+                                  if (f.kind === "file") {
+                                    setPreview(f);
+                                  } else {
+                                    navigateTo("archive", [...path, { id: f.id, name: f.name }]);
+                                  }
+                                }}
+                              >
+                                <div className="flex items-start gap-4">
+                                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-50">
+                                    {f.kind === "file" ? (
+                                      <FileText className="h-5 w-5 text-slate-500" />
+                                    ) : (
+                                      <Archive className="h-5 w-5 text-amber-600" />
+                                    )}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <h3 className="truncate text-sm font-semibold text-slate-800" title={f.name}>
+                                      {f.name}
+                                    </h3>
+                                    <p className="mt-0.5 text-xs text-slate-400 font-medium">
+                                      {f.kind === "file" ? "Archived File" : "Archived Folder"}
+                                    </p>
+                                    {f.main_folder && (
+                                      <p className="mt-1 text-[11px] font-semibold text-amber-600 uppercase tracking-wider bg-amber-50/50 px-2 py-0.5 rounded border border-amber-100 inline-block">
+                                        {f.main_folder}
+                                      </p>
+                                    )}
+                                    {f.original_path && (
+                                      <p className="mt-1.5 text-[11px] text-slate-500 truncate" title={f.original_path}>
+                                        Path: {f.original_path}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <div className="relative action-menu" onClick={(e) => e.stopPropagation()}>
+                                    <button
+                                      onClick={(e) => handleArchiveMenuToggle(e, f.id)}
+                                      className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition"
+                                      title="More actions"
+                                    >
+                                      <MoreVertical className="h-4 w-4" />
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </>
-            );
-          })()
-        ) : (
-          <>
-            <div className="dms-top-chrome border-b border-border dms-page-px py-1.5">
-              <Breadcrumb crumbs={crumbs} onNavigate={crumbTo} />
-            </div>
-
-            <header className="dms-page-header dms-top-chrome flex items-center justify-between gap-4 border-b border-border dms-page-px py-2.5">
-              <div className="min-w-0">
-                <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-fg">
-                  {current ? (
-                    <>
-                      {(() => {
-                        const { Icon, cls } = iconFor(current);
-                        return <Icon className={"h-5 w-5 shrink-0 " + cls} />;
-                      })()}
-                      <span className="truncate">{current.name}</span>
-                    </>
-                  ) : (
-                    <>
-                      <FolderOpen className="h-5 w-5 shrink-0 text-primary" />
-                      All Main Folders
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </>
                   )}
-                </h2>
-                <p className="mt-0.5 text-sm text-muted">
-                  {current
-                    ? showListModeToggle && shipViewMode === "list"
-                      ? "Flattened list view"
-                      : current.month_driven
-                      ? `Upload here — auto-filed into monthly folders · ${displayed.filter((c) => c.kind !== "file").length} folders · ${displayed.filter((c) => c.kind === "file").length} files`
-                      : `${displayed.filter((c) => c.kind !== "file").length} folders · ${displayed.filter((c) => c.kind === "file").length} files`
-                    : "Shared container · pick a main folder to browse"}
-                </p>
+                </>
+              );
+            })()
+          ) : (
+            <>
+              <div className="dms-top-chrome border-b border-border dms-page-px py-1.5">
+                <Breadcrumb crumbs={crumbs} onNavigate={crumbTo} />
               </div>
-              <div className="header-actions flex flex-wrap items-center gap-2">
-                {showListModeToggle && (
-                  <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white p-1">
-                    <button
-                      onClick={() => setShipViewMode("folder")}
-                      className={
-                        "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition " +
-                        (shipViewMode === "folder"
-                          ? "bg-slate-900 text-white"
-                          : "text-slate-600 hover:bg-slate-100")
-                      }
-                    >
-                      <LayoutGrid className="h-3.5 w-3.5" />
-                      Folder view
-                    </button>
-                    <button
-                      onClick={() => setShipViewMode("list")}
-                      className={
-                        "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition " +
-                        (shipViewMode === "list"
-                          ? "bg-slate-900 text-white"
-                          : "text-slate-600 hover:bg-slate-100")
-                      }
-                    >
-                      <Rows3 className="h-3.5 w-3.5" />
-                      List view
-                    </button>
-                  </div>
-                )}
-                {current && (
-                  <>
-                    <button
-                      onClick={() => { setArchiveSelectIds(new Set()); setShowArchiveSelectModal(true); }}
-                      className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-amber-500 cursor-pointer"
-                    >
-                      <Archive className="h-4 w-4 shrink-0" />
-                      <span className="dms-action-btn-text">Archive</span>
-                    </button>
-                    {current?.month_driven && (
-                      <button
-                        onClick={() => { setCreateFolderName(""); setCreateFolderError(null); setShowCreateFolderModal(true); }}
-                        className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-violet-700 ring-1 ring-violet-200 bg-violet-50 hover:bg-violet-100 transition shadow-sm"
-                      >
-                        <FolderPlus className="h-4 w-4 shrink-0" />
-                        <span className="dms-action-btn-text">Create Folder</span>
-                      </button>
-                    )}
-                    {current?.kind !== "main" && children.some((c) => c.kind !== "file") && !(showListModeToggle && shipViewMode === "list") && (
-                      <button
-                        onClick={() => { setDeleteFolderIds(new Set()); setShowDeleteModal(true); }}
-                        className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg bg-slate-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-500 cursor-pointer"
-                      >
-                        <Trash2 className="h-4 w-4 shrink-0" />
-                        <span className="dms-action-btn-text">Delete Folders</span>
-                      </button>
-                    )}
-                  </>
-                )}
-                {children.some((c) => c.kind === "file") && (
-                  <button
-                    onClick={() => { setDeleteFileIds(new Set()); setShowDeleteFilesModal(true); }}
-                    className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100 transition shadow-sm cursor-pointer"
-                  >
-                    <Trash2 className="h-4 w-4 shrink-0" />
-                    <span className="dms-action-btn-text">Delete Files</span>
-                  </button>
-                )}
-                {canUpload && (
-                  <UploadControl node={current!} onUpload={handleUpload} variant="primary" />
-                )}
-              </div>
-            </header>
 
-            <div className={`dms-page-bg flex-1 dms-page-px pb-8 ${
-              (view === "explorer" && shipViewMode === "list")
-                ? "flex flex-col overflow-hidden pt-4"
-                : "overflow-auto pt-6"
-            }`}>
-              {showListModeToggle && shipViewMode === "list" ? (
-                <div className="w-full flex-1 flex flex-col min-h-0">
-                  {isShipRoot ? (
-                    <VesselListView
-                      vesselId={current!.id}
-                      vesselName={current!.name}
-                      onPreviewFile={setPreview}
-                      onDeleteFile={handleDelete}
-                      refreshSignal={deletedNodes.length}
-                    />
-                  ) : (
-                    <MainFolderListView
-                      mainFolderId={current!.id}
-                      mainFolderName={current!.name}
-                      onPreviewFile={setPreview}
-                      onDeleteFile={handleDelete}
-                    />
+              <header className="dms-page-header dms-top-chrome flex items-center justify-between gap-4 border-b border-border dms-page-px py-2.5">
+                <div className="min-w-0">
+                  <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-fg">
+                    {current ? (
+                      <>
+                        {(() => {
+                          const { Icon, cls } = iconFor(current);
+                          return <Icon className={"h-5 w-5 shrink-0 " + cls} />;
+                        })()}
+                        <span className="truncate">{current.name}</span>
+                      </>
+                    ) : (
+                      <>
+                        <FolderOpen className="h-5 w-5 shrink-0 text-primary" />
+                        All Main Folders
+                      </>
+                    )}
+                  </h2>
+                  <p className="mt-0.5 text-sm text-muted">
+                    {current
+                      ? showListModeToggle && shipViewMode === "list"
+                        ? "Flattened list view"
+                        : current.month_driven
+                          ? `Upload here — auto-filed into monthly folders · ${displayed.filter((c) => c.kind !== "file").length} folders · ${displayed.filter((c) => c.kind === "file").length} files`
+                          : `${displayed.filter((c) => c.kind !== "file").length} folders · ${displayed.filter((c) => c.kind === "file").length} files`
+                      : "Shared container · pick a main folder to browse"}
+                  </p>
+                </div>
+                <div className="header-actions flex flex-wrap items-center gap-2">
+                  {showListModeToggle && (
+                    <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white p-1">
+                      <button
+                        onClick={() => setShipViewMode("folder")}
+                        className={
+                          "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition " +
+                          (shipViewMode === "folder"
+                            ? "bg-slate-900 text-white"
+                            : "text-slate-600 hover:bg-slate-100")
+                        }
+                      >
+                        <LayoutGrid className="h-3.5 w-3.5" />
+                        Folder view
+                      </button>
+                      <button
+                        onClick={() => setShipViewMode("list")}
+                        className={
+                          "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition " +
+                          (shipViewMode === "list"
+                            ? "bg-slate-900 text-white"
+                            : "text-slate-600 hover:bg-slate-100")
+                        }
+                      >
+                        <Rows3 className="h-3.5 w-3.5" />
+                        List view
+                      </button>
+                    </div>
+                  )}
+                  {current && (
+                    <>
+                      <button
+                        onClick={() => { setArchiveSelectIds(new Set()); setShowArchiveSelectModal(true); }}
+                        className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-amber-500 cursor-pointer"
+                      >
+                        <Archive className="h-4 w-4 shrink-0" />
+                        <span className="dms-action-btn-text">Archive</span>
+                      </button>
+                      {current?.month_driven && (
+                        <button
+                          onClick={() => { setCreateFolderName(""); setCreateFolderError(null); setShowCreateFolderModal(true); }}
+                          className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-violet-700 ring-1 ring-violet-200 bg-violet-50 hover:bg-violet-100 transition shadow-sm"
+                        >
+                          <FolderPlus className="h-4 w-4 shrink-0" />
+                          <span className="dms-action-btn-text">Create Folder</span>
+                        </button>
+                      )}
+                      {current?.month_driven && children.some((c) => c.kind !== "file") && !(showListModeToggle && shipViewMode === "list") && (
+                        <button
+                          onClick={() => { setDeleteFolderIds(new Set()); setShowDeleteModal(true); }}
+                          className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg bg-slate-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-500 cursor-pointer"
+                        >
+                          <Trash2 className="h-4 w-4 shrink-0" />
+                          <span className="dms-action-btn-text">Delete Folders</span>
+                        </button>
+                      )}
+                    </>
+                  )}
+                  {children.some((c) => c.kind === "file") && (
+                    <button
+                      onClick={() => { setDeleteFileIds(new Set()); setShowDeleteFilesModal(true); }}
+                      className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100 transition shadow-sm cursor-pointer"
+                    >
+                      <Trash2 className="h-4 w-4 shrink-0" />
+                      <span className="dms-action-btn-text">Delete Files</span>
+                    </button>
+                  )}
+                  {canUpload && (
+                    <UploadControl node={current!} onUpload={handleUpload} variant="primary" />
                   )}
                 </div>
-              ) : showToolbar && (
-                <FolderToolbar
-                  query={fQuery}
-                  setQuery={setFQuery}
-                  typeKey={typeKey}
-                  setTypeKey={setTypeKey}
-                  sort={sortKey}
-                  setSort={setSortKey}
-                  view={layout}
-                  setView={setLayout}
-                />
-              )}
-              {!showListModeToggle || shipViewMode === "folder"
-                ? loadingChildren ? (
-                <FolderGridSkeleton />
-              ) : displayed.length === 0 ? (
-                children.length > 0 ? (
-                  <p className="dms-card w-full rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
-                    Nothing matches your filter.
-                  </p>
-                ) : current?.month_driven ? (
-                  <p className="dms-card w-full rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
-                    No month folders yet — upload a document to auto-create one, or click <strong className="text-primary">Create Folder</strong> to add one manually.
-                  </p>
-                ) : (
-                  <EmptyFolder canUpload={canUpload} />
-                )
-              ) : (
-                <FolderGrid
-                  items={displayed}
-                  accent={accent}
-                  layout={layout}
-                  onOpen={openChild}
-                  onPreview={setPreview}
-                  onDelete={handleDelete}
-                  onDownload={handleDownload}
-                  onRenew={handleRenew}
-                  isMainFolder={path.length === 1 && view === "explorer"}
-                />
-              ) : null}
-            </div>
-          </>
-        )}
+              </header>
+
+              <div className={`dms-page-bg flex-1 dms-page-px pb-8 ${(view === "explorer" && shipViewMode === "list")
+                ? "flex flex-col overflow-hidden pt-4"
+                : "overflow-auto pt-6"
+                }`}>
+                {showListModeToggle && shipViewMode === "list" ? (
+                  <div className="w-full flex-1 flex flex-col min-h-0">
+                    {isShipRoot ? (
+                      <VesselListView
+                        vesselId={current!.id}
+                        vesselName={current!.name}
+                        onPreviewFile={setPreview}
+                        onDeleteFile={handleDelete}
+                        refreshSignal={deletedNodes.length}
+                      />
+                    ) : (
+                      <MainFolderListView
+                        mainFolderId={current!.id}
+                        mainFolderName={current!.name}
+                        onPreviewFile={setPreview}
+                        onDeleteFile={handleDelete}
+                      />
+                    )}
+                  </div>
+                ) : showToolbar && (
+                  <FolderToolbar
+                    query={fQuery}
+                    setQuery={setFQuery}
+                    typeKey={typeKey}
+                    setTypeKey={setTypeKey}
+                    sort={sortKey}
+                    setSort={setSortKey}
+                    view={layout}
+                    setView={setLayout}
+                  />
+                )}
+                {!showListModeToggle || shipViewMode === "folder"
+                  ? loadingChildren ? (
+                    <FolderGridSkeleton />
+                  ) : displayed.length === 0 ? (
+                    children.length > 0 ? (
+                      <p className="dms-card w-full rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
+                        Nothing matches your filter.
+                      </p>
+                    ) : current?.month_driven ? (
+                      <p className="dms-card w-full rounded-xl border border-dashed border-border-strong p-8 text-center text-sm text-muted">
+                        No month folders yet — upload a document to auto-create one, or click <strong className="text-primary">Create Folder</strong> to add one manually.
+                      </p>
+                    ) : (
+                      <EmptyFolder canUpload={canUpload} />
+                    )
+                  ) : (
+                    <FolderGrid
+                      items={displayed}
+                      accent={accent}
+                      layout={layout}
+                      onOpen={openChild}
+                      onPreview={setPreview}
+                      onDelete={handleDelete}
+                      onDownload={handleDownload}
+                      onRenew={handleRenew}
+                      isMainFolder={path.length === 1 && view === "explorer"}
+                    />
+                  ) : null}
+              </div>
+            </>
+          )}
       </main>
 
       {showModal && (
@@ -3360,7 +3688,7 @@ export default function App() {
                   ) : (
                     archivedNodes.map((f) => (
                       <div key={f.id} className="flex items-center justify-between rounded-lg px-2 py-1.5 hover:bg-amber-50/50 transition">
-                        <span 
+                        <span
                           onClick={() => {
                             if (f.kind === "file") {
                               setPreview(f);
@@ -3572,7 +3900,7 @@ export default function App() {
 
             {/* Footer */}
             <div className="border-t border-slate-100 px-6 py-4 bg-slate-50 flex gap-3">
-              <button 
+              <button
                 onClick={() => setShowRecycleSelectModal(false)}
                 className="flex-1 rounded-lg border border-slate-200 bg-white py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition cursor-pointer"
               >
@@ -3879,7 +4207,7 @@ export default function App() {
               ) : (
                 archivedNodes.map((f) => (
                   <div key={f.id} className="flex items-center justify-between rounded-lg px-2.5 py-1.5 hover:bg-slate-50 transition relative">
-                    <span 
+                    <span
                       onClick={() => {
                         if (f.kind === "file") {
                           setPreview(f);
@@ -3962,7 +4290,7 @@ export default function App() {
                 const cleaned = cleanFolderName(createFolderName);
                 const hasSpecial = createFolderName !== cleaned;
                 const hasLetters = /[a-zA-Z]/.test(cleaned);
-                
+
                 if (hasSpecial || !hasLetters) {
                   return (
                     <p className="mt-2 text-[11px] leading-relaxed text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex flex-col gap-0.5">
@@ -4153,9 +4481,9 @@ export default function App() {
           return createPortal(
             <>
               {/* Overlay backdrop to close the menu on click */}
-              <div 
-                className="fixed inset-0 z-[9998]" 
-                onClick={() => setActiveMenuFolderId(null)} 
+              <div
+                className="fixed inset-0 z-[9998]"
+                onClick={() => setActiveMenuFolderId(null)}
               />
               <div
                 style={{
@@ -4211,22 +4539,22 @@ export default function App() {
 
       {/* Full Photo Modal overlay */}
       {showFullPhoto && profilePhoto && (
-        <div 
+        <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-md cursor-pointer"
           onClick={() => setShowFullPhoto(false)}
         >
-          <div 
+          <div
             className="relative max-h-[90vh] max-w-[90vw] overflow-hidden rounded-2xl border border-white/10 bg-black/40 shadow-2xl p-2"
             onClick={(e) => e.stopPropagation()}
           >
-            <img 
-              src={profilePhoto} 
-              alt="Full Profile" 
-              className="max-h-[80vh] max-w-[80vw] rounded-xl object-contain" 
+            <img
+              src={profilePhoto}
+              alt="Full Profile"
+              className="max-h-[80vh] max-w-[80vw] rounded-xl object-contain"
             />
             <div className="mt-3 flex items-center justify-between px-2">
               <span className="text-xs text-white/60 font-medium">{user?.display_name} &middot; Profile Photo</span>
-              <button 
+              <button
                 onClick={() => setShowFullPhoto(false)}
                 className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/20 transition cursor-pointer"
               >
@@ -4267,12 +4595,12 @@ function FolderGrid({
   const files = items.filter((i) => i.kind === "file");
 
   const commonFolder = isMainFolder ? folders.find((f) => f.name.toLowerCase().includes("common")) : null;
-  const vesselFolders = isMainFolder 
+  const vesselFolders = isMainFolder
     ? folders.filter((f) => !f.name.toLowerCase().includes("common"))
     : folders;
 
-  const displayedVessels = isMainFolder && !showAllVessels 
-    ? vesselFolders.slice(0, 4) 
+  const displayedVessels = isMainFolder && !showAllVessels
+    ? vesselFolders.slice(0, 4)
     : vesselFolders;
 
   return (
@@ -4561,9 +4889,8 @@ function FileActions({
           )}
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(file); setOpen(false); }}
-            className={`flex items-center gap-2 w-full text-left text-xs font-semibold text-rose-600 hover:bg-rose-50 transition cursor-pointer px-2.5 py-2 ${
-              isFile ? "border-t border-slate-100 mt-0.5 pt-1.5 rounded-b" : "rounded"
-            }`}
+            className={`flex items-center gap-2 w-full text-left text-xs font-semibold text-rose-600 hover:bg-rose-50 transition cursor-pointer px-2.5 py-2 ${isFile ? "border-t border-slate-100 mt-0.5 pt-1.5 rounded-b" : "rounded"
+              }`}
           >
             <Trash2 className="h-3.5 w-3.5 text-rose-500" />
             Delete

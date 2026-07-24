@@ -25,6 +25,7 @@ export interface FolderNode {
   children?: FolderNode[];
   main_folder?: string;
   original_path?: string;
+  archived_at?: string | null;
 }
 
 export interface Vessel {

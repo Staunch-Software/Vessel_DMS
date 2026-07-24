@@ -29,7 +29,7 @@ class Store:
         # id -> job dict.
         self.jobs = {}
         self._job_ids = itertools.count(1)
-        self.archived_ids = set()
+        self.archived_ids = {}  # id -> archived_at ISO timestamp
         self.deleted_ids = set()
         # id -> pending/approved/rejected approval request dict.
         self.approvals = {}
@@ -463,7 +463,7 @@ class Store:
             # Delete all collected nodes
             for nid in to_remove:
                 self.nodes.pop(nid, None)
-                self.archived_ids.discard(nid)
+                self.archived_ids.pop(nid, None)
                 self.deleted_ids.discard(nid)
             return True
         else:
@@ -474,7 +474,7 @@ class Store:
             if pid is not None and item_id in self.nodes[pid]["children"]:
                 self.nodes[pid]["children"].remove(item_id)
             self.nodes.pop(item_id, None)
-            self.archived_ids.discard(item_id)
+            self.archived_ids.pop(item_id, None)
             return True
 
     def get_deleted_ids(self):
@@ -857,13 +857,17 @@ class Store:
         }
 
     def archive_item(self, item_id, item_type):
-        self.archived_ids.add(item_id)
+        import datetime as _dt
+        self.archived_ids[item_id] = _dt.datetime.now().isoformat()
 
     def restore_item(self, item_id):
-        self.archived_ids.discard(item_id)
+        self.archived_ids.pop(item_id, None)
 
     def get_archived_ids(self):
-        return list(self.archived_ids)
+        return list(self.archived_ids.keys())
+
+    def get_archived_id_to_date(self):
+        return dict(self.archived_ids)
 
 
 # --------------------------------------------------------------------- helpers
