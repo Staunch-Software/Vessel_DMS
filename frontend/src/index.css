@@ -599,3 +599,44 @@ textarea::placeholder {
     display: none !important;
   }
 }
+
+/* Sticky filter bar and table headers for vessels/folder list view */
+.dms-sticky-filter-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--color-bg);
+  padding-top: 0.25rem;
+  padding-bottom: 0.35rem;
+  margin-left: -1.75rem;
+  margin-right: -1.75rem;
+  padding-left: 1.75rem;
+  padding-right: 1.75rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dms-sticky-th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: var(--color-surface2) !important;
+  border-bottom: 1px solid var(--color-border) !important;
+}
+
+@media (max-width: 1024px) {
+  .dms-sticky-filter-bar {
+    margin-left: -1.25rem;
+    margin-right: -1.25rem;
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .dms-sticky-filter-bar {
+    margin-left: -1rem;
+    margin-right: -1rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}

@@ -34,9 +34,9 @@ class GraphClient:
             from .http import verify
 
             self._http = httpx.AsyncClient(
-                timeout=60,
+                timeout=120,
                 verify=verify(),
-                limits=httpx.Limits(max_connections=10, max_keepalive_connections=10),
+                limits=httpx.Limits(max_connections=30, max_keepalive_connections=30),
             )
         return self._http
 
@@ -73,7 +73,7 @@ class GraphClient:
     ) -> httpx.Response:
         url = path if path.startswith("http") else f"{settings.graph_base_url}{path}"
         client = self._client()
-        for attempt in range(6):
+        for attempt in range(8):
             resp = await client.request(
                 method,
                 url,
@@ -83,9 +83,9 @@ class GraphClient:
                 params=params,
             )
             # SharePoint Embedded throttles bursts (429) / transient 503.
-            if resp.status_code in (429, 503) and attempt < 5:
+            if resp.status_code in (429, 503) and attempt < 7:
                 retry_after = resp.headers.get("Retry-After")
-                delay = float(retry_after) if retry_after else min(2**attempt, 30)
+                delay = float(retry_after) if retry_after else min(2 ** attempt * 2, 60)
                 await asyncio.sleep(delay + random.random())
                 continue
             break

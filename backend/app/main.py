@@ -6,13 +6,89 @@ when configured (see backend/.env), otherwise the in-memory stub. See
 `app/services/__init__.py`.
 """
 import asyncio
+import logging
+import logging.config
 import os
 import warnings
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 # ── Timezone: tell tzlocal/APScheduler the system is UTC+5:30 (IST) ──────────
 os.environ.setdefault("TZ", "Asia/Kolkata")
 warnings.filterwarnings("ignore", message="Timezone offset does not match system offset")
+
+# ── Logging: terminal + rotating file (backend.log) ──────────────────────────
+_LOG_FILE = Path(__file__).parent.parent / "backend.log"
+
+def _build_logging_config(log_file: Path) -> dict:
+    handlers = {
+        "console": {
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stdout",
+            "formatter": "default",
+        },
+    }
+    handler_names = ["console"]
+    try:
+        log_file.touch(exist_ok=True)
+        handlers["file"] = {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(log_file),
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 3,
+            "encoding": "utf-8",
+            "delay": True,
+            "formatter": "default",
+        }
+        handler_names.append("file")
+    except (PermissionError, OSError):
+        pass  # log file locked or unwritable — console only
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {
+                "format": "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+                "datefmt": "%Y-%m-%d %H:%M:%S",
+            },
+        },
+        "handlers": handlers,
+        "root": {"level": "INFO", "handlers": handler_names},
+        "loggers": {
+            "uvicorn": {"handlers": handler_names, "level": "INFO", "propagate": False},
+            "uvicorn.access": {"handlers": handler_names, "level": "INFO", "propagate": False},
+            "uvicorn.error": {"handlers": handler_names, "level": "INFO", "propagate": False},
+            "sqlalchemy.engine": {"handlers": handler_names, "level": "WARNING", "propagate": False},
+        },
+    }
+
+logging.config.dictConfig(_build_logging_config(_LOG_FILE))
+
+# Re-attach our handlers to uvicorn loggers — uvicorn pre-configures them
+# before our dictConfig runs, so we must replace them after import.
+def _reattach_uvicorn_handlers():
+    fmt = logging.Formatter(
+        "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    try:
+        import logging.handlers as _lh
+        fh = _lh.RotatingFileHandler(
+            str(_LOG_FILE), maxBytes=10 * 1024 * 1024,
+            backupCount=3, encoding="utf-8", delay=True,
+        )
+        fh.setFormatter(fmt)
+        handlers.append(fh)
+    except Exception:
+        pass
+    handlers[0].setFormatter(fmt)
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        lg = logging.getLogger(name)
+        lg.handlers = handlers
+        lg.propagate = False
+
+_reattach_uvicorn_handlers()
 
 import httpx
 
@@ -992,19 +1068,10 @@ async def create_vessel(
             requesting_email=email,
             requesting_name=display_name,
         )
-        if result.get("status") == "pending":
-            return JSONResponse(status_code=202, content={
-                "status": "pending",
-                "action_type": "create_vessel",
-                "approval_id": result.get("approval_id"),
-                "message": result.get("message"),
-            })
         vessel = result.get("result") or {}
         return {**vessel, "status": "completed", "message": result.get("message")}
     except Conflict as e:
-        if str(e) == "Vessel name already exists.":
-            return JSONResponse(status_code=409, content={"message": str(e)})
-        _raise(e)
+        return JSONResponse(status_code=409, content={"message": str(e)})
     except BadRequest as e:
         _raise(e)
 

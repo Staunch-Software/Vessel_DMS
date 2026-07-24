@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     container_id: str = ""  # filled after the container is created
     container_display_name: str = "Vessel DMS Documents"
 
+    # Drive ID (same b!... value as container_id for SPE)
+    drive_id: str = ""
+
+    # Comma-separated drive item IDs of the main folders (Technical & Crewing,
+    # Commercial & Chartering, Insurance, Kaizen - Knowledge Bank)
+    main_folder_ids: str = ""
+
     # --- Database ---
     database_url: str = ""  # e.g. postgresql+psycopg2://user:pass@host:5432/dms
     db_host: str = ""
@@ -66,6 +73,10 @@ class Settings(BaseSettings):
     # Used by get_client_ip() to correctly parse X-Forwarded-For.
     # 0 = no proxy (use request.client.host directly).
     trusted_proxy_hops: int = 1
+
+    @property
+    def main_folder_id_list(self) -> list[str]:
+        return [fid.strip() for fid in self.main_folder_ids.split(",") if fid.strip()]
 
     @property
     def graph_configured(self) -> bool:

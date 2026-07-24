@@ -8,7 +8,7 @@ export function VesselSwitcher({
 }: {
   vessels: Vessel[];
   selected: string | null;
-  onSelect: (name: string | null) => void;
+  onSelect: (id: string | null) => void;
 }) {
   return (
     <div className="dms-input flex items-center gap-2 rounded-lg pl-2.5 pr-1">
@@ -21,7 +21,7 @@ export function VesselSwitcher({
       >
         <option value="">All vessels</option>
         {vessels.map((v) => (
-          <option key={v.id} value={v.name}>
+          <option key={v.id} value={v.id}>
             {v.name}
             {v.imo ? ` (IMO ${v.imo})` : ""}
           </option>

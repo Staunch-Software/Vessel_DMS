@@ -38,19 +38,39 @@ async def precreate_next_month(force: bool = False) -> int:
         return 0
 
     ny, nm = _next_month(today.year, today.month)
-    drive_id = await backend._drive()
+    from .ocr.dates import month_label
+    label = month_label(ny, nm)
+
     with SessionLocal() as db:
+        existing_month_paths = {
+            r.path for r in db.query(models.Folder)
+            .filter(models.Folder.path.like(f"%/{label}"))
+            .all()
+        }
         rows = [
             (r.drive_item_id, r.path, r.vessel_id)
             for r in db.query(models.Folder).filter_by(month_driven=True).all()
         ]
+
+    todo = []
     for item_id, path, vessel_id in rows:
+        month_path = f"{path}/{label}"
+        if month_path not in existing_month_paths:
+            todo.append((item_id, path, vessel_id))
+
+    if not todo:
+        log.info("[precreate] All next month folders are already provisioned. Skipping.")
+        return 0
+
+    log.info("[precreate] Provisioning next month folders for %d/%d month-driven folders.", len(todo), len(rows))
+    drive_id = await backend._drive()
+    for item_id, path, vessel_id in todo:
         categories = classify(path.split("/")).get("categories", [])
         spec = {"month_children": [{"name": c, "kind": "leaf"} for c in categories]}
         with SessionLocal() as db:
             await backend._ensure_month(db, drive_id, item_id, path, spec, ny, nm, vessel_id)
             db.commit()
-    return len(rows)
+    return len(todo)
 
 
 def _sweep_sessions() -> None:

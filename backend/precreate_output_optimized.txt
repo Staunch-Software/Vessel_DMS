@@ -1,0 +1,28 @@
+Initializing backend...
+Fetching drive id...
+Drive ID: b!w2ml3n29QUCKqrff5dKw0y8rHbxjA0ZEhZ8W7Uj7-MTYn3IwJ1xTRIcjyET58h5g
+Querying month-driven folders...
+Total month-driven folders to process: 129
+[1/129] Processing: Commercial & Chartering/Bow Fighter/Claims & Disputes (vessel_id: 18)
+  Successfully ensured month folders for Commercial & Chartering/Bow Fighter/Claims & Disputes
+[2/129] Processing: Commercial & Chartering/Bow Fighter/Invoices & Payments (vessel_id: 18)
+  Successfully ensured month folders for Commercial & Chartering/Bow Fighter/Invoices & Payments
+[3/129] Processing: Commercial & Chartering/MV 1307/Invoices & Payments (vessel_id: 11)
+  Successfully ensured month folders for Commercial & Chartering/MV 1307/Invoices & Payments
+[4/129] Processing: Commercial & Chartering/MV 1307/Claims & Disputes (vessel_id: 11)
+  Successfully ensured month folders for Commercial & Chartering/MV 1307/Claims & Disputes
+[5/129] Processing: Technical & Crewing/Pacific trader/Month End Reports (vessel_id: None)
+  Successfully ensured month folders for Technical & Crewing/Pacific trader/Month End Reports
+[6/129] Processing: Technical & Crewing/MDFGSGFE/Month End Reports (vessel_id: 19)
+  Successfully ensured month folders for Technical & Crewing/MDFGSGFE/Month End Reports
+[7/129] Processing: Technical & Crewing/MV Horizon/Month End Reports (vessel_id: 21)
+  Successfully ensured month folders for Technical & Crewing/MV Horizon/Month End Reports
+[8/129] Processing: Commercial & Chartering/MDFGSGFE/Invoices & Payments (vessel_id: 19)
+  Successfully ensured month folders for Commercial & Chartering/MDFGSGFE/Invoices & Payments
+[9/129] Processing: Commercial & Chartering/MDFGSGFE/Claims & Disputes (vessel_id: 19)
+  Successfully ensured month folders for Commercial & Chartering/MDFGSGFE/Claims & Disputes
+[10/129] Processing: Commercial & Chartering/MV Horizon/Claims & Disputes (vessel_id: 21)
+  Successfully ensured month folders for Commercial & Chartering/MV Horizon/Claims & Disputes
+[11/129] Processing: Commercial & Chartering/MV Horizon/Invoices & Payments (vessel_id: 21)
+  Successfully ensured month folders for Commercial & Chartering/MV Horizon/Invoices & Payments
+[12/129] Processing: Technical & Crewing/MV 1307/Month End Reports (vessel_id: 11)

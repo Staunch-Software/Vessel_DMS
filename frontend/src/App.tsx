@@ -260,6 +260,79 @@ interface PathEntry {
   name: string;
 }
 
+const mapPathnameToState = (pathname: string, search: string): { view: string; path: PathEntry[] } => {
+  if (pathname.startsWith("/homepage/dashboard")) {
+    return { view: "dashboard", path: [] };
+  }
+  if (pathname.startsWith("/homepage/listvessels")) {
+    return { view: "listvessels", path: [] };
+  }
+  if (pathname.startsWith("/homepage/approvals")) {
+    return { view: "approvals", path: [] };
+  }
+  if (pathname.startsWith("/homepage/technicalandcrewing")) {
+    const params = new URLSearchParams(search);
+    const pStr = params.get("path");
+    if (pStr) {
+      try { return { view: "explorer", path: JSON.parse(pStr) }; } catch {}
+    }
+    return { view: "explorer", path: [{ id: "01W22VD2A5KQBB6TF5SVAYBSHIXCZFIDN3", name: "Technical & Crewing" }] };
+  }
+  if (pathname.startsWith("/homepage/commericialandchartering")) {
+    const params = new URLSearchParams(search);
+    const pStr = params.get("path");
+    if (pStr) {
+      try { return { view: "explorer", path: JSON.parse(pStr) }; } catch {}
+    }
+    return { view: "explorer", path: [{ id: "01W22VD2DDRIV4CAFT5VBITQ3GLKI2ZTXU", name: "Commercial & Chartering" }] };
+  }
+  if (pathname.startsWith("/homepage/Insurance")) {
+    const params = new URLSearchParams(search);
+    const pStr = params.get("path");
+    if (pStr) {
+      try { return { view: "explorer", path: JSON.parse(pStr) }; } catch {}
+    }
+    return { view: "explorer", path: [{ id: "01W22VD2AMFWFVBRCXPZEZRJZ24HM4DCMV", name: "Insurance" }] };
+  }
+  if (pathname.startsWith("/homepage/knowledgebank")) {
+    const params = new URLSearchParams(search);
+    const pStr = params.get("path");
+    if (pStr) {
+      try { return { view: "explorer", path: JSON.parse(pStr) }; } catch {}
+    }
+    return { view: "explorer", path: [{ id: "01W22VD2FQOXL5AGZH5FCZMCC5DUKRYEMV", name: "Kaizen - Knowledge Bank" }] };
+  }
+  if (pathname.startsWith("/homepage/profile")) {
+    return { view: "profile", path: [] };
+  }
+  if (pathname.startsWith("/homepage/archive")) {
+    return { view: "archive", path: [] };
+  }
+  if (pathname.startsWith("/homepage/recycle_bin")) {
+    return { view: "recycle_bin", path: [] };
+  }
+  if (pathname.startsWith("/homepage/settings")) {
+    return { view: "settings", path: [] };
+  }
+  if (pathname.startsWith("/homepage/appearance")) {
+    return { view: "appearance", path: [] };
+  }
+
+  const params = new URLSearchParams(search);
+  const v = params.get("view");
+  const pStr = params.get("path");
+  let parsedPath: PathEntry[] = [];
+  if (pStr) {
+    try {
+      parsedPath = JSON.parse(pStr);
+    } catch {}
+  }
+  if (v === "explorer" || v === "profile" || v === "dashboard" || v === "listvessels" || v === "archive" || v === "recycle_bin" || v === "approvals" || v === "settings" || v === "appearance") {
+    return { view: v, path: parsedPath };
+  }
+  return { view: "dashboard", path: [] };
+};
+
 export default function App() {
   const [mains, setMains] = useState<FolderNode[]>([]);
   const [vessels, setVessels] = useState<Vessel[]>([]);
@@ -276,28 +349,21 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { instance, accounts, inProgress } = useMsal();
   const [stats, setStats] = useState<Stats | null>(null);
-  const [view, setView] = useState<"dashboard" | "explorer" | "vessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance">(() => {
+  const [view, setView] = useState<"dashboard" | "explorer" | "listvessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance">(() => {
     if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const v = params.get("view");
-      if (v === "explorer" || v === "profile" || v === "dashboard" || v === "vessels" || v === "archive" || v === "recycle_bin" || v === "approvals" || v === "settings" || v === "appearance") {
-        return v as "dashboard" | "explorer" | "vessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance";
+      if (window.location.pathname === "/vessels/updatevessel") {
+        return "listvessels";
       }
+      const stateObj = mapPathnameToState(window.location.pathname, window.location.search);
+      return stateObj.view as any;
     }
     return "dashboard";
   });
 
   const [path, setPath] = useState<PathEntry[]>(() => {
     if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const p = params.get("path");
-      if (p) {
-        try {
-          return JSON.parse(p);
-        } catch {
-          return [];
-        }
-      }
+      const stateObj = mapPathnameToState(window.location.pathname, window.location.search);
+      return stateObj.path;
     }
     return [];
   });
@@ -305,7 +371,12 @@ export default function App() {
   const [children, setChildren] = useState<FolderNode[]>([]);
   const [loadingChildren, setLoadingChildren] = useState(false);
   const [showModal, setShowModal] = useState(false);
-  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [showUpdateModal, setShowUpdateModal] = useState(() => {
+    if (typeof window !== "undefined") {
+      return window.location.pathname === "/vessels/updatevessel";
+    }
+    return false;
+  });
   const [vesselToUpdate, setVesselToUpdate] = useState<import("./api").Vessel | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -348,6 +419,13 @@ export default function App() {
   const [selectedApprovalId, setSelectedApprovalId] = useState<string | null>(null);
   const [selectedApprovalTab, setSelectedApprovalTab] = useState<"pending" | "approved" | "rejected" | "all" | undefined>(undefined);
   const [showUploadSuccessModal, setShowUploadSuccessModal] = useState(false);
+  const [visibleListVesselsCount, setVisibleListVesselsCount] = useState(4);
+
+  useEffect(() => {
+    if (view === "listvessels") {
+      setVisibleListVesselsCount(4);
+    }
+  }, [view]);
 
 
   // In-folder toolbar state
@@ -857,18 +935,58 @@ export default function App() {
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const expireSessionRef = useRef<(reason: "inactivity" | "token_expiry") => void>(() => { });
 
-  const navigateTo = useCallback((newView: "dashboard" | "explorer" | "vessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance", newPath: PathEntry[]) => {
+  const navigateTo = useCallback((newView: "dashboard" | "explorer" | "listvessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance", newPath: PathEntry[]) => {
     setView(newView);
     setPath(newPath);
-
-    // Build query params
-    const params = new URLSearchParams();
-    params.set("view", newView);
-    if (newPath.length > 0) {
-      params.set("path", JSON.stringify(newPath));
+    if (newView !== "listvessels") {
+      setShowUpdateModal(false);
+      setVesselToUpdate(null);
     }
 
-    const newUrl = `/homepage?${params.toString()}`;
+    let urlPath = "/homepage/dashboard";
+    const params = new URLSearchParams();
+
+    if (newView === "dashboard") {
+      urlPath = "/homepage/dashboard";
+    } else if (newView === "listvessels") {
+      urlPath = "/homepage/listvessels";
+    } else if (newView === "approvals") {
+      urlPath = "/homepage/approvals";
+    } else if (newView === "profile") {
+      urlPath = "/homepage/profile";
+    } else if (newView === "archive") {
+      urlPath = "/homepage/archive";
+    } else if (newView === "recycle_bin") {
+      urlPath = "/homepage/recycle_bin";
+    } else if (newView === "settings") {
+      urlPath = "/homepage/settings";
+    } else if (newView === "appearance") {
+      urlPath = "/homepage/appearance";
+    } else if (newView === "explorer") {
+      const rootFolder = newPath[0];
+      if (rootFolder) {
+        if (rootFolder.id === "01W22VD2A5KQBB6TF5SVAYBSHIXCZFIDN3" || rootFolder.name === "Technical & Crewing") {
+          urlPath = "/homepage/technicalandcrewing";
+        } else if (rootFolder.id === "01W22VD2DDRIV4CAFT5VBITQ3GLKI2ZTXU" || rootFolder.name === "Commercial & Chartering") {
+          urlPath = "/homepage/commericialandchartering";
+        } else if (rootFolder.id === "01W22VD2AMFWFVBRCXPZEZRJZ24HM4DCMV" || rootFolder.name === "Insurance") {
+          urlPath = "/homepage/Insurance";
+        } else if (rootFolder.id === "01W22VD2FQOXL5AGZH5FCZMCC5DUKRYEMV" || rootFolder.name === "Kaizen - Knowledge Bank") {
+          urlPath = "/homepage/knowledgebank";
+        } else {
+          urlPath = "/homepage/explorer";
+        }
+      } else {
+        urlPath = "/homepage/explorer";
+      }
+
+      if (newPath.length > 1) {
+        params.set("path", JSON.stringify(newPath));
+      }
+    }
+
+    const queryStr = params.toString();
+    const newUrl = queryStr ? `${urlPath}?${queryStr}` : urlPath;
     window.history.pushState({ view: newView, path: newPath }, "", newUrl);
   }, []);
 
@@ -876,14 +994,21 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
 
-    const homeUrl = "/homepage?view=dashboard";
+    const isUpdateVessel = window.location.pathname === "/vessels/updatevessel";
+    const initialUrl = window.location.pathname.startsWith("/homepage/") || isUpdateVessel
+      ? window.location.pathname + window.location.search
+      : "/homepage/dashboard";
+
+    const initialState = mapPathnameToState(window.location.pathname, window.location.search);
+    const initialView = isUpdateVessel ? "listvessels" : initialState.view;
+
     console.log(`[HistoryGuard] user set — installing. historyLen(before)=${window.history.length}`);
-    window.history.replaceState({ view: "dashboard", path: [], isInitial: true }, "", homeUrl);
+    window.history.replaceState({ view: initialView, path: initialState.path, isInitial: true }, "", initialUrl);
 
     const TOPUP_SIZE = 5;
     const topUpBuffer = () => {
       for (let i = 0; i < TOPUP_SIZE; i++) {
-        window.history.pushState({ view: "dashboard", path: [] }, "", homeUrl);
+        window.history.pushState({ view: initialView, path: initialState.path }, "", initialUrl);
       }
       console.log(`[HistoryGuard] topped up buffer. historyLen(after)=${window.history.length}`);
     };
@@ -900,12 +1025,15 @@ export default function App() {
         return;
       }
 
-      if (state.view === "dashboard" || state.view === "explorer" || state.view === "vessels" || state.view === "profile" || state.view === "archive" || state.view === "recycle_bin" || state.view === "approvals" || state.view === "settings" || state.view === "appearance") {
-        setView(state.view as "dashboard" | "explorer" | "vessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance");
-        setPath(state.path || []);
+      const parsedState = mapPathnameToState(window.location.pathname, window.location.search);
+      if (parsedState.view) {
+        setView(parsedState.view as any);
+        setPath(parsedState.path);
+        setShowUpdateModal(window.location.pathname === "/vessels/updatevessel");
       } else {
         setView("dashboard");
         setPath([]);
+        setShowUpdateModal(false);
       }
     };
 
@@ -985,7 +1113,7 @@ export default function App() {
 
   // ----- navigation -----
   const goDashboard = () => navigateTo("dashboard", []);
-  const goVessels = () => navigateTo("vessels", []);
+  const goVessels = () => navigateTo("listvessels", []);
   const goProfile = () => navigateTo("profile", []);
   const goApprovals = () => navigateTo("approvals", []);
   const goSettings = () => navigateTo("settings", []);
@@ -1025,6 +1153,15 @@ export default function App() {
     if (!opened) {
       navigateTo("explorer", [{ id: node.id, name: node.name }]);
     }
+  };
+
+  const openMainFromSidebar = (node: FolderNode) => {
+    setSelectedVesselByPage((prev) => ({
+      ...prev,
+      [node.name]: null,
+      vessels: null,
+    }));
+    navigateTo("explorer", [{ id: node.id, name: node.name }]);
   };
   const openChild = (node: FolderNode) => {
     if (node.kind === "file") return;
@@ -1179,12 +1316,15 @@ export default function App() {
 
 
   const refreshAfterMutation = useCallback(async () => {
+    // Await only the fast, immediately-visible refreshes.
     await Promise.all([
       loadCurrent(),
       getStats().then(setStats),
-      getDeletedNodes().then(setDeletedNodes),
-      getArchivedNodes().then(setArchivedNodes),
     ]);
+    // Recycle bin and archive counts update in the background — they are
+    // slow (SharePoint enumeration) and only needed when those views open.
+    void getDeletedNodes().then(setDeletedNodes).catch(() => {});
+    void getArchivedNodes().then(setArchivedNodes).catch(() => {});
   }, [loadCurrent]);
 
   const handleUpload = useCallback(
@@ -1329,8 +1469,8 @@ export default function App() {
         if (result.status === "pending") {
           upsertToast({ id, status: "pending", title: "Awaiting approval", detail: result.message || node.name });
         } else {
-          await refreshAfterMutation();
           upsertToast({ id, status: "done", title: "Moved to Recycle Bin", detail: node.name });
+          void refreshAfterMutation();
         }
       } catch (e) {
         upsertToast({ id, status: "failed", title: "Delete failed", detail: errDetail(e, node.name) });
@@ -1602,19 +1742,20 @@ export default function App() {
         if (result.status === "pending") pending++;
         else completed++;
       }
-      if (completed > 0) await refreshAfterMutation();
       const detail =
         pending > 0
           ? completed > 0
             ? `${completed} deleted, ${pending} awaiting approval`
             : `${pending} file(s) awaiting approval`
           : `${idsToDelete.length} file(s) moved to Recycle Bin`;
+      // Show success toast immediately — do not block on the slow refresh.
       upsertToast({
         id,
         status: pending > 0 && completed === 0 ? "pending" : "done",
         title: pending > 0 ? "Delete requested" : "Files soft-deleted",
         detail,
       });
+      if (completed > 0) void refreshAfterMutation();
     } catch (e) {
       upsertToast({ id, status: "failed", title: "Delete failed", detail: errDetail(e, "") });
     }
@@ -1675,8 +1816,12 @@ export default function App() {
   }, [recycleSelectIds]);
 
   const openBulkDeleteAllRecycleModal = useCallback(() => {
-    if (deletedNodes.length === 0) return;
-    setRecycleSelectIds(new Set(deletedNodes.map((n) => n.id)));
+    const fileNodes = deletedNodes.filter((n) => {
+      const itemTypeLc = (n.item_type || "").toLowerCase();
+      return n.kind === "file" || (itemTypeLc.includes("file") && !itemTypeLc.includes("folder"));
+    });
+    if (fileNodes.length === 0) return;
+    setRecycleSelectIds(new Set(fileNodes.map((n) => n.id)));
     setShowBulkDeleteRecycleModal(true);
   }, [deletedNodes]);
 
@@ -1700,12 +1845,16 @@ export default function App() {
     const id = Date.now();
     upsertToast({ id, status: "processing", title: "Permanently deleting selected items…", detail: "Please wait" });
     try {
-      const selected = deletedNodes.filter(n => recycleSelectIds.has(n.id));
+      const selected = deletedNodes.filter(n => {
+        if (!recycleSelectIds.has(n.id)) return false;
+        const itemTypeLc = (n.item_type || "").toLowerCase();
+        return n.kind === "file" || (itemTypeLc.includes("file") && !itemTypeLc.includes("folder"));
+      });
       // Execute sequentially to prevent SQLite write conflicts and SharePoint API throttling
       let completed = 0;
       let pending = 0;
       for (const n of selected) {
-        const result = await permanentDeleteItem(n.id, n.kind === "file" ? "file" : "folder", user?.email || undefined, {
+        const result = await permanentDeleteItem(n.id, "file", user?.email || undefined, {
           itemName: n.name,
           department: n.main_folder,
         });
@@ -1733,87 +1882,50 @@ export default function App() {
     setTimeout(() => dismissToast(id), 5000);
   }, [recycleSelectIds, deletedNodes, refreshAfterMutation, user]);
 
+  // Update URL when create vessel modal opens/closes
+  useEffect(() => {
+    if (showModal) {
+      window.history.pushState({ view: "createvessel" }, "", "/vessels/createvessel");
+    } else if (window.location.pathname === "/vessels/createvessel") {
+      window.history.back();
+    }
+  }, [showModal]);
+
   const handleCreate = async (data: import("./api").VesselInput) => {
     const toastId = Date.now() + Math.floor(Math.random() * 1000);
-    upsertToast({
-      id: toastId,
-      status: "processing",
-      title: "Creating vessel...",
-      detail: `Provisioning SharePoint folders for "${data.name}"`,
-    });
+    upsertToast({ id: toastId, status: "processing", title: "Creating vessel...", detail: `Provisioning SharePoint folders for "${data.name}"` });
     try {
       const result = await createVessel(data);
-
       if (result.status === "pending") {
-        setShowModal(false);
-        upsertToast({
-          id: toastId,
-          status: "pending",
-          title: "Awaiting approval",
-          detail: result.message || `Vessel "${data.name}" is awaiting approval`,
-        });
+        upsertToast({ id: toastId, status: "pending", title: "Awaiting approval", detail: result.message || `Vessel "${data.name}" is awaiting approval` });
         setTimeout(() => dismissToast(toastId), 6000);
+        setShowModal(false);
         return;
       }
-
-      // Close the modal immediately so the user isn't stuck
       setShowModal(false);
-
-      upsertToast({
-        id: toastId,
-        status: "done",
-        title: "Vessel created",
-        detail: `Successfully created vessel "${data.name}"`,
-      });
-
-      // Reload vessels, mains, stats, archive, deleted in parallel
+      upsertToast({ id: toastId, status: "done", title: "Vessel created", detail: `Successfully created vessel "${data.name}"` });
+      setTimeout(() => dismissToast(toastId), 5000);
       const [freshMains, freshVessels, freshStats, archIds, archNodes, delNodes] = await Promise.all([
-        getMains(),
-        listVessels(),
-        getStats(),
-        getArchivedIds(),
-        getArchivedNodes(),
-        getDeletedNodes(),
+        getMains(), listVessels(), getStats(), getArchivedIds(), getArchivedNodes(), getDeletedNodes(),
       ]);
-      setMains(freshMains);
-      setVessels(freshVessels);
-      setStats(freshStats);
-      setArchivedFolderIds(new Set(archIds));
-      setArchivedNodes(archNodes);
-      setDeletedNodes(delNodes);
-
-      // Now refresh current folder children
+      setMains(freshMains); setVessels(freshVessels); setStats(freshStats);
+      setArchivedFolderIds(new Set(archIds)); setArchivedNodes(archNodes); setDeletedNodes(delNodes);
       if (!currentId) {
-        setCurrent(null);
-        setChildren(freshMains);
+        setCurrent(null); setChildren(freshMains);
       } else {
         try {
-          const [node, kids] = await Promise.all([
-            getFolder(currentId),
-            getChildren(currentId),
-          ]);
-          setCurrent(node);
-          setChildren(kids);
-        } catch {
-          // ignore
-        }
+          const [node, kids] = await Promise.all([getFolder(currentId), getChildren(currentId)]);
+          setCurrent(node); setChildren(kids);
+        } catch {}
       }
-
       setView("explorer");
     } catch (e) {
-      upsertToast({
-        id: toastId,
-        status: "failed",
-        title: "Vessel creation failed",
-        detail: errDetail(e, `Could not create vessel "${data.name}"`),
-      });
-      // Re-throw so the modal's catch block can display the inline error
+      upsertToast({ id: toastId, status: "failed", title: "Vessel creation failed", detail: errDetail(e, `Could not create vessel "${data.name}"`) });
       throw e;
     }
-    setTimeout(() => dismissToast(toastId), 5000);
   };
 
-  const handleUpdateVessel = async (vesselId: string, data: Partial<import("./api").VesselInput>) => {
+    const handleUpdateVessel = async (vesselId: string, data: Partial<import("./api").VesselInput>) => {
     const toastId = Date.now() + Math.floor(Math.random() * 1000);
     upsertToast({
       id: toastId,
@@ -2147,7 +2259,7 @@ export default function App() {
         onAuthenticated={setUser}
         signedOut
         onSignBackIn={() => {
-          window.location.href = "/";
+          window.location.href = "/login";
         }}
       />
     );
@@ -2164,15 +2276,34 @@ export default function App() {
   }
 
   if (!user) {
+    if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+      sessionStorage.setItem("redirect_target", window.location.pathname + window.location.search);
+      window.history.replaceState(null, "", "/login");
+    }
     return (
       <LoginPage
         onAuthenticated={(u) => {
           setUser(u);
           setApiEmail(u.email);
+          const target = sessionStorage.getItem("redirect_target") || "/homepage/dashboard";
+          sessionStorage.removeItem("redirect_target");
+          window.history.replaceState(null, "", target);
+          if (target.startsWith("/vessels/updatevessel")) {
+            setView("listvessels");
+            setShowUpdateModal(true);
+          } else {
+            const parsed = mapPathnameToState(target, target.split("?")[1] || "");
+            setView(parsed.view as any);
+            setPath(parsed.path);
+          }
         }}
         authError={authError}
       />
     );
+  }
+
+  if (typeof window !== "undefined" && window.location.pathname === "/login") {
+    window.history.replaceState(null, "", "/homepage/dashboard");
   }
 
 
@@ -2185,7 +2316,7 @@ export default function App() {
         selectedMainId={path[0]?.id ?? null}
         userDisplayName={user.display_name}
         userPhotoBase64={profilePhoto}
-        onSelectMain={openMain}
+        onSelectMain={openMainFromSidebar}
         onDashboard={goDashboard}
         onVessels={goVessels}
         onSignOut={handleSignOut}
@@ -2287,7 +2418,7 @@ export default function App() {
             onSettings={goSettings}
             onPhotoUpdate={setProfilePhoto}
           />
-        ) : view === "vessels" ? (
+        ) : view === "listvessels" ? (
           <>
             <header className="dms-top-chrome border-b border-border dms-page-px py-5">
               <div className="flex items-center justify-between gap-3">
@@ -2303,6 +2434,7 @@ export default function App() {
                       if (!selectedVesselObj) return;
                       setVesselToUpdate(selectedVesselObj);
                       setShowUpdateModal(true);
+                      window.history.pushState({ view: "listvessels", path: [] }, "", "/vessels/updatevessel");
                     }}
                     disabled={!selectedVesselObj}
                     className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer"
@@ -2326,42 +2458,70 @@ export default function App() {
                   No vessels yet. Create one to provision its folder structure.
                 </div>
               ) : (
-                <div className="dms-card overflow-hidden rounded-2xl">
-                  <div className="border-b border-border px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted">
-                    Click any vessel row to open the main folder page.
-                  </div>
-                  <ul className="divide-y divide-border">
-                    {vessels.map((v) => {
-                      return (
-                        <li key={v.id} className="bg-transparent">
-                          <button
-                            onClick={() => {
-                              setSelectedVesselByPage((prev) => ({
-                                ...prev,
-                                [pageKey]: v.id,
-                              }));
-                              openVesselFromVesselsView(v);
-                            }}
-                            className="group flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition hover:bg-surface-hover cursor-pointer select-none focus:outline-none"
-                            title={`Open ${v.name}`}
-                          >
-                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
-                              <Ship className="h-5 w-5" />
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-base font-semibold text-fg">{v.name}</span>
-                              <span className="mt-0.5 block truncate text-xs text-muted">
-                                IMO {v.imo ?? "—"}
-                                {v.hull_number ? ` · Hull ${v.hull_number}` : ""}
-                                {v.shipyard ? ` · ${v.shipyard}` : ""}
+                <>
+                  <div className="dms-card overflow-hidden rounded-2xl">
+                    <div className="border-b border-border px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted">
+                      Click any vessel row to open the main folder page.
+                    </div>
+                    <ul className="divide-y divide-border">
+                      {vessels.slice(0, visibleListVesselsCount).map((v) => {
+                        return (
+                          <li key={v.id} className="bg-transparent">
+                            <button
+                              onClick={() => {
+                                setSelectedVesselByPage((prev) => ({
+                                  ...prev,
+                                  [pageKey]: v.id,
+                                }));
+                                openVesselFromVesselsView(v);
+                              }}
+                              className="group flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition hover:bg-surface-hover cursor-pointer select-none focus:outline-none"
+                              title={`Open ${v.name}`}
+                            >
+                              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
+                                <Ship className="h-5 w-5" />
                               </span>
-                            </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-base font-semibold text-fg">{v.name}</span>
+                                <span className="mt-0.5 block truncate text-xs text-muted">
+                                  IMO {v.imo ?? "—"}
+                                  {v.hull_number ? ` · Hull ${v.hull_number}` : ""}
+                                  {v.shipyard ? ` · ${v.shipyard}` : ""}
+                                </span>
+                              </span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+
+                  {vessels.length > 4 && (
+                    <div className="mt-4 flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2">
+                      <p className="text-xs text-muted">
+                        Showing {Math.min(visibleListVesselsCount, vessels.length)} of {vessels.length} vessels
+                      </p>
+                      <div className="flex items-center gap-2">
+                        {visibleListVesselsCount < vessels.length && (
+                          <button
+                            onClick={() => setVisibleListVesselsCount(Infinity)}
+                            className="rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                          >
+                            More vessels
                           </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
+                        )}
+                        {visibleListVesselsCount > 4 && (
+                          <button
+                            onClick={() => setVisibleListVesselsCount(4)}
+                            className="rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                          >
+                            Show less
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </>
@@ -2915,11 +3075,11 @@ export default function App() {
           })()
         ) : (
           <>
-            <div className="dms-top-chrome border-b border-border dms-page-px py-3">
+            <div className="dms-top-chrome border-b border-border dms-page-px py-1.5">
               <Breadcrumb crumbs={crumbs} onNavigate={crumbTo} />
             </div>
 
-            <header className="dms-page-header dms-top-chrome flex items-center justify-between gap-4 border-b border-border dms-page-px py-4">
+            <header className="dms-page-header dms-top-chrome flex items-center justify-between gap-4 border-b border-border dms-page-px py-2.5">
               <div className="min-w-0">
                 <h2 className="flex items-center gap-2 truncate text-xl font-semibold text-fg">
                   {current ? (
@@ -3020,9 +3180,13 @@ export default function App() {
               </div>
             </header>
 
-            <div className="dms-page-bg flex-1 overflow-y-auto dms-page-px dms-page-py">
+            <div className={`dms-page-bg flex-1 dms-page-px pb-8 ${
+              (view === "explorer" && shipViewMode === "list")
+                ? "flex flex-col overflow-hidden pt-4"
+                : "overflow-auto pt-6"
+            }`}>
               {showListModeToggle && shipViewMode === "list" ? (
-                <div className="mx-auto max-w-6xl">
+                <div className="w-full flex-1 flex flex-col min-h-0">
                   {isShipRoot ? (
                     <VesselListView
                       vesselId={current!.id}
@@ -3091,7 +3255,11 @@ export default function App() {
       {showUpdateModal && (
         <UpdateVesselModal
           vessel={vesselToUpdate}
-          onClose={() => { setShowUpdateModal(false); setVesselToUpdate(null); }}
+          onClose={() => {
+            setShowUpdateModal(false);
+            setVesselToUpdate(null);
+            window.history.pushState({ view: "listvessels", path: [] }, "", "/homepage?view=listvessels");
+          }}
           onUpdate={handleUpdateVessel}
           vessels={vessels}
         />
@@ -3483,7 +3651,24 @@ export default function App() {
               </div>
             </div>
             <div className="mb-6 rounded-xl border border-rose-100 bg-rose-50/30 p-4 text-xs text-slate-600 leading-relaxed">
-              You are about to permanently delete <strong className="text-rose-700">{recycleSelectIds.size} selected item(s)</strong> using SharePoint Embedded Permanent Delete API. They will be removed forever and cannot be restored from the Recycle Bin.
+              {(() => {
+                const fileCount = deletedNodes.filter(n => {
+                  if (!recycleSelectIds.has(n.id)) return false;
+                  const t = (n.item_type || "").toLowerCase();
+                  return n.kind === "file" || (t.includes("file") && !t.includes("folder"));
+                }).length;
+                const folderCount = recycleSelectIds.size - fileCount;
+                return (
+                  <>
+                    You are about to permanently delete <strong className="text-rose-700">{fileCount} file(s)</strong> using SharePoint Embedded Permanent Delete API. They will be removed forever and cannot be restored from the Recycle Bin.
+                    {folderCount > 0 && (
+                      <span className="mt-1.5 block text-amber-700 font-medium">
+                        {folderCount} folder(s) in your selection will be skipped — only files can be permanently deleted.
+                      </span>
+                    )}
+                  </>
+                );
+              })()}
             </div>
             <div className="flex gap-3">
               <button onClick={() => setShowBulkDeleteRecycleModal(false)}

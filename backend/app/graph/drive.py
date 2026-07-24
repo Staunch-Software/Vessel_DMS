@@ -4,6 +4,8 @@ A container exposes a `drive`; folders and files are `driveItem`s addressed by i
 All folder creation is idempotent (`ensure_folder`) so provisioning and the
 month-folder scheduler can run repeatedly without creating duplicates.
 """
+import asyncio
+import random
 from urllib.parse import quote
 
 import httpx
@@ -46,11 +48,87 @@ async def find_child(drive_id: str, parent_id: str, name: str) -> dict | None:
     return None
 
 
+_BATCH_SIZE = 20  # Graph JSON $batch limit per request
+
+
+async def batch_create_folders(
+    drive_id: str,
+    items: list[tuple[str, str]],  # [(parent_id, folder_name), ...]
+) -> dict[tuple[str, str], dict]:
+    """Create many folders using Graph JSON $batch with throttle-aware retry.
+
+    Handles both HTTP-level 429 (via GraphClient.request) and per-response
+    429 inside the batch JSON body (raaSContainerRU throttling).
+
+    Returns {(parent_id, folder_name): driveItem_dict}.
+    """
+    result: dict[tuple[str, str], dict] = {}
+    if not items:
+        return result
+
+    for offset in range(0, len(items), _BATCH_SIZE):
+        chunk = items[offset : offset + _BATCH_SIZE]
+
+        batch_requests = [
+            {
+                "id": str(i),
+                "method": "POST",
+                "url": f"/drives/{drive_id}/items/{pid}/children",
+                "headers": {"Content-Type": "application/json"},
+                "body": {
+                    "name": name,
+                    "folder": {},
+                    "@microsoft.graph.conflictBehavior": "fail",
+                },
+            }
+            for i, (pid, name) in enumerate(chunk)
+        ]
+
+        # Retry the whole batch chunk on per-response 429 (raaSContainerRU)
+        for attempt in range(6):
+            resp = await graph().post("/$batch", json={"requests": batch_requests})
+            by_id = {r["id"]: r for r in resp.get("responses", [])}
+
+            throttled_ids = [
+                r_id for r_id, r in by_id.items() if r.get("status") == 429
+            ]
+            if throttled_ids and attempt < 5:
+                # Back off and retry the entire chunk
+                delay = min(2 ** attempt * 2, 60) + random.random()
+                await asyncio.sleep(delay)
+                continue
+            break
+
+        conflict_items: list[tuple[str, str]] = []
+        for i, (pid, name) in enumerate(chunk):
+            r = by_id.get(str(i), {})
+            status = r.get("status", 0)
+            body = r.get("body", {})
+            if status in (200, 201):
+                result[(pid, name)] = body
+            elif status == 409:
+                conflict_items.append((pid, name))
+            elif status == 429:
+                raise GraphError(429, str(body))
+            else:
+                raise GraphError(status, str(body))
+
+        # Resolve already-existing folders individually (rare during provisioning)
+        if conflict_items:
+            fetched = await asyncio.gather(
+                *(ensure_folder(drive_id, pid, name) for pid, name in conflict_items)
+            )
+            for (pid, name), item in zip(conflict_items, fetched):
+                result[(pid, name)] = item
+
+    return result
+
+
 async def ensure_folder(drive_id: str, parent_id: str, name: str) -> dict:
     """Return the child folder named `name` under `parent_id`, creating it if absent.
 
     Create-first: one API call when the folder is new (the common case during
-    provisioning); only falls back to a lookup if it already exists (409)."""
+    provisioning); only falls back to a direct item lookup if it already exists (409)."""
     try:
         return await graph().post(
             f"/drives/{drive_id}/items/{parent_id}/children",
@@ -62,6 +140,16 @@ async def ensure_folder(drive_id: str, parent_id: str, name: str) -> dict:
         )
     except GraphError as e:
         if e.status == 409:
+            # Folder already exists — fetch it directly by path instead of
+            # listing all children (much faster for large directories).
+            encoded = quote(name, safe="")
+            try:
+                return await graph().get(
+                    f"/drives/{drive_id}/items/{parent_id}:/{encoded}"
+                )
+            except GraphError:
+                pass
+            # Last resort: scan children
             existing = await find_child(drive_id, parent_id, name)
             if existing and "folder" in existing:
                 return existing

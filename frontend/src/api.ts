@@ -34,6 +34,7 @@ export interface Vessel {
   shipyard?: string | null;
   hull_number?: string | null;
   vessel_type?: string | null;
+  created_at?: string | null;
 }
 
 export interface VesselInput {
@@ -62,7 +63,7 @@ export interface Job {
   detected_month: string | null;
 }
 
-const api = axios.create({ baseURL: "/api" });
+const api = axios.create({ baseURL: "/api", timeout: 300000 }); // 5 min — vessel creation provisions ~100 folders
 
 // ── Restore session from sessionStorage on module load ───────────────────────
 // MSAL's redirect flow causes a full page reload, so the in-memory axios
@@ -377,7 +378,7 @@ export async function listApprovals(
   status?: ApprovalStatus | "all",
   q?: string
 ): Promise<ApprovalRequest[]> {
-  const params: Record<string, string> = { admin_email: adminEmail };
+  const params: Record<string, string> = { admin: adminEmail };
   if (status && status !== "all") params.status = status;
   if (q) params.q = q;
   return (await api.get("/approvals", { params })).data;
@@ -393,7 +394,7 @@ export async function listMyApprovals(
 
 
 export async function approveRequest(adminEmail: string, requestId: string): Promise<void> {
-  await api.post(`/approvals/${requestId}/approve`, null, { params: { admin_email: adminEmail } });
+  await api.post(`/approvals/${requestId}/approve`, null, { params: { admin: adminEmail } });
 }
 
 export async function rejectRequest(
@@ -401,7 +402,7 @@ export async function rejectRequest(
   requestId: string,
   reason: string
 ): Promise<void> {
-  await api.post(`/approvals/${requestId}/reject`, { reason }, { params: { admin_email: adminEmail } });
+  await api.post(`/approvals/${requestId}/reject`, { reason }, { params: { admin: adminEmail } });
 }
 
 export function approvalPreviewUrl(requestId: string, adminEmail: string): string {

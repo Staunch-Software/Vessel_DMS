@@ -1,0 +1,9 @@
+Simulating app startup...
+Running _startup...
+2026-07-24 01:46:26  INFO      alembic.runtime.plugins  setup plugin alembic.autogenerate.schemas
+2026-07-24 01:46:26  INFO      alembic.runtime.plugins  setup plugin alembic.autogenerate.tables
+2026-07-24 01:46:26  INFO      alembic.runtime.plugins  setup plugin alembic.autogenerate.types
+2026-07-24 01:46:26  INFO      alembic.runtime.plugins  setup plugin alembic.autogenerate.constraints
+2026-07-24 01:46:26  INFO      alembic.runtime.plugins  setup plugin alembic.autogenerate.defaults
+2026-07-24 01:46:26  INFO      alembic.runtime.plugins  setup plugin alembic.autogenerate.comments
+_startup finished successfully!

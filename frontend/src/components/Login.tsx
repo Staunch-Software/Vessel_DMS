@@ -8,14 +8,10 @@ import {
     ShieldCheck,
     Anchor,
     LogIn,
-    Ship,
-    Compass,
-    Award,
     Clock,
     AlertTriangle,
 } from "lucide-react";
 
-const NISSEN_LOGO = "/nissen-logo.svg";
 const SHIP_HERO_IMAGE = "/ship.jpg";
 
 /** localStorage flag marking that this browser has completed a successful
@@ -46,111 +42,7 @@ interface LoginPageProps {
 /*  Shared chrome (header + background)                                         */
 /* ─────────────────────────────────────────────────────────────────────────── */
 
-function PageShell({ children }: { children: React.ReactNode }) {
-    return (
-        <div className="dms-app-bg min-h-screen w-full relative bg-bg text-fg">
-            {/* Ambient gradient wash — tinted with the active theme's primary/accent */}
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,color-mix(in_oklab,var(--dms-primary)_15%,transparent),transparent_55%),radial-gradient(ellipse_at_bottom_right,color-mix(in_oklab,var(--dms-accent)_12%,transparent),transparent_50%)]" />
 
-            {/* Nautical chart lines */}
-            <svg
-                className="pointer-events-none absolute inset-0 w-full h-full opacity-[0.25]"
-                preserveAspectRatio="none"
-                viewBox="0 0 1600 900"
-            >
-                <path
-                    d="M -50 620 C 250 560, 480 700, 760 610 S 1250 480, 1650 560"
-                    fill="none"
-                    className="stroke-primary"
-                    strokeWidth="1"
-                    strokeDasharray="2 10"
-                    opacity="0.5"
-                />
-                <path
-                    d="M -50 300 C 300 260, 520 380, 820 320 S 1300 200, 1650 260"
-                    fill="none"
-                    className="stroke-accent"
-                    strokeWidth="1"
-                    strokeDasharray="1 8"
-                    opacity="0.35"
-                />
-                {[
-                    [180, 300], [820, 320], [1300, 200], [480, 700], [1250, 480],
-                ].map(([cx, cy], i) => (
-                    <circle key={i} cx={cx} cy={cy} r="3" className="fill-primary" opacity="0.4" />
-                ))}
-            </svg>
-
-            {/* Top bar */}
-            <header className="sticky top-0 z-20 backdrop-blur-sm flex items-center justify-between px-4 md:px-14 py-4 border-b border-border bg-topnav-bg/90">
-                <div className="flex items-center gap-3">
-                    <img
-                        src={NISSEN_LOGO}
-                        alt="Nissen Kaiun logo"
-                        className="h-12 w-auto drop-shadow-md"
-                    />
-                    <div>
-                        <div className="text-fg font-bold tracking-[0.22em] text-sm">
-                            NISSEN DMS
-                        </div>
-                        <div className="text-primary text-[10px] tracking-[0.2em] font-medium">
-                            ENTERPRISE EDITION · DOCUMENT MANAGEMENT
-                        </div>
-                    </div>
-                </div>
-
-                <div className="hidden sm:flex items-center gap-2 text-[11px] tracking-[0.15em] text-muted font-medium">
-                    <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-60" />
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
-                    </span>
-                    SYSTEM ONLINE&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;NISSEN DMS
-                </div>
-            </header>
-
-            {children}
-        </div>
-    );
-}
-
-/* ─────────────────────────────────────────────────────────────────────────── */
-/*  Shared sub-components                                                       */
-/* ─────────────────────────────────────────────────────────────────────────── */
-
-function FeatureCard({
-    icon,
-    title,
-    copy,
-}: {
-    icon: React.ReactNode;
-    title: string;
-    copy: string;
-}) {
-    return (
-        <div className="dms-card dms-card-hover rounded-xl px-4 py-4 transition">
-            <div className="w-8 h-8 rounded-md bg-primary/20 text-primary flex items-center justify-center mb-3">
-                {icon}
-            </div>
-            <div className="text-sm font-semibold text-primary mb-1">{title}</div>
-            <div className="text-xs text-fg/75 leading-relaxed">{copy}</div>
-        </div>
-    );
-}
-
-function CardFooter() {
-    return (
-        <>
-            <div className="flex items-center justify-center gap-1.5 mt-6 text-[10px] tracking-[0.1em] text-fg/70">
-                <ShieldCheck className="w-3.5 h-3.5 text-primary" />
-                256-BIT TLS ENCRYPTED CONNECTION
-            </div>
-
-            <div className="text-center mt-3 text-[10px] tracking-[0.1em] text-fg/60">
-                SECURED · SHAREPOINT EMBEDDED · © 2026 NISSEN DMS
-            </div>
-        </>
-    );
-}
 
 function MicrosoftIcon() {
     return (
@@ -213,59 +105,97 @@ function SessionExpiredView({
 }) {
     const isInactivity = reason === "inactivity";
     return (
-        <PageShell>
-            <main className="relative z-10 px-4 md:px-14 py-8 md:py-14 flex flex-col lg:flex-row gap-8 lg:gap-12 items-start justify-between">
-                {/* Left column */}
-                <div className="w-full lg:max-w-[calc(100%-30rem)] lg:pr-8 mb-12 lg:mb-0">
-                    <div className="flex items-center gap-2 text-primary text-[11px] tracking-[0.2em] font-semibold mb-6">
-                        <span className="w-6 h-px bg-primary inline-block" />
-                        NISSEN KAIUN SINGAPORE FLEET
-                    </div>
+        <div className="min-h-screen w-full relative overflow-hidden flex flex-col text-white">
+            {/* Hero photo background */}
+            <div className="absolute inset-0 -z-20 overflow-hidden">
+                <img
+                    src={SHIP_HERO_IMAGE}
+                    alt=""
+                    className="w-full h-full object-cover animate-ken-burns"
+                />
+                <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/45 to-black/60" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-black/40" />
+                <div className="dms-auth-grain absolute inset-0 opacity-40 mix-blend-overlay" />
+                {/* Diagonal sheen sweep */}
+                <div className="absolute inset-0 overflow-hidden">
+                    <div className="absolute -inset-y-1/2 w-1/3 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-sheen" />
+                </div>
+            </div>
 
-                    <h1 className="font-serif text-3xl sm:text-5xl md:text-[3.75rem] leading-[1.05] text-fg mb-6 font-semibold">
-                        Premium global shipping,
+            <BokehField />
+
+            {/* Top status bar */}
+            <header className="relative z-10 flex items-center justify-end px-6 md:px-12 py-6">
+                <div className="hidden sm:flex items-center gap-2 text-[10px] tracking-[0.15em] text-white/70 font-medium">
+                    <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+                    </span>
+                    SYSTEM ONLINE
+                </div>
+            </header>
+
+            {/* Main content — same layout as login, session expired card content */}
+            <main className="relative z-10 flex-1 w-full max-w-[1480px] mx-auto flex flex-col lg:flex-row items-center lg:justify-center gap-8 lg:gap-20 xl:gap-28 px-6 md:px-12 lg:px-16 pb-10">
+                {/* Headline */}
+                <div className="max-w-xl text-center lg:text-left">
+                    <div className="inline-flex items-center gap-2 text-[11px] tracking-[0.25em] font-semibold text-white/75 mb-6 drop-shadow-md">
+                        <span className="w-6 h-px bg-white/50 inline-block" />
+                        VESSEL DOCUMENT MANAGEMENT SYSTEM
+                    </div>
+                    <h1 className="font-serif text-4xl sm:text-5xl lg:text-6xl xl:text-[3.85rem] leading-[1.12] font-semibold mb-8 drop-shadow-[0_4px_18px_rgba(0,0,0,0.55)]">
+                        Every <span className="italic text-accent">document</span>,
                         <br />
-                        <span className="italic bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">managed locally.</span>
+                        every vessel, in one place.
                     </h1>
-
-                    <p className="text-fg/85 text-base md:text-lg leading-relaxed max-w-xl mb-10">
-                        Nissen Kaiun Singapore oversees the{" "}
-                        <strong className="font-semibold text-fg">technical management</strong>,{" "}
-                        <strong className="font-semibold text-fg">crewing</strong>, and{" "}
-                        <strong className="font-semibold text-fg">compliance</strong> of a high-specification global fleet operating state-of-the-art bulkers, eco-friendly container ships, and advanced product tankers.
+                    <p className="text-base xl:text-lg leading-relaxed text-white/85 mb-8 drop-shadow-md max-w-lg mx-auto lg:mx-0">
+                        Centralize documents, survey reports, and compliance records across the fleet — with automatic renewal alerts and a full audit trail for every document, on every hull.
                     </p>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 max-w-xl mb-10">
-                        <FeatureCard icon={<Ship className="w-4 h-4" />} title="Modern Fleet" copy="Over 100 high-spec bulkers, tankers, and boxships." />
-                        <FeatureCard icon={<Compass className="w-4 h-4" />} title="Global Routing" copy="Reliable sea transport routes across all major oceans." />
-                        <FeatureCard icon={<Award className="w-4 h-4" />} title="Class Certified" copy="Classified under top maritime boards for safety." />
-                    </div>
+                    <div className="h-px w-16 bg-gradient-to-r from-accent to-transparent mb-5 mx-auto lg:mx-0" />
+                    <p className="text-[11px] tracking-[0.15em] text-white/60 uppercase drop-shadow-md">
+                        Trusted for fleet-wide maritime compliance
+                    </p>
                 </div>
 
-                {/* Right column — expired card */}
-                <div className="relative lg:fixed z-10 w-full max-w-md lg:w-[26rem] top-auto right-auto lg:top-[7.5rem] lg:right-[3.5rem] self-center lg:self-auto">
-                    <Anchor className="absolute -top-6 -right-6 w-28 h-28 text-primary/10 -z-10" strokeWidth={1} />
+                {/* Session expired card */}
+                <div className="w-full max-w-lg">
+                    {/* Brand mark — above the card, first thing seen in this column */}
+                    <div className="flex items-center justify-center gap-3 mb-10 md:mb-12">
+                        <div className="w-12 h-12 shrink-0 rounded-2xl bg-gradient-to-br from-accent/30 to-primary/20 border border-accent/30 flex items-center justify-center shadow-lg shadow-black/25 backdrop-blur-sm">
+                            <Anchor className="w-6 h-6 text-accent" strokeWidth={1.75} />
+                        </div>
+                        <div className="text-left">
+                            <div className="text-white font-bold tracking-[0.22em] text-sm drop-shadow-md">
+                                NISSEN KAIUN
+                            </div>
+                            <div className="text-[9px] tracking-[0.2em] font-medium text-white/70 drop-shadow-md">
+                                ENTERPRISE EDITION · DOCUMENT MANAGEMENT
+                            </div>
+                        </div>
+                    </div>
 
-                    <div className="dms-card rounded-2xl p-8 md:p-9">
+                    <div className="dms-auth-card animate-card-float rounded-[34px] p-9 md:p-11">
                         {/* Icon badge */}
-                        <div className="w-14 h-14 rounded-full bg-warning/10 border border-warning/20 flex items-center justify-center mb-5">
-                            {isInactivity
-                                ? <Clock className="w-7 h-7 text-warning" />
-                                : <AlertTriangle className="w-7 h-7 text-warning" />}
+                        <div className="w-14 h-14 rounded-full bg-yellow-400/10 border border-yellow-400/20 flex items-center justify-center mb-5 mx-auto">
+                            {isInactivity ? (
+                                <Clock className="w-7 h-7 text-yellow-300" />
+                            ) : (
+                                <AlertTriangle className="w-7 h-7 text-yellow-300" />
+                            )}
                         </div>
 
-                        <h2 className="font-serif text-3xl text-fg mb-2 font-semibold">
+                        <h2 className="text-2xl font-semibold text-white mb-1.5 text-center">
                             {isInactivity ? "Session Timed Out" : "Session Expired"}
                         </h2>
-                        <p className="text-[11px] tracking-[0.12em] text-muted font-medium mb-7">
+                        <p className="text-sm text-white/65 mb-6 text-center tracking-wide uppercase">
                             {isInactivity
                                 ? "INACTIVE FOR 8 HOURS — SESSION CLOSED"
                                 : "24-HOUR SESSION LIMIT REACHED"}
                         </p>
 
-                        <div className="space-y-4">
-                            <div className="bg-warning-bg border border-warning/20 rounded-xl px-4 py-3.5">
-                                <p className="text-sm text-warning leading-relaxed">
+                        <div className="space-y-6">
+                            <div className="rounded-xl border border-yellow-400/30 bg-yellow-400/10 px-4 py-3.5">
+                                <p className="text-sm text-yellow-200 leading-relaxed text-center font-normal">
                                     {isInactivity
                                         ? "Your session was automatically closed after 8 hours of inactivity to protect your documents."
                                         : "Your session reached the 24-hour security limit. Please sign in again to continue."}
@@ -274,18 +204,25 @@ function SessionExpiredView({
 
                             <button
                                 onClick={onSignBackIn}
-                                className="w-full py-3.5 rounded-lg bg-primary hover:bg-primary-hover text-primary-fg text-sm font-semibold flex items-center justify-center gap-2 shadow-md hover:shadow-lg active:scale-[0.99] transition cursor-pointer"
+                                className="dms-btn-primary w-full flex items-center justify-center gap-2 px-5 py-3.5 active:scale-[0.99] transition cursor-pointer"
                             >
                                 <LogIn className="w-4 h-4 text-primary-fg" />
-                                Sign In Again
+                                <span className="text-sm font-semibold text-primary-fg">Sign In Again</span>
                             </button>
                         </div>
 
-                        <CardFooter />
+                        <div className="flex items-center justify-center gap-1.5 mt-7 text-[10px] tracking-[0.1em] text-white/50">
+                            <ShieldCheck className="w-3.5 h-3.5 text-accent" />
+                            256-BIT TLS ENCRYPTED CONNECTION
+                        </div>
                     </div>
                 </div>
             </main>
-        </PageShell>
+
+            <p className="relative z-10 text-center pb-6 text-[10px] tracking-[0.15em] text-white/55 drop-shadow-md">
+                SECURED · SHAREPOINT EMBEDDED · © 2026 NISSEN KAIUN
+            </p>
+        </div>
     );
 }
 

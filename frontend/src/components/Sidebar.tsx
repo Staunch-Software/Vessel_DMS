@@ -5,7 +5,7 @@ import { MAIN_ACCENTS } from "./nodeStyle";
 
 interface Props {
   mains: FolderNode[];
-  view: "dashboard" | "explorer" | "vessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance";
+  view: "dashboard" | "explorer" | "listvessels" | "profile" | "archive" | "recycle_bin" | "approvals" | "settings" | "appearance";
   selectedMainId: string | null;
   userDisplayName?: string;
   userPhotoBase64?: string | null;
@@ -180,7 +180,7 @@ export function Sidebar({
             title={collapsed ? "Vessels" : undefined}
             className={
               `flex w-full items-center ${collapsed ? "justify-center px-2" : "gap-2 px-3"} rounded-lg py-1.5 text-sm font-medium transition cursor-pointer ` +
-              (view === "vessels"
+              (view === "listvessels"
                 ? "bg-sidebar-active font-semibold text-sidebar-fg"
                 : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-fg")
             }
