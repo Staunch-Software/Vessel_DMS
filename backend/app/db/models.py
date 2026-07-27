@@ -49,7 +49,62 @@ class Folder(Base):
     )
     vessel: Mapped["Vessel | None"] = relationship(back_populates="folders")
 
+    # Only set on kind="ship" rows that belong to a pre-provisioned pool
+    # slot (see PoolSlot below). NULL for every normal, already-linked
+    # vessel folder. Kept after claiming as a historical marker that this
+    # folder originated from the pool, not a from-scratch provision.
+    pool_slot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pool_slots.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PoolSlot(Base):
+    """One pre-provisioned vessel folder tree, not yet assigned to a real
+    vessel. A slot's ship-level Folder rows (one per non-flat main folder)
+    all share this row's id via Folder.pool_slot_id.
+
+    Claiming a slot is a single-row lock (SELECT...FOR UPDATE SKIP LOCKED
+    on THIS table) rather than locking the Folder rows directly, so two
+    concurrent claims can never end up with overlapping subsets of the same
+    slot's folders.
+    """
+    __tablename__ = "pool_slots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Unique placeholder name used for the ship folders until claimed, e.g.
+    # "Pool-3f9a2b1c". Never a fixed numbered scheme (Reserved-01..10) —
+    # fixed names collide across concurrent replenishments.
+    slug: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # building -> available -> claimed. "building" means the background
+    # provisioning task hasn't finished yet (used by the reconciliation
+    # job to detect a crashed/stuck build).
+    status: Mapped[str] = mapped_column(String(20), default="building", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ReplenishJob(Base):
+    """Tracks a background pool-replenishment task so a process restart
+    mid-build can be detected and resumed by the scheduler's reconciliation
+    check, instead of silently leaving an incomplete pool slot forever."""
+    __tablename__ = "replenish_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    triggering_slot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pool_slots.id", ondelete="SET NULL"), nullable=True
+    )
+    new_slot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pool_slots.id", ondelete="SET NULL"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)  # pending/done/failed
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
 
 
 class UploadJob(Base):
@@ -131,7 +186,7 @@ class ArchivedItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     item_id: Mapped[str] = mapped_column(String(256), unique=True, index=True)
     item_type: Mapped[str] = mapped_column(String(20))  # "folder" or "file"
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class ApprovalRequest(Base):

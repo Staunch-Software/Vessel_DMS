@@ -5,7 +5,6 @@ All folder creation is idempotent (`ensure_folder`) so provisioning and the
 month-folder scheduler can run repeatedly without creating duplicates.
 """
 import asyncio
-import random
 from urllib.parse import quote
 
 import httpx
@@ -55,10 +54,11 @@ async def batch_create_folders(
     drive_id: str,
     items: list[tuple[str, str]],  # [(parent_id, folder_name), ...]
 ) -> dict[tuple[str, str], dict]:
-    """Create many folders using Graph JSON $batch with throttle-aware retry.
+    """Create many folders in parallel using Graph JSON $batch.
 
-    Handles both HTTP-level 429 (via GraphClient.request) and per-response
-    429 inside the batch JSON body (raaSContainerRU throttling).
+    Sends up to _BATCH_SIZE create-folder requests per HTTP call instead of
+    one HTTP round-trip per folder.  Handles 409 (already exists) by falling
+    back to individual fetches for those items.
 
     Returns {(parent_id, folder_name): driveItem_dict}.
     """
@@ -84,22 +84,11 @@ async def batch_create_folders(
             for i, (pid, name) in enumerate(chunk)
         ]
 
-        # Retry the whole batch chunk on per-response 429 (raaSContainerRU)
-        for attempt in range(6):
-            resp = await graph().post("/$batch", json={"requests": batch_requests})
-            by_id = {r["id"]: r for r in resp.get("responses", [])}
-
-            throttled_ids = [
-                r_id for r_id, r in by_id.items() if r.get("status") == 429
-            ]
-            if throttled_ids and attempt < 5:
-                # Back off and retry the entire chunk
-                delay = min(2 ** attempt * 2, 60) + random.random()
-                await asyncio.sleep(delay)
-                continue
-            break
+        resp = await graph().post("/$batch", json={"requests": batch_requests})
+        by_id = {r["id"]: r for r in resp.get("responses", [])}
 
         conflict_items: list[tuple[str, str]] = []
+        throttled_items: list[tuple[str, str]] = []
         for i, (pid, name) in enumerate(chunk):
             r = by_id.get(str(i), {})
             status = r.get("status", 0)
@@ -109,9 +98,23 @@ async def batch_create_folders(
             elif status == 409:
                 conflict_items.append((pid, name))
             elif status == 429:
-                raise GraphError(429, str(body))
+                throttled_items.append((pid, name))
             else:
                 raise GraphError(status, str(body))
+
+        # Retry throttled items individually with back-off
+        if throttled_items:
+            for pid, name in throttled_items:
+                for attempt in range(6):
+                    try:
+                        item = await ensure_folder(drive_id, pid, name)
+                        result[(pid, name)] = item
+                        break
+                    except GraphError as e:
+                        if e.status == 429 and attempt < 5:
+                            await asyncio.sleep(min(2 ** (attempt + 1), 60) + __import__('random').random())
+                        else:
+                            raise
 
         # Resolve already-existing folders individually (rare during provisioning)
         if conflict_items:

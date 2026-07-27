@@ -185,11 +185,11 @@ function SessionExpiredView({
                         </div>
 
                         <h2 className="text-2xl font-semibold text-white mb-1.5 text-center">
-                            {isInactivity ? "Session Timed Out" : "Session Expired"}
+                            {isInactivity ? "Token Expired" : "Session Expired"}
                         </h2>
                         <p className="text-sm text-white/65 mb-6 text-center tracking-wide uppercase">
                             {isInactivity
-                                ? "INACTIVE FOR 8 HOURS — SESSION CLOSED"
+                                ? "INACTIVE FOR 8 HOURS — TOKEN EXPIRED"
                                 : "24-HOUR SESSION LIMIT REACHED"}
                         </p>
 
@@ -197,7 +197,7 @@ function SessionExpiredView({
                             <div className="rounded-xl border border-yellow-400/30 bg-yellow-400/10 px-4 py-3.5">
                                 <p className="text-sm text-yellow-200 leading-relaxed text-center font-normal">
                                     {isInactivity
-                                        ? "Your session was automatically closed after 8 hours of inactivity to protect your documents."
+                                        ? "Your session token expired after 8 hours of inactivity to protect your documents."
                                         : "Your session reached the 24-hour security limit. Please sign in again to continue."}
                                 </p>
                             </div>

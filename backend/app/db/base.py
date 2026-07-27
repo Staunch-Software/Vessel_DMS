@@ -19,18 +19,23 @@ engine = (
     else None
 )
 
-SessionLocal = (
+_session_factory = (
     sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     if engine is not None
     else None
 )
 
 
-def get_db() -> Iterator[Session]:
-    if SessionLocal is None:
+def SessionLocal() -> Session:
+    if _session_factory is None:
         raise RuntimeError("Database not configured (DATABASE_URL is empty).")
+    return _session_factory()
+
+
+def get_db() -> Iterator[Session]:
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+

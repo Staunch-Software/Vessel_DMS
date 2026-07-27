@@ -125,7 +125,7 @@ export async function listVessels(): Promise<Vessel[]> {
  * "pending" means a pending approval was created instead — nothing has
  * happened to the underlying data yet. */
 export type ActionResult<T = Record<string, never>> =
-  | (T & { status: "completed"; message?: string })
+  | (T & { status: "completed"; message?: string; archived_at?: string })
   | { status: "pending"; message?: string; approval_id?: string; action_type?: string };
 
 export async function createVessel(

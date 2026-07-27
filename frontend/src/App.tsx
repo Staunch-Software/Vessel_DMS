@@ -475,6 +475,17 @@ export default function App() {
     setStats(s);
     setArchivedFolderIds(new Set(archIds));
     setArchivedNodes(archNodes);
+    // Debug: log archived ids vs nodes to diagnose missing archived_at values
+    try {
+      // eslint-disable-next-line no-console
+      console.debug("ARCHIVE_DEBUG", {
+        ids_count: archIds?.length ?? 0,
+        sample_ids: (archIds || []).slice(0, 20),
+        nodes_count: archNodes?.length ?? 0,
+        sample_nodes: (archNodes || []).slice(0, 20),
+        nodes_missing_archived_at: (archNodes || []).filter((n: any) => !n.archived_at).slice(0, 20),
+      });
+    } catch {}
     setDeletedNodes(delNodes);
   }, []);
 
@@ -922,7 +933,13 @@ export default function App() {
           "You will now be signed out."
         );
       }
-      expireSessionRef.current("inactivity");
+      if (reason === "token_expiry" || reason === "inactivity") {
+        expireSessionRef.current(reason);
+      } else if (reason === "expired") {
+        expireSessionRef.current("token_expiry");
+      } else {
+        expireSessionRef.current("inactivity");
+      }
     };
 
     window.addEventListener("session:unauthorized", handleApiError as EventListener);
@@ -1580,7 +1597,7 @@ export default function App() {
   const handleBulkFolderArchive = useCallback(async (reason?: string) => {
     if (archiveSelectIds.size === 0) return;
     const nodesToArchive = children.filter((c) => archiveSelectIds.has(c.id));
-    const completedNodes: FolderNode[] = [];
+    const completedNodes: { node: FolderNode; archived_at: string }[] = [];
     let pendingCount = 0;
 
     try {
@@ -1594,17 +1611,34 @@ export default function App() {
       );
       results.forEach((r, i) => {
         if (r.status === "pending") pendingCount++;
-        else completedNodes.push(nodesToArchive[i]);
+        else {
+          const archivedAt = (r as { archived_at?: string }).archived_at ?? new Date().toISOString();
+          completedNodes.push({ node: nodesToArchive[i], archived_at: archivedAt });
+        }
       });
     } catch (e) {
       console.error("Failed to archive items in DB:", e);
     }
 
     if (completedNodes.length > 0) {
+      // Optimistically update archivedNodes with correct timestamps
+      setArchivedNodes((prev) => {
+        const newNodes: FolderNode[] = [];
+        for (const { node, archived_at } of completedNodes) {
+          if (!prev.some((n) => n.id === node.id)) {
+            newNodes.push({ ...node, archived_at });
+          }
+        }
+        const updated = prev.map((n) => {
+          const match = completedNodes.find((c) => c.node.id === n.id);
+          return match ? { ...n, archived_at: match.archived_at } : n;
+        });
+        return [...newNodes, ...updated];
+      });
       await refreshAfterMutation();
       navigateTo("archive", []);
       if (user?.email) {
-        completedNodes.forEach((n) =>
+        completedNodes.forEach(({ node: n }) =>
           logActivity(user.email, n.kind === "file" ? "archive_file" : "archive_folder", `Archived ${n.kind === "file" ? "file" : "folder"}: ${n.name}`)
         );
       }
@@ -1632,7 +1666,7 @@ export default function App() {
 
   const handleFolderArchive = useCallback(async (node: FolderNode) => {
     const isRestoring = archivedNodes.some((n) => n.id === node.id);
-    let result: { status: "completed" | "pending"; message?: string } | null = null;
+    let result: { status: "completed" | "pending"; message?: string; archived_at?: string } | null = null;
 
     try {
       result = isRestoring
@@ -1652,6 +1686,21 @@ export default function App() {
       });
       setTimeout(() => dismissToast(tid2), 6000);
       return;
+    }
+
+    // Optimistically update archivedNodes with the returned archived_at timestamp
+    // so the Date Archived column and Recent sort are immediately correct.
+    if (result?.status === "completed" && !isRestoring) {
+      const archivedAt = result.archived_at ?? new Date().toISOString();
+      setArchivedNodes((prev) => {
+        const exists = prev.some((n) => n.id === node.id);
+        const updated: FolderNode = { ...node, archived_at: archivedAt };
+        return exists
+          ? prev.map((n) => (n.id === node.id ? updated : n))
+          : [updated, ...prev];
+      });
+    } else if (isRestoring) {
+      setArchivedNodes((prev) => prev.filter((n) => n.id !== node.id));
     }
 
     await refreshAfterMutation();
@@ -1790,7 +1839,7 @@ export default function App() {
   const [recycleSortDir, setRecycleSortDir] = useState<"asc" | "desc">("desc");
   const [recycleLayout, setRecycleLayout] = useState<"list" | "grid">("list");
 
-  const [archiveLayout, setArchiveLayout] = useState<"list" | "grid">("grid");
+  const [archiveLayout, setArchiveLayout] = useState<"list" | "grid">("list");
 
   const [archiveQuery, setArchiveQuery] = useState("");
   const [archiveVessel, setArchiveVessel] = useState("all");
@@ -1817,6 +1866,42 @@ export default function App() {
     });
     return vessels.filter((v) => names.has(v.name));
   }, [archivedNodes, vessels]);
+
+  const archiveMainOptions = useMemo(() => {
+    const names = new Set<string>();
+    archivedNodes.forEach((node) => {
+      if (node.main_folder) names.add(node.main_folder);
+      else if (node.original_path) {
+        const parts = node.original_path.split("/");
+        if (parts[0]) names.add(parts[0]);
+      }
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [archivedNodes]);
+
+  const recycleVesselOptions = useMemo(() => {
+    const names = new Set<string>();
+    deletedNodes.forEach((node) => {
+      if (node.original_path) {
+        const parts = node.original_path.split("/");
+        const v = parts[1];
+        if (v) names.add(v);
+      }
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [deletedNodes]);
+
+  const recycleMainOptions = useMemo(() => {
+    const names = new Set<string>();
+    deletedNodes.forEach((node) => {
+      if (node.main_folder) names.add(node.main_folder);
+      else if (node.original_path) {
+        const parts = node.original_path.split("/");
+        if (parts[0]) names.add(parts[0]);
+      }
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [deletedNodes]);
 
   // Unique sub-folder names extracted from original_path (segment after main/vessel)
   const subFoldersWithArchivedNodes = useMemo(() => {
@@ -1914,12 +1999,11 @@ export default function App() {
   }, [recycleSelectIds]);
 
   const openBulkDeleteAllRecycleModal = useCallback(() => {
-    const fileNodes = deletedNodes.filter((n) => {
-      const itemTypeLc = (n.item_type || "").toLowerCase();
-      return n.kind === "file" || (itemTypeLc.includes("file") && !itemTypeLc.includes("folder"));
-    });
-    if (fileNodes.length === 0) return;
-    setRecycleSelectIds(new Set(fileNodes.map((n) => n.id)));
+    if (deletedNodes.length === 0) return;
+    // Select all deleted items so the confirmation modal can show how many
+    // files vs folders are in the selection. We will only attempt API
+    // permanent-deletes for files when executing the action.
+    setRecycleSelectIds(new Set(deletedNodes.map((n) => n.id)));
     setShowBulkDeleteRecycleModal(true);
   }, [deletedNodes]);
 
@@ -1943,29 +2027,62 @@ export default function App() {
     const id = Date.now();
     upsertToast({ id, status: "processing", title: "Permanently deleting selected items…", detail: "Please wait" });
     try {
-      const selected = deletedNodes.filter(n => {
-        if (!recycleSelectIds.has(n.id)) return false;
-        const itemTypeLc = (n.item_type || "").toLowerCase();
-        return n.kind === "file" || (itemTypeLc.includes("file") && !itemTypeLc.includes("folder"));
-      });
+      const selected = deletedNodes.filter(n => recycleSelectIds.has(n.id));
       // Execute sequentially to prevent SQLite write conflicts and SharePoint API throttling
       let completed = 0;
       let pending = 0;
+      let failed = 0;
       for (const n of selected) {
-        const result = await permanentDeleteItem(n.id, "file", user?.email || undefined, {
-          itemName: n.name,
-          department: n.main_folder,
-        });
-        if (result.status === "pending") pending++;
-        else completed++;
+        const itemTypeLc = (n.item_type || "").toLowerCase();
+        const isFile = n.kind === "file" || (itemTypeLc.includes("file") && !itemTypeLc.includes("folder"));
+        const type = isFile ? "file" : "folder";
+        let attempt = 0;
+        const maxAttempts = 3;
+        let lastError: any = null;
+        while (attempt < maxAttempts) {
+          attempt++;
+          try {
+            if (attempt > 1) {
+              const infoId = Date.now() + Math.floor(Math.random() * 1000);
+              upsertToast({ id: infoId, status: "processing", title: `Retrying delete (${attempt}/${maxAttempts}) for ${n.name}`, detail: "Please wait" });
+              setTimeout(() => dismissToast(infoId), 2000);
+            }
+            const result = await permanentDeleteItem(n.id, type, user?.email || undefined, {
+              itemName: n.name,
+              department: n.main_folder,
+            });
+            if (result.status === "pending") {
+              pending++;
+            } else {
+              completed++;
+            }
+            lastError = null;
+            break;
+          } catch (err) {
+            lastError = err;
+            // exponential backoff before retrying
+            const delay = 300 * Math.pow(2, attempt - 1);
+            await new Promise((res) => setTimeout(res, delay));
+          }
+        }
+        if (lastError) {
+          failed++;
+          try {
+            const itemToastId = Date.now() + Math.floor(Math.random() * 1000);
+            upsertToast({ id: itemToastId, status: "failed", title: `Failed to delete ${n.name}`, detail: errDetail(lastError, "") });
+            setTimeout(() => dismissToast(itemToastId), 6000);
+          } catch { /* safe to ignore */ }
+        }
       }
       if (completed > 0) await refreshAfterMutation();
-      const detail =
-        pending > 0
-          ? completed > 0
-            ? `${completed} deleted, ${pending} awaiting approval`
-            : `${pending} item(s) awaiting approval`
-          : "Items removed forever";
+      let detail = "Items removed forever";
+      if (failed > 0) {
+        detail = `${completed} deleted, ${failed} failed${pending > 0 ? `, ${pending} awaiting approval` : ""}`;
+      } else if (pending > 0) {
+        detail = completed > 0 ? `${completed} deleted, ${pending} awaiting approval` : `${pending} item(s) awaiting approval`;
+      } else if (completed === 0) {
+        detail = failed > 0 ? `${failed} failed` : "Items removed forever";
+      }
       upsertToast({
         id,
         status: pending > 0 && completed === 0 ? "pending" : "done",
@@ -2460,7 +2577,7 @@ export default function App() {
 
           {/* Center/Left (on Desktop): Search Bar (if applicable) */}
           <div className="flex-1 flex items-center justify-start gap-4 ml-2 lg:ml-0">
-            {view !== "settings" && view !== "approvals" && view !== "profile" && view !== "dashboard" && view !== "archive" && view !== "recycle_bin" && (
+            {view !== "settings" && view !== "approvals" && view !== "profile" && view !== "dashboard" && view !== "archive" && view !== "recycle_bin" && view !== "appearance" && (
               <SearchBar
                 onNavigate={navigateToResult}
                 vessels={vessels}
@@ -2706,11 +2823,13 @@ export default function App() {
                       </div>
                       <select value={recycleVessel} onChange={(e) => setRecycleVessel(e.target.value)} className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted max-w-[120px] truncate">
                         <option value="all">All vessels</option>
-                        {vessels.map((v) => <option key={v.id} value={v.name}>{v.name}</option>)}
+                        {recycleVesselOptions.map((name) => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
                       </select>
                       <select value={recycleMain} onChange={(e) => setRecycleMain(e.target.value)} className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted max-w-[120px] truncate">
                         <option value="all">All main folders</option>
-                        {["Technical & Crewing", "Commercial & Chartering", "Insurance", "Kaizen - Knowledge Bank"].map((m) => (
+                        {recycleMainOptions.map((m) => (
                           <option key={m} value={m}>{m}</option>
                         ))}
                       </select>
@@ -2960,7 +3079,7 @@ export default function App() {
                               </td>
                               <td className="px-3 py-2.5">
                                 <div className="flex items-center justify-end gap-1.5">
-                                  {isFile ? (
+                                  {isFile && (
                                     <button
                                       onClick={() => openRecyclePreviewConfirm(n)}
                                       className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-brand-700 bg-brand-50 hover:bg-brand-100 transition"
@@ -2969,9 +3088,45 @@ export default function App() {
                                       <Eye className="h-3 w-3" />
                                       Preview
                                     </button>
-                                  ) : (
-                                    <span className="text-[11px] text-slate-400">-</span>
                                   )}
+                                  <button
+                                    onClick={async () => {
+                                      const tid = Date.now();
+                                      upsertToast({ id: tid, status: "processing", title: "Restoring...", detail: n.name });
+                                      try {
+                                        const r = await restoreDeletedItem(n.id, isFile ? "file" : "folder", user?.email || undefined, { itemName: n.name, department: n.main_folder });
+                                        await refreshAfterMutation();
+                                        upsertToast({ id: tid, status: r.status === "pending" ? "pending" : "done", title: r.status === "pending" ? "Restore requested" : "Restored", detail: n.name });
+                                      } catch (e) {
+                                        upsertToast({ id: tid, status: "failed", title: "Restore failed", detail: errDetail(e, n.name) });
+                                      }
+                                      setTimeout(() => dismissToast(tid), 4000);
+                                    }}
+                                    className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition"
+                                    title="Restore"
+                                  >
+                                    <ArchiveRestore className="h-3 w-3" />
+                                    Restore
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      const tid = Date.now();
+                                      upsertToast({ id: tid, status: "processing", title: "Deleting permanently...", detail: n.name });
+                                      try {
+                                        const r = await permanentDeleteItem(n.id, isFile ? "file" : "folder", user?.email || undefined, { itemName: n.name, department: n.main_folder });
+                                        await refreshAfterMutation();
+                                        upsertToast({ id: tid, status: r.status === "pending" ? "pending" : "done", title: r.status === "pending" ? "Delete requested" : "Permanently deleted", detail: n.name });
+                                      } catch (e) {
+                                        upsertToast({ id: tid, status: "failed", title: "Delete failed", detail: errDetail(e, n.name) });
+                                      }
+                                      setTimeout(() => dismissToast(tid), 4000);
+                                    }}
+                                    className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 transition"
+                                    title="Permanently delete"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                    Delete
+                                  </button>
                                 </div>
                               </td>
                             </tr>
@@ -3168,7 +3323,7 @@ export default function App() {
                           </select>
                           <select value={archiveMain} onChange={(e) => { setArchiveMain(e.target.value); setArchiveSubFolder("all"); }} className="dms-input rounded-lg px-2 py-1 text-[11px] text-muted max-w-[120px] truncate">
                             <option value="all">All main folders</option>
-                            {["Technical & Crewing", "Commercial & Chartering", "Insurance", "Kaizen - Knowledge Bank"].map((m) => (
+                            {archiveMainOptions.map((m) => (
                               <option key={m} value={m}>{m}</option>
                             ))}
                           </select>
@@ -3203,7 +3358,7 @@ export default function App() {
                             <option value="name_az">Name A–Z</option>
                             <option value="name_za">Name Z–A</option>
                             <option value="size">Size</option>
-                            <option value="modified">Date Archived</option>
+                            
                           </select>
 
                           {/* View toggle */}
@@ -3322,7 +3477,7 @@ export default function App() {
                                       {f.kind === "file" ? "Archived File" : "Archived Folder"}
                                     </td>
                                     <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">
-                                      {formatDate(f.archived_at || f.modified)}
+                                      {formatDate(f.archived_at || f.modified) || "—"}
                                     </td>
                                     <td className="px-4 py-3 w-12 text-right">
                                       <div className="relative action-menu inline-block" onClick={(e) => e.stopPropagation()}>
@@ -3381,6 +3536,9 @@ export default function App() {
                                         Path: {f.original_path}
                                       </p>
                                     )}
+                                    <p className="mt-1 text-[11px] text-slate-400">
+                                      Archived: {formatDate(f.archived_at || f.modified) || "—"}
+                                    </p>
                                   </div>
                                   <div className="relative action-menu" onClick={(e) => e.stopPropagation()}>
                                     <button

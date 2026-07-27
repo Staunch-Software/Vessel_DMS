@@ -718,23 +718,9 @@ export function MainFolderListView({ mainFolderId, mainFolderName, onPreviewFile
                     <td className="px-3 py-2 align-top border-r border-border">
                       <div className="flex flex-col items-end gap-1.5">
                         {row.files.length > 0 ? (
-                          <button
-                            onClick={() => {
-                              const target = openTargets[0];
-                              if (!target) return;
-                              if (onPreviewFile) {
-                                onPreviewFile(target.node);
-                                return;
-                              }
-                              window.location.href = fileContentUrl(target.id);
-                            }}
-                            className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary hover:bg-primary/20 transition"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                            {selectedInRow.length > 0
-                              ? `Open selected (${selectedInRow.length})`
-                              : `Open (${row.files.length})`}
-                          </button>
+                          <span className="text-xs text-muted">
+                            {row.files.length} attachment{row.files.length !== 1 ? "s" : ""}
+                          </span>
                         ) : (
                           <span className="text-xs text-muted italic">No attachment</span>
                         )}

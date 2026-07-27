@@ -9,8 +9,8 @@ from app.db import models  # noqa: F401  (register models on Base.metadata)
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
-
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
+    
 # Alembic uses configparser interpolation, so '%' in URL-encoded passwords
 # (e.g. '%40' for '@') must be escaped as '%%'.
 config.set_main_option("sqlalchemy.url", settings.database_url_resolved.replace("%", "%%"))

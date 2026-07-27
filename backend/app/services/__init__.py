@@ -6,21 +6,24 @@ same async interface so the API layer has one code path.
 """
 from ..config import settings
 
-_backend = None
+_real_backend = None
+_stub_backend = None
 
 
 def get_backend():
-    global _backend
-    if _backend is None:
-        if settings.graph_configured and settings.db_configured:
+    global _real_backend, _stub_backend
+    if settings.graph_configured and settings.db_configured:
+        if _real_backend is None:
             from .real_backend import RealBackend
 
-            _backend = RealBackend()
-        else:
+            _real_backend = RealBackend()
+        return _real_backend
+    else:
+        if _stub_backend is None:
             from .stub_backend import StubBackend
 
-            _backend = StubBackend()
-    return _backend
+            _stub_backend = StubBackend()
+        return _stub_backend
 
 
 def backend_mode() -> str:

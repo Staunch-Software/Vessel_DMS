@@ -34,9 +34,9 @@ class GraphClient:
             from .http import verify
 
             self._http = httpx.AsyncClient(
-                timeout=120,
+                timeout=60,
                 verify=verify(),
-                limits=httpx.Limits(max_connections=30, max_keepalive_connections=30),
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=10),
             )
         return self._http
 
@@ -83,9 +83,12 @@ class GraphClient:
                 params=params,
             )
             # SharePoint Embedded throttles bursts (429) / transient 503.
+            # raaSContainerRU throttles need longer back-off than a simple
+            # exponential — honour Retry-After when present, otherwise use
+            # a capped exponential with a higher ceiling (120 s).
             if resp.status_code in (429, 503) and attempt < 7:
                 retry_after = resp.headers.get("Retry-After")
-                delay = float(retry_after) if retry_after else min(2 ** attempt * 2, 60)
+                delay = float(retry_after) if retry_after else min(2 ** (attempt + 1), 120)
                 await asyncio.sleep(delay + random.random())
                 continue
             break

@@ -76,151 +76,6 @@ def _next_month(year, month):
     return (year + 1, 1) if month == 12 else (year, month + 1)
 
 
-async def _provision_subtree_batched(
-    drive_id: str,
-    root_id: str,
-    root_path: str,
-    specs: list,
-    vessel_id: int,
-) -> None:
-    """Level-by-level batch folder creation — one Graph $batch call per depth
-    level instead of one HTTP round-trip per folder."""
-    import time
-    from urllib.parse import quote
-    t0 = time.monotonic()
-    depth = 0
-    queue: list[tuple[str, str, list]] = [(root_id, root_path, specs)]
-
-    while queue:
-        pending: list[tuple[str, str, dict]] = []
-        for parent_id, parent_path, spec_list in queue:
-            for spec in spec_list:
-                pending.append((parent_id, parent_path, spec))
-
-        all_paths = [f"{pp}/{s['name']}" for _, pp, s in pending]
-        with SessionLocal() as db:
-            cached_map: dict[str, str] = {
-                row.path: row.drive_item_id
-                for row in db.query(models.Folder).filter(
-                    models.Folder.path.in_(all_paths)
-                ).all()
-            }
-
-        item_id_map: dict[str, str] = dict(cached_map)
-        uncached = [
-            (pid, pp, spec)
-            for pid, pp, spec in pending
-            if f"{pp}/{spec['name']}" not in cached_map
-        ]
-
-        if uncached:
-            chunk_size = 20
-            for offset in range(0, len(uncached), chunk_size):
-                chunk = uncached[offset:offset+chunk_size]
-                
-                batch_requests = []
-                for idx, (pid, pp, spec) in enumerate(chunk):
-                    batch_requests.append({
-                        "id": str(idx),
-                        "method": "POST",
-                        "url": f"/drives/{drive_id}/items/{pid}/children",
-                        "headers": {
-                            "Content-Type": "application/json"
-                        },
-                        "body": {
-                            "name": spec["name"],
-                            "folder": {},
-                            "@microsoft.graph.conflictBehavior": "fail"
-                        }
-                    })
-                
-                try:
-                    resp = await graph().post("/$batch", json={"requests": batch_requests})
-                    responses = resp.get("responses", [])
-                except Exception as e:
-                    log.warning("[provision] batch folder creation request failed: %s. Falling back to sequential.", e)
-                    responses = []
-                
-                resp_map = {r["id"]: r for r in responses}
-                rows_to_write: list[tuple] = []
-                
-                for idx, (pid, pp, spec) in enumerate(chunk):
-                    r = resp_map.get(str(idx))
-                    path = f"{pp}/{spec['name']}"
-                    item_id = None
-                    
-                    if r and r.get("status") == 201:
-                        item_id = r.get("body", {}).get("id")
-                    elif r and r.get("status") == 409:
-                        # Fallback: folder already exists. Retrieve it.
-                        encoded = quote(spec["name"], safe="")
-                        try:
-                            item = await graph().get(f"/drives/{drive_id}/items/{pid}:/{encoded}")
-                            item_id = item.get("id")
-                        except Exception:
-                            pass
-                            
-                    if not item_id:
-                        # Direct fallback (if throttled in batch or otherwise failed)
-                        try:
-                            item = await gd.ensure_folder(drive_id, pid, spec["name"])
-                            item_id = item.get("id")
-                        except Exception as e:
-                            log.error("[provision] Failed to provision folder %s: %s", path, e)
-                            raise
-                            
-                    item_id_map[path] = item_id
-                    rows_to_write.append((
-                        path, spec["name"], spec["kind"],
-                        item_id, spec["kind"] == "month_driven",
-                    ))
-                
-                if rows_to_write:
-                    with SessionLocal() as db:
-                        for path, name, kind, item_id, is_md in rows_to_write:
-                            _upsert_folder(db, path, name, kind, item_id, is_md, vessel_id)
-                        db.commit()
-                
-                if offset + chunk_size < len(uncached):
-                    await asyncio.sleep(0.2)  # pause between batch chunks to reduce throttling
-
-        next_queue: list[tuple[str, str, list]] = []
-        for pid, pp, spec in pending:
-            path = f"{pp}/{spec['name']}"
-            item_id = item_id_map.get(path)
-            if item_id and spec["kind"] != "month_driven":
-                children = spec.get("children", [])
-                if children:
-                    next_queue.append((item_id, path, children))
-        log.info("[provision] %s depth=%d folders=%d elapsed=%.2fs", root_path, depth, len(pending), time.monotonic() - t0)
-        depth += 1
-        queue = next_queue
-        if queue:
-            await asyncio.sleep(0.2)  # brief pause between depth levels to reduce 429 bursts
-    log.info("[provision] %s DONE total=%.2fs", root_path, time.monotonic() - t0)
-
-
-def _upsert_folder(db, path, name, kind, item_id, month_driven, vessel_id):
-    row = db.query(models.Folder).filter_by(path=path).one_or_none()
-    if row is None:
-        row = db.query(models.Folder).filter_by(drive_item_id=item_id).one_or_none()
-        if row is not None:
-            old = db.query(models.Folder).filter_by(path=path).one_or_none()
-            if old and old.id != row.id:
-                db.delete(old)
-            row.path = path
-        else:
-            row = models.Folder(path=path)
-            db.add(row)
-    row.name = name
-    row.kind = kind
-    row.drive_item_id = item_id
-    row.month_driven = month_driven
-    if vessel_id is not None:
-        row.vessel_id = vessel_id
-    return row
-
-
 class RealBackend:
     def __init__(self):
         self._drive_id = None
@@ -229,9 +84,10 @@ class RealBackend:
         self._staging_id = None
 
     def _semaphore(self):
-        # Bound concurrent Graph folder creation without tripping SharePoint throttling.
+        # Bound concurrent Graph folder creation to speed up provisioning
+        # without tripping SharePoint throttling.
         if self._sem is None:
-            self._sem = asyncio.Semaphore(5)
+            self._sem = asyncio.Semaphore(2)
         return self._sem
 
     # ------------------------------------------------------------- infra
@@ -528,6 +384,87 @@ class RealBackend:
                 )
             )
 
+    async def _provision_subtree_batched(
+        self,
+        drive_id: str,
+        root_id: str,
+        root_path: str,
+        specs: list,
+        vessel_id: int,
+    ) -> None:
+        """Provision a vessel subtree level-by-level using Graph JSON $batch.
+
+        Instead of one HTTP round-trip per folder (~150 calls for a full vessel),
+        all sibling folders at the same depth are created in a single batch
+        request (up to 20 per call).  The critical path reduces from
+        depth × per-call-latency to depth × per-batch-latency — roughly 5 batch
+        calls versus 150 individual calls.
+        """
+        # Each entry: (parent_id, parent_path, child_spec_list)
+        queue: list[tuple[str, str, list]] = [(root_id, root_path, specs)]
+
+        while queue:
+            # Flatten everything at the current tree depth into a single list.
+            pending: list[tuple[str, str, dict]] = []  # (parent_id, parent_path, spec)
+            for parent_id, parent_path, spec_list in queue:
+                for spec in spec_list:
+                    pending.append((parent_id, parent_path, spec))
+
+            # Bulk DB cache check — avoids redundant Graph calls for re-provision.
+            all_paths = [f"{pp}/{s['name']}" for _, pp, s in pending]
+            with SessionLocal() as db:
+                cached_map: dict[str, str] = {
+                    row.path: row.drive_item_id
+                    for row in db.query(models.Folder).filter(
+                        models.Folder.path.in_(all_paths)
+                    ).all()
+                }
+
+            item_id_map: dict[str, str] = dict(cached_map)
+            uncached = [
+                (pid, pp, spec)
+                for pid, pp, spec in pending
+                if f"{pp}/{spec['name']}" not in cached_map
+            ]
+
+            # Batch-create all uncached folders at this level in one HTTP call.
+            if uncached:
+                created = await gd.batch_create_folders(
+                    drive_id, [(pid, spec["name"]) for pid, pp, spec in uncached]
+                )
+                rows: list[tuple[str, str, str, str, bool]] = []
+                for parent_id, parent_path, spec in uncached:
+                    path = f"{parent_path}/{spec['name']}"
+                    item = created.get((parent_id, spec["name"]))
+                    if item:
+                        item_id_map[path] = item["id"]
+                        rows.append((
+                            path, spec["name"], spec["kind"],
+                            item["id"], spec["kind"] == "month_driven",
+                        ))
+                # Single DB write for the whole level.
+                with SessionLocal() as db:
+                    for path, name, kind, item_id, is_md in rows:
+                        self._upsert(db, path, name, kind, item_id, is_md, vessel_id)
+                    db.commit()
+
+            # Queue the next depth level (month_driven children are created on upload).
+            next_queue: list[tuple[str, str, list]] = []
+            for parent_id, parent_path, spec in pending:
+                path = f"{parent_path}/{spec['name']}"
+                item_id = item_id_map.get(path)
+                if item_id and spec["kind"] != "month_driven":
+                    children = spec.get("children", [])
+                    if children:
+                        next_queue.append((item_id, path, children))
+
+            queue = next_queue
+            # Brief pause between depth levels to avoid bursting the
+            # container's request-unit quota (raaSContainerRU throttle).
+            if queue:
+                await asyncio.sleep(0.5)
+
+
     async def _ensure_month(self, db, drive_id, md_id, md_path, md_spec, year, month, vessel_id):
         label = month_label(year, month)
         month_item = await gd.ensure_folder(drive_id, md_id, label)
@@ -545,33 +482,48 @@ class RealBackend:
             return
         drive_id = await self._drive()
 
-        # Read existing rows — close DB session before any async Graph calls.
+        # Read what already exists, then close the session before touching
+        # Graph — a DB transaction must never stay open across an `await`
+        # to an external API. Graph calls can be slow (retries/backoff under
+        # SharePoint Embedded throttling), and every second they take is a
+        # second this session would otherwise sit 'idle in transaction',
+        # holding locks that can block other things (like Alembic migrations
+        # on the next restart) for just as long — which is exactly what was
+        # happening here.
         with SessionLocal() as db:
             existing_rows = {
                 r.path: r
                 for r in db.query(models.Folder).filter_by(kind="main")
             }
-
         missing = [m for m in template.MAIN_FOLDERS if m not in existing_rows]
         if not missing:
             self._base_ready = True
             return
 
-        # Fetch/create main folders via Graph (no DB session held open).
+        # All Graph calls happen here, with no DB session open at all.
         root = await gd.get_root_item_id(drive_id)
-        main_items: dict[str, str] = {}
+        main_items = {}
+        to_upsert: list[tuple[str, str]] = []  # (main_name, item_id)
         for main in template.MAIN_FOLDERS:
             row = existing_rows.get(main)
             if row is not None and row.drive_item_id:
                 main_items[main] = row.drive_item_id
-            else:
-                item = await gd.ensure_folder(drive_id, root, main)
-                main_items[main] = item["id"]
-                with SessionLocal() as db:
-                    self._upsert(db, main, main, "main", item["id"], False, None)
-                    db.commit()
+                continue
+            item = await gd.ensure_folder(drive_id, root, main)
+            main_items[main] = item["id"]
+            to_upsert.append((main, item["id"]))
 
-        # Provision subtrees for newly created mains only.
+        # Fresh, short-lived session opened only after all the slow network
+        # calls have already finished — never held open across an await.
+        with SessionLocal() as db:
+            for main, item_id in to_upsert:
+                self._upsert(db, main, main, "main", item_id, False, None)
+            db.commit()
+
+        # Mark ready immediately so vessel creation is not blocked while
+        # common subtrees are being provisioned in the background.
+        self._base_ready = True
+        # Provision subtrees for newly created mains only (not already-existing ones).
         tasks = []
         for main in missing:
             if main in template.FLAT_MAIN_FOLDERS:
@@ -587,154 +539,11 @@ class RealBackend:
                 )
         if tasks:
             await asyncio.gather(*tasks)
-        self._base_ready = True
 
     # -------------------------------------------------------------- vessels
     async def list_vessels(self):
-        """List all vessels by:
-        1. Batch-fetching children of every non-flat main folder from Graph
-           (using DRIVE_ID + MAIN_FOLDER_IDS from env) to get the live ship list.
-        2. Upsert each discovered ship folder into the DB (kind='ship').
-        3. Union with any vessel rows already in the DB.
-        4. Surface orphaned ship folders (vessel_id=NULL) as synthetic entries.
-        """
-        drive_id = settings.drive_id
-        main_folder_ids = [
-            fid.strip()
-            for fid in settings.main_folder_ids.split(",")
-            if fid.strip()
-        ]
-
-        # Only query non-flat main folders (flat ones have no per-vessel ship folders)
-        non_flat_mains = [m for m in template.MAIN_FOLDERS if m not in template.FLAT_MAIN_FOLDERS]
-
-        # Build batch requests for each non-flat main folder
-        # Map index -> (main_folder_name, folder_id)
-        batch_targets: list[tuple[str, str]] = []
         with SessionLocal() as db:
-            for main_name in non_flat_mains:
-                # Prefer env-provided IDs (by position), fall back to DB cache
-                idx = list(template.MAIN_FOLDERS).index(main_name)
-                if idx < len(main_folder_ids) and main_folder_ids[idx]:
-                    batch_targets.append((main_name, main_folder_ids[idx]))
-                else:
-                    row = db.query(models.Folder).filter_by(path=main_name, kind="main").one_or_none()
-                    if row and row.drive_item_id:
-                        batch_targets.append((main_name, row.drive_item_id))
-
-        # Batch GET children of all non-flat main folders in one Graph call
-        graph_ship_names: dict[str, str] = {}  # name_lower -> canonical name
-        if drive_id and batch_targets:
-            try:
-                batch_requests = [
-                    {
-                        "id": str(i),
-                        "method": "GET",
-                        "url": f"/drives/{drive_id}/items/{folder_id}/children?$select=id,name,folder",
-                    }
-                    for i, (_, folder_id) in enumerate(batch_targets)
-                ]
-                resp = await graph().post("/$batch", json={"requests": batch_requests})
-                by_id = {r["id"]: r for r in resp.get("responses", [])}
-
-                rows_to_upsert: list[tuple[str, str, str, str]] = []  # (path, name, item_id, main_name)
-                for i, (main_name, _) in enumerate(batch_targets):
-                    r = by_id.get(str(i), {})
-                    if r.get("status") != 200:
-                        log.warning("[list_vessels] batch response %d status=%s", i, r.get("status"))
-                        continue
-                    for item in r.get("body", {}).get("value", []):
-                        if "folder" not in item:
-                            continue
-                        name = item["name"]
-                        item_id = item["id"]
-                        graph_ship_names[name.lower()] = name
-                        rows_to_upsert.append((f"{main_name}/{name}", name, item_id, main_name))
-
-                # Upsert discovered ship folders into DB
-                if rows_to_upsert:
-                    with SessionLocal() as db:
-                        for path, name, item_id, _ in rows_to_upsert:
-                            # Try to find matching vessel row for auto-linking
-                            vessel = db.query(models.Vessel).filter(
-                                func.lower(models.Vessel.name) == name.lower()
-                            ).one_or_none()
-                            self._upsert(
-                                db, path, name, "ship", item_id, False,
-                                vessel.id if vessel else None,
-                            )
-                        db.commit()
-            except Exception as e:
-                log.warning("[list_vessels] Graph batch failed, falling back to DB: %s", e)
-
-        # Load all vessel rows from DB
-        with SessionLocal() as db:
-            rows = db.query(models.Vessel).order_by(
-                models.Vessel.created_at.is_(None),
-                models.Vessel.created_at,
-            ).all()
-            vessel_names_lower = {v.name.lower() for v in rows}
-
-            # Surface orphaned ship folders not yet linked to a vessel row
-            orphan_folders = (
-                db.query(models.Folder)
-                .filter(
-                    models.Folder.kind == "ship",
-                    models.Folder.vessel_id == None,  # noqa: E711
-                )
-                .all()
-            )
-            seen_orphan_names: set[str] = set()
-            orphan_vessels = []
-            for f in orphan_folders:
-                name_lc = f.name.lower()
-                if name_lc in vessel_names_lower or name_lc in seen_orphan_names:
-                    continue
-                seen_orphan_names.add(name_lc)
-                # Auto-create a vessel row for this orphaned ship folder
-                try:
-                    new_vessel = models.Vessel(name=f.name)
-                    db.add(new_vessel)
-                    db.flush()
-                    f.vessel_id = new_vessel.id
-                    db.commit()
-                    db.refresh(new_vessel)
-                    rows = list(rows) + [new_vessel]
-                    vessel_names_lower.add(name_lc)
-                    log.info("[list_vessels] auto-created vessel row for orphaned folder '%s'", f.name)
-                except Exception as e:
-                    db.rollback()
-                    log.warning("[list_vessels] failed to auto-create vessel for orphan '%s': %s", f.name, e)
-                    orphan_vessels.append({
-                        "id": f"orphan:{f.drive_item_id}",
-                        "name": f.name,
-                        "imo": None,
-                        "shipyard": None,
-                        "hull_number": None,
-                        "vessel_type": None,
-                        "created_at": None,
-                    })
-
-            # Auto-create vessel rows for Graph-discovered vessels not yet in DB
-            for name_lc, name in graph_ship_names.items():
-                if name_lc not in vessel_names_lower and name_lc not in seen_orphan_names:
-                    try:
-                        new_vessel = models.Vessel(name=name)
-                        db.add(new_vessel)
-                        db.flush()
-                        # Link any orphaned ship folders with this name
-                        for f in orphan_folders:
-                            if f.name.lower() == name_lc:
-                                f.vessel_id = new_vessel.id
-                        db.commit()
-                        db.refresh(new_vessel)
-                        rows = list(rows) + [new_vessel]
-                        vessel_names_lower.add(name_lc)
-                        log.info("[list_vessels] auto-created vessel row for Graph-discovered vessel '%s'", name)
-                    except Exception as e:
-                        db.rollback()
-                        log.warning("[list_vessels] failed to auto-create vessel '%s': %s", name, e)
-
+            rows = db.query(models.Vessel).order_by(models.Vessel.created_at).all()
             return [
                 {
                     "id": str(v.id),
@@ -743,10 +552,9 @@ class RealBackend:
                     "shipyard": v.shipyard,
                     "hull_number": v.hull_number,
                     "vessel_type": v.vessel_type,
-                    "created_at": v.created_at.isoformat() + "Z" if v.created_at else None,
                 }
                 for v in rows
-            ] + orphan_vessels
+            ]
 
     # Characters that SharePoint / OneDrive forbid in folder names.
     _ILLEGAL_NAME_CHARS = set('/\\:*?"<>|')
@@ -794,18 +602,56 @@ class RealBackend:
     ):
         """Creating a vessel never requires approval — for anyone, admin or
         not. It always executes immediately and is always recorded as a
-        completed activity entry for audit purposes."""
+        completed activity entry for audit purposes.
+
+        Tries the pre-provisioned pool first (claim + rename a folder tree
+        that already exists — sub-second); falls back to full from-scratch
+        provisioning (the original ~2.4 minute path) only when the pool is
+        empty or the claimed slot fails to link cleanly.
+        """
         clean_name, clean_imo = self._validate_vessel_input(name, imo)
         payload = {
             "name": clean_name, "imo": clean_imo, "shipyard": shipyard,
             "hull_number": hull_number, "vessel_type": vessel_type,
         }
         display = self._display(requesting_email, requesting_name)
-        vessel = await self._provision_vessel(payload)
-        activity_message = (
-            f"{display} ({requesting_email}) created vessel '{clean_name}'. "
-            f"No approval was required."
-        )
+
+        slot = self._claim_pool_slot()
+        if slot is not None:
+            import time as _time
+            _t0 = _time.monotonic()
+            log.info("[create_vessel] Pool slot %d claimed for '%s'", slot["slot_id"], clean_name)
+            try:
+                vessel = await self._link_claimed_slot(slot, payload)
+                log.info("[create_vessel] _link_claimed_slot took %.2fs", _time.monotonic() - _t0)
+            except Exception:
+                # Don't leave a half-linked vessel or a stranded slot —
+                # release it back to available and fall back to a normal
+                # from-scratch provision for this request.
+                log.warning("[create_vessel] _link_claimed_slot failed after %.2fs", _time.monotonic() - _t0)
+                self._release_pool_slot(slot["slot_id"])
+                vessel = await self._provision_vessel(payload)
+                activity_message = (
+                    f"{display} ({requesting_email}) created vessel '{clean_name}'. "
+                    f"No approval was required."
+                )
+            else:
+                activity_message = (
+                    f"{display} ({requesting_email}) created vessel '{clean_name}' "
+                    f"using a pre-provisioned folder set (renamed, not built "
+                    f"at this moment). No approval was required."
+                )
+                # Fire-and-forget replenishment — must never add to this
+                # request's response time.
+                asyncio.create_task(self._replenish_one_slot(slot["slot_id"]))
+        else:
+            log.warning("[create_vessel] Pool empty — falling back to full provisioning for '%s'", clean_name)
+            vessel = await self._provision_vessel(payload)
+            activity_message = (
+                f"{display} ({requesting_email}) created vessel '{clean_name}'. "
+                f"No approval was required."
+            )
+
         await self._create_activity(
             action_type="create_vessel",
             requesting_email=requesting_email or "",
@@ -816,6 +662,265 @@ class RealBackend:
             message=activity_message,
         )
         return {"status": "completed", "message": activity_message, "result": vessel}
+
+    def _claim_pool_slot(self) -> dict | None:
+        """Atomically claim one available pool slot, or None if the pool is
+        empty. Locks the PoolSlot row itself via SELECT...FOR UPDATE SKIP
+        LOCKED — NOT a plain SELECT followed by an UPDATE — so two
+        concurrent claims can never grab the same slot: the second
+        claimer's query simply skips a slot row already locked by the
+        first, instead of blocking or racing on a separate read-then-write.
+        Locking the single PoolSlot row (rather than its several Folder
+        rows individually) is also what guarantees a slot's whole set of
+        ship folders — one per main department — moves as one atomic unit.
+        """
+        with SessionLocal() as db:
+            pool_slot = (
+                db.query(models.PoolSlot)
+                .filter_by(status="available")
+                .order_by(models.PoolSlot.id)
+                .with_for_update(skip_locked=True)
+                .first()
+            )
+            if pool_slot is None:
+                total_available = db.query(models.PoolSlot).filter_by(status="available").count()
+                log.warning(
+                    "[pool] Claim attempted but POOL IS EMPTY (available=%d) — "
+                    "falling back to full provisioning.",
+                    total_available,
+                )
+                return None
+            pool_slot.status = "claimed"
+            db.commit()
+            remaining = db.query(models.PoolSlot).filter_by(status="available").count()
+            log.info(
+                "[pool] Slot claimed: slot_id=%d slug=%s — %d slot(s) remain available",
+                pool_slot.id, pool_slot.slug, remaining,
+            )
+            return {"slot_id": pool_slot.id, "slug": pool_slot.slug}
+
+    def _release_pool_slot(self, slot_id: int) -> None:
+        """Put a slot back to 'available' after a failed claim-and-rename
+        attempt, so it isn't stranded in 'claimed' with nothing linked."""
+        with SessionLocal() as db:
+            pool_slot = db.query(models.PoolSlot).filter_by(id=slot_id).one_or_none()
+            if pool_slot is not None:
+                pool_slot.status = "available"
+                db.commit()
+
+    async def _link_claimed_slot(self, slot: dict, payload: dict) -> dict:
+        """Rename a claimed pool slot's ship folders to the real vessel
+        name, create the Vessel row, and re-point every folder under it
+        (ship folder + full subtree) to that vessel — the fast path.
+        Raises on any failure so create_vessel can release the slot and
+        fall back to full provisioning rather than leave a half-linked
+        vessel behind.
+        """
+        name, imo = payload["name"], payload["imo"]
+        drive_id = await self._drive()
+        import time as _time
+
+        # Extract all needed data as plain Python objects BEFORE the session
+        # closes and expires the ORM instances.  _rename_ship_folders accesses
+        # folder.drive_item_id and folder.path — both would raise
+        # DetachedInstanceError on expired objects if read after session exit.
+        _t1 = _time.monotonic()
+        with SessionLocal() as db:
+            ship_rows = (
+                db.query(models.Folder)
+                .filter_by(pool_slot_id=slot["slot_id"], kind="ship")
+                .all()
+            )
+            if not ship_rows:
+                raise BadRequest(f"Pool slot {slot['slot_id']} has no ship folders")
+            placeholder_name = ship_rows[0].name
+            ship_data = [
+                {"drive_item_id": f.drive_item_id, "path": f.path, "name": f.name}
+                for f in ship_rows
+            ]
+        log.info("[_link_claimed_slot] DB read ship rows: %.3fs", _time.monotonic() - _t1)
+
+        # Build lightweight proxy objects with only the attributes
+        # _rename_ship_folders reads (.drive_item_id, .path, .name).
+        class _FolderProxy:
+            __slots__ = ("drive_item_id", "path", "name")
+            def __init__(self, d):
+                self.drive_item_id = d["drive_item_id"]
+                self.path = d["path"]
+                self.name = d["name"]
+
+        ship_proxies = [_FolderProxy(d) for d in ship_data]
+
+        _t2 = _time.monotonic()
+        rename_results = await self._rename_ship_folders(
+            drive_id, [(f, name) for f in ship_proxies]
+        )
+        log.info("[_link_claimed_slot] rename_ship_folders: %.3fs", _time.monotonic() - _t2)
+        failed = [r for r in rename_results if not r[1]]
+        if failed:
+            raise BadRequest(
+                f"Failed to rename {len(failed)} pool folder(s) for '{name}': {failed[0][2]}"
+            )
+
+        _t3 = _time.monotonic()
+        with SessionLocal() as db:
+            vessel = models.Vessel(
+                name=name, imo=imo, shipyard=payload.get("shipyard"),
+                hull_number=payload.get("hull_number"), vessel_type=payload.get("vessel_type"),
+            )
+            db.add(vessel)
+            db.flush()
+            vessel_id, vname, vimo = vessel.id, vessel.name, vessel.imo
+            vshipyard, vhull, vtype = vessel.shipyard, vessel.hull_number, vessel.vessel_type
+
+            for main in template.MAIN_FOLDERS:
+                old_prefix = f"{main}/{placeholder_name}"
+                new_prefix = f"{main}/{name}"
+                rows = db.query(models.Folder).filter(
+                    sa_or(
+                        models.Folder.path == old_prefix,
+                        models.Folder.path.like(f"{old_prefix}/%"),
+                    )
+                ).all()
+                for folder in rows:
+                    folder.vessel_id = vessel_id
+                    if folder.path == old_prefix:
+                        folder.name = name
+                        folder.path = new_prefix
+                    else:
+                        folder.path = new_prefix + folder.path[len(old_prefix):]
+            db.commit()
+        log.info("[_link_claimed_slot] DB vessel+path rewrite: %.3fs", _time.monotonic() - _t3)
+
+        return {
+            "id": str(vessel_id), "name": vname, "imo": vimo,
+            "shipyard": vshipyard, "hull_number": vhull, "vessel_type": vtype,
+        }
+
+
+    async def _build_pool_slot(self) -> int:
+        """Build one new pool slot from scratch: a full vessel folder tree
+        under a unique placeholder name (never linked to a vessel). This is
+        the same ~2.4 minute Graph work as _provision_vessel — the whole
+        point of the pool is that this runs ahead of time / in the
+        background instead of during a real create_vessel request.
+        Returns the new PoolSlot's id.
+        """
+        slug = f"Pool-{uuid.uuid4().hex[:12]}"
+        with SessionLocal() as db:
+            pool_slot = models.PoolSlot(slug=slug, status="building")
+            db.add(pool_slot)
+            db.commit()
+            db.refresh(pool_slot)
+            slot_id = pool_slot.id
+
+        await self.ensure_base_structure()
+        drive_id = await self._drive()
+        with SessionLocal() as db:
+            main_ids = {
+                m: db.query(models.Folder).filter_by(path=m).one().drive_item_id
+                for m in template.MAIN_FOLDERS
+            }
+
+        created_ship_roots: list[tuple[str, str]] = []
+
+        async def provision_main(main):
+            ship = await gd.ensure_folder(drive_id, main_ids[main], slug)
+            ship_path = f"{main}/{slug}"
+            created_ship_roots.append((ship["id"], ship_path))
+            with SessionLocal() as db:
+                row = self._upsert(db, ship_path, slug, "ship", ship["id"], False, None)
+                row.pool_slot_id = slot_id
+                db.commit()
+            await self._provision_subtree_batched(
+                drive_id, ship["id"], ship_path, template.SHIP_TEMPLATE[main], None,
+            )
+
+        try:
+            mains_to_provision = [
+                m for m in template.MAIN_FOLDERS if m not in template.FLAT_MAIN_FOLDERS
+            ]
+            # Provision mains sequentially (not concurrently) to avoid
+            # bursting the container's request-unit quota (raaSContainerRU
+            # throttle). The semaphore alone isn't enough when multiple
+            # _build_pool_slot calls run in parallel at startup.
+            for m in mains_to_provision:
+                await provision_main(m)
+        except Exception:
+            # Best-effort cleanup of a partially built slot. Deliberately
+            # leave the PoolSlot row itself as 'building' rather than
+            # deleting it — the scheduler's reconciliation check treats a
+            # long-stuck 'building' row as a signal to retry, which also
+            # covers a process crash/restart hitting this exact spot.
+            for ship_id, ship_path in created_ship_roots:
+                try:
+                    await gd.delete_item(drive_id, ship_id)
+                except Exception:
+                    pass
+                with SessionLocal() as db:
+                    rows = db.query(models.Folder).filter(
+                        sa_or(
+                            models.Folder.path == ship_path,
+                            models.Folder.path.like(f"{ship_path}/%"),
+                        )
+                    ).all()
+                    for row in rows:
+                        db.delete(row)
+                    db.commit()
+            raise
+
+        with SessionLocal() as db:
+            pool_slot = db.query(models.PoolSlot).filter_by(id=slot_id).one()
+            pool_slot.status = "available"
+            db.commit()
+            available_now = db.query(models.PoolSlot).filter_by(status="available").count()
+        log.info(
+            "[pool] Slot filled: slot_id=%d slug=%s marked available — "
+            "%d slot(s) now available in pool",
+            slot_id, slug, available_now,
+        )
+        return slot_id
+
+    async def _replenish_one_slot(self, triggering_slot_id: int) -> None:
+        """Fire-and-forget: build exactly one replacement pool slot after
+        `triggering_slot_id` was claimed. Never awaited by create_vessel —
+        must not add to that request's response time. Tracked via a
+        ReplenishJob row (written before the build starts) so a process
+        restart mid-build leaves a visible 'pending' row the scheduler's
+        reconciliation check can find and retry, instead of the work
+        silently vanishing with the in-memory asyncio task.
+        """
+        with SessionLocal() as db:
+            job = models.ReplenishJob(triggering_slot_id=triggering_slot_id, status="pending")
+            db.add(job)
+            db.commit()
+            db.refresh(job)
+            job_id = job.id
+
+        try:
+            new_slot_id = await self._build_pool_slot()
+            with SessionLocal() as db:
+                job = db.query(models.ReplenishJob).filter_by(id=job_id).one()
+                job.status = "done"
+                job.new_slot_id = new_slot_id
+                db.commit()
+                available_now = db.query(models.PoolSlot).filter_by(status="available").count()
+            log.info(
+                "[pool] Replenished: new_slot_id=%d built (triggered by slot %d) — "
+                "%d slot(s) now available",
+                new_slot_id, triggering_slot_id, available_now,
+            )
+        except Exception as e:
+
+            with SessionLocal() as db:
+                job = db.query(models.ReplenishJob).filter_by(id=job_id).one_or_none()
+                if job is not None:
+                    job.status = "failed"
+                    db.commit()
+            log.warning(
+                "[_replenish_one_slot] Pool replenishment failed "
+                "(triggered by slot %d): %s", triggering_slot_id, e,
+            )
 
     async def _provision_vessel(self, payload):
         # Re-validate at execution time — covers the approve-time path, where
@@ -828,7 +933,7 @@ class RealBackend:
 
         await self.ensure_base_structure()
         drive_id = await self._drive()
-        # Create the vessel row, then release the session.
+        # Create the vessel row + capture main folder ids, then release the session.
         with SessionLocal() as db:
             vessel = models.Vessel(
                 name=name,
@@ -841,64 +946,43 @@ class RealBackend:
             db.flush()
             vessel_id, vname, vimo = vessel.id, vessel.name, vessel.imo
             vshipyard, vhull, vtype = vessel.shipyard, vessel.hull_number, vessel.vessel_type
+            main_ids = {
+                m: db.query(models.Folder).filter_by(path=m).one().drive_item_id
+                for m in template.MAIN_FOLDERS
+            }
             db.commit()
 
-        # Only provision ship folders under non-flat main folders.
-        mains_to_provision = [
-            m for m in template.MAIN_FOLDERS
-            if m not in template.FLAT_MAIN_FOLDERS
-        ]
-        # Resolve only the main folder IDs we actually need.
-        with SessionLocal() as db:
-            ship_main_ids: dict[str, str] = {}
-            missing_mains = []
-            for m in mains_to_provision:
-                row = db.query(models.Folder).filter_by(path=m).one_or_none()
-                if row and row.drive_item_id:
-                    ship_main_ids[m] = row.drive_item_id
-                else:
-                    missing_mains.append(m)
-
-        # If any main folder is missing from DB, fetch/create it via Graph.
-        if missing_mains:
-            root = await gd.get_root_item_id(drive_id)
-            for m in missing_mains:
-                item = await gd.ensure_folder(drive_id, root, m)
-                ship_main_ids[m] = item["id"]
-                with SessionLocal() as db:
-                    self._upsert(db, m, m, "main", item["id"], False, None)
-                    db.commit()
-
-        async def provision_one_main(main_folder_name: str):
-            try:
-                ship = await gd.ensure_folder(drive_id, ship_main_ids[main_folder_name], name)
-                ship_path = f"{main_folder_name}/{name}"
-                with SessionLocal() as db:
-                    self._upsert(db, ship_path, name, "ship", ship["id"], False, vessel_id)
-                    db.commit()
-                await _provision_subtree_batched(
-                    drive_id, ship["id"], ship_path,
-                    template.SHIP_TEMPLATE[main_folder_name], vessel_id,
-                )
-                return (ship["id"], ship_path), None
-            except Exception as e:
-                log.exception("[provision] Error provisioning main folder %s", main_folder_name)
-                return None, e
-
-        tasks = [provision_one_main(m) for m in mains_to_provision]
-        results = await asyncio.gather(*tasks)
-
         created_ship_roots: list[tuple[str, str]] = []
-        provision_errors: list[Exception] = []
-        for root_info, err in results:
-            if root_info:
-                created_ship_roots.append(root_info)
-            if err:
-                provision_errors.append(err)
 
-        if provision_errors:
-            provision_err = provision_errors[0]
-            # Roll back DB rows and vessel row.
+        async def provision_main(main):
+            ship = await gd.ensure_folder(drive_id, main_ids[main], name)
+            ship_path = f"{main}/{name}"
+            created_ship_roots.append((ship["id"], ship_path))
+            with SessionLocal() as db:
+                self._upsert(db, ship_path, name, "ship", ship["id"], False, vessel_id)
+                db.commit()
+            # Batch-provision full vessel subtree (level-by-level, far fewer
+            # HTTP round-trips than the old recursive per-folder approach).
+            await self._provision_subtree_batched(
+                drive_id, ship["id"], ship_path,
+                template.SHIP_TEMPLATE[main], vessel_id,
+            )
+
+        try:
+            mains_to_provision = [
+                m for m in template.MAIN_FOLDERS
+                if m not in template.FLAT_MAIN_FOLDERS
+            ]
+            results = await asyncio.gather(
+                *(provision_main(m) for m in mains_to_provision),
+                return_exceptions=True,
+            )
+            first_error = next((r for r in results if isinstance(r, Exception)), None)
+            if first_error is not None:
+                raise first_error
+        except Exception as provision_err:
+            # Roll back: remove partially created DB rows + vessel row, and try
+            # to clean up newly created ship roots to avoid empty orphan vessels.
             with SessionLocal() as db:
                 for _, ship_path in created_ship_roots:
                     rows = db.query(models.Folder).filter(
@@ -913,12 +997,15 @@ class RealBackend:
                 if orphan:
                     db.delete(orphan)
                 db.commit()
-            # Best-effort SharePoint cleanup.
+
             for ship_id, _ in created_ship_roots:
                 try:
                     await gd.delete_item(drive_id, ship_id)
                 except Exception:
+                    # Best-effort cleanup only; DB rollback above already
+                    # ensures the vessel can be retried safely.
                     pass
+
             raise BadRequest(
                 f"Could not provision SharePoint folders for vessel '{name}'. "
                 f"Please try again. ({type(provision_err).__name__}: {provision_err})"
@@ -1037,6 +1124,39 @@ class RealBackend:
             execute=lambda: self._execute_update_vessel(payload),
         )
 
+    async def _rename_ship_folders(self, drive_id, folders):
+        """PATCH each (folder_row, new_name) pair's SharePoint name.
+
+        Shared by update_vessel's rename path AND the pool-slot claim path
+        (create_vessel), so the two callers can never drift on how a
+        ship-folder rename is actually performed. Never raises — returns a
+        per-folder (folder, ok, error) result list so callers can decide
+        what to do with each outcome individually (e.g. only link an
+        orphan's vessel_id if its own rename actually succeeded).
+
+        Renames run concurrently (bounded by the same semaphore used for
+        folder creation) rather than one Graph round-trip at a time — for
+        the pool-slot claim path this is the difference between ~3 sequential
+        PATCH latencies (~2.3s for 3 main folders) and ~1 (the slowest one).
+        """
+        from ..graph import drive as _gd
+
+        async def _rename_one(folder, new_name):
+            try:
+                import time as _time
+                _rt = _time.monotonic()
+                async with self._semaphore():
+                    await _gd.graph().patch(
+                        f"/drives/{drive_id}/items/{folder.drive_item_id}",
+                        json={"name": new_name},
+                    )
+                log.info("[_rename_one] %s -> %s: %.3fs", folder.name, new_name, _time.monotonic() - _rt)
+                return (folder, True, None)
+            except Exception as e:
+                print(f"Error renaming folder {folder.path} in SharePoint: {e}")
+                return (folder, False, str(e))
+
+        return list(await asyncio.gather(*(_rename_one(f, n) for f, n in folders)))
     async def _execute_update_vessel(self, payload):
         vessel_id = payload["vessel_id"]
         old_values, new_name, new_imo = self._validate_vessel_update(
@@ -1052,17 +1172,15 @@ class RealBackend:
         sp_errors = []
         if new_name and new_name != old_name:
             drive_id = await self._drive()
-            from ..graph import drive as _gd
             with SessionLocal() as db:
                 # Rename all ship folders linked to this vessel in SharePoint
                 vessel_folders = db.query(models.Folder).filter_by(vessel_id=int(vessel_id), kind="ship").all()
-                for folder in vessel_folders:
-                    try:
-                        await _gd.graph().patch(f"/drives/{drive_id}/items/{folder.drive_item_id}", json={"name": new_name})
-                    except Exception as e:
+                for folder, ok, err in await self._rename_ship_folders(
+                    drive_id, [(f, new_name) for f in vessel_folders]
+                ):
+                    if not ok:
                         sp_success = False
-                        sp_errors.append(f"Folder '{folder.name}': {e}")
-                        print(f"Error renaming folder {folder.path} in SharePoint: {e}")
+                        sp_errors.append(f"Folder '{folder.name}': {err}")
 
                 # Also find orphaned ship folders (vessel_id=None) with the old name
                 # and rename + link them to this vessel
@@ -1071,14 +1189,14 @@ class RealBackend:
                     models.Folder.vessel_id == None,  # noqa: E711
                     func.lower(models.Folder.name) == func.lower(old_name)
                 ).all()
-                for folder in orphaned:
-                    try:
-                        await _gd.graph().patch(f"/drives/{drive_id}/items/{folder.drive_item_id}", json={"name": new_name})
+                for folder, ok, err in await self._rename_ship_folders(
+                    drive_id, [(f, new_name) for f in orphaned]
+                ):
+                    if ok:
                         folder.vessel_id = int(vessel_id)
-                    except Exception as e:
+                    else:
                         sp_success = False
-                        sp_errors.append(f"Orphaned folder '{folder.name}': {e}")
-                        print(f"Error renaming orphaned folder {folder.path} in SharePoint: {e}")
+                        sp_errors.append(f"Orphaned folder '{folder.name}': {err}")
                 db.commit()
 
         with SessionLocal() as db:
@@ -1162,13 +1280,9 @@ class RealBackend:
                 raise NotFound(f"Vessel {vessel_id!r} not found")
             name = vessel.name
             vid = vessel.id
-            mains_to_reprovision = [
-                m for m in template.MAIN_FOLDERS
-                if m not in template.FLAT_MAIN_FOLDERS
-            ]
             main_ids = {
                 m: db.query(models.Folder).filter_by(path=m).one().drive_item_id
-                for m in mains_to_reprovision
+                for m in template.MAIN_FOLDERS
             }
 
         async def reprovision_main(main):
@@ -1184,12 +1298,22 @@ class RealBackend:
                 )
             )
 
-        await asyncio.gather(*(reprovision_main(m) for m in mains_to_reprovision))
+        await asyncio.gather(*(
+            reprovision_main(m) for m in template.MAIN_FOLDERS
+            if m not in template.FLAT_MAIN_FOLDERS
+        ))
         return {"ok": True, "vessel_id": vessel_id, "name": name}
 
     # ----------------------------------------------------------- navigation
     async def mains(self):
-        await self.ensure_base_structure()
+        # ensure_base_structure hits Graph API; if SharePoint is temporarily
+        # unavailable we still want to serve whatever is cached in the DB.
+        try:
+            await self.ensure_base_structure()
+        except Exception as exc:
+            log.warning(
+                "mains(): ensure_base_structure failed (%s) — serving DB cache", exc
+            )
         with SessionLocal() as db:
             out = []
             for main in template.MAIN_FOLDERS:
@@ -1333,28 +1457,58 @@ class RealBackend:
         filename: str,
         target_folder_id: str,
         target_folder_path: str | None = None,
+        vessel_id: int | None = None,
     ):
-        """Check ALL folders in the entire container/drive for a file with the same name.
-        Uses list items with webUrl to identify duplicates across all main folders and subfolders.
+        """Check for a file with the same name elsewhere in the same vessel's
+        folder tree.
+
+        Previously this listed EVERY item in the entire container
+        (/drives/{id}/list/items, paginated) on every single upload — a cost
+        that scales with total documents across ALL vessels, not just this
+        one, so every upload got progressively slower as the DMS grew.
+
+        Now it uses Graph's server-side recursive search
+        (gd.search_items_in) scoped to just this vessel's "ship" folders, so
+        the cost scales with one vessel's document count instead of the
+        whole container's. Falls back to the old full-container scan only
+        when vessel_id is unknown (should be rare).
 
         Raises Conflict with a clear message when a duplicate is found.
-        Any DB or Graph error is swallowed so infrastructure issues never block an upload.
+        Any DB or Graph error is swallowed so infrastructure issues never
+        block an upload.
         """
-        from urllib.parse import unquote
         from ..graph.client import graph
 
+        items: list[dict] = []
         try:
-            items = []
-            url = f"/drives/{drive_id}/list/items?$top=1000"
-            while url:
-                data = await graph().get(url)
-                items.extend(data.get("value", []))
-                url = data.get("@odata.nextLink")
+            if vessel_id is not None:
+                with SessionLocal() as db:
+                    ship_folder_ids = [
+                        row.drive_item_id
+                        for row in db.query(models.Folder)
+                        .filter_by(vessel_id=vessel_id, kind="ship")
+                        .all()
+                    ]
+                if not ship_folder_ids:
+                    return  # nothing provisioned for this vessel yet
+                results = await asyncio.gather(
+                    *[gd.search_items_in(drive_id, fid, filename) for fid in ship_folder_ids],
+                    return_exceptions=True,
+                )
+                for r in results:
+                    if isinstance(r, Exception):
+                        continue
+                    items.extend(r)
+            else:
+                url = f"/drives/{drive_id}/list/items?$top=1000"
+                while url:
+                    data = await graph().get(url)
+                    items.extend(data.get("value", []))
+                    url = data.get("@odata.nextLink")
         except Exception:
             return  # degrade gracefully if Graph API fails
 
         name_lc = filename.lower()
-        # Normalize target folder path for comparison
         target_norm = (
             target_folder_path.lower().replace(" ", "").replace("\\", "/").strip("/")
             if target_folder_path
@@ -1362,45 +1516,30 @@ class RealBackend:
         )
 
         for item in items:
-            web_url = item.get("webUrl", "")
-            web_url_decoded = unquote(web_url)
-            
-            # Find document library in url case-insensitively
-            doc_lib_marker = "/document library/"
-            idx = web_url_decoded.lower().find(doc_lib_marker)
-            if idx == -1:
+            if "file" not in item:
                 continue
-                
-            rel_path = web_url_decoded[idx + len(doc_lib_marker):].replace("\\", "/").strip("/")
-            if not rel_path:
+            if item.get("name", "").lower() != name_lc:
                 continue
 
-            path_segments = [p.strip() for p in rel_path.split("/") if p.strip()]
-            if not path_segments:
-                continue
+            parent_path = (item.get("parentReference") or {}).get("path", "")
+            rel_path = parent_path.split("root:", 1)[1].lstrip("/") if "root:" in parent_path else ""
+            found_folder_norm = rel_path.lower().replace(" ", "").strip("/")
 
-            found_filename = path_segments[-1]
-            found_folder_path = "/".join(path_segments[:-1])
-            found_folder_norm = found_folder_path.lower().replace(" ", "").strip("/")
-
-            # Check if this item matches our duplicate filename
-            if found_filename.lower() == name_lc:
-                # If it's in a different folder (or checking all folders), raise Conflict
-                if target_norm is None or found_folder_norm != target_norm:
-                    parts_folder = [p.strip() for p in found_folder_path.split("/") if p.strip()]
-                    if len(parts_folder) >= 2:
-                        main_folder = parts_folder[0]
-                        vessel_name = parts_folder[1]
-                        leaf_folder = parts_folder[-1]
-                        msg = (
-                            f"Duplicate files upload, file already exists in folder '{leaf_folder}' "
-                            f"under main folder '{main_folder}' and vessel '{vessel_name}'"
-                        )
-                    elif parts_folder:
-                        msg = f"Duplicate files upload, file already exists in folder '{parts_folder[0]}'"
-                    else:
-                        msg = f"Duplicate files upload, file already exists in another folder"
-                    raise Conflict(msg)
+            if target_norm is None or found_folder_norm != target_norm:
+                parts_folder = [p.strip() for p in rel_path.split("/") if p.strip()]
+                if len(parts_folder) >= 2:
+                    main_folder = parts_folder[0]
+                    vessel_name = parts_folder[1]
+                    leaf_folder = parts_folder[-1]
+                    msg = (
+                        f"Duplicate files upload, file already exists in folder '{leaf_folder}' "
+                        f"under main folder '{main_folder}' and vessel '{vessel_name}'"
+                    )
+                elif parts_folder:
+                    msg = f"Duplicate files upload, file already exists in folder '{parts_folder[0]}'"
+                else:
+                    msg = f"Duplicate files upload, file already exists in another folder"
+                raise Conflict(msg)
 
     async def upload(self, folder_id, filename, content, content_type, uploaded_by_email, uploaded_by_name):
         """Non-admin uploads stage a pending approval exactly as before.
@@ -1435,10 +1574,11 @@ class RealBackend:
             else:
                 msg = f"Duplicate files upload, '{filename}' already exists in this folder"
             raise Conflict(msg)
-        # Pass the folder's own path so _check_global_duplicate can scope by vessel
-        await self._check_global_duplicate(drive_id, filename, folder_id, path)
-
         department, vessel_id, vessel_name, _ = await self._resolve_department_vessel(target_id)
+        # Scope the duplicate check to this vessel's own folders instead of
+        # the whole container — see _check_global_duplicate docstring.
+        await self._check_global_duplicate(drive_id, filename, folder_id, path, vessel_id=vessel_id)
+
         display = self._display(uploaded_by_email, uploaded_by_name)
 
         if self._is_admin(uploaded_by_email):
@@ -1645,8 +1785,10 @@ class RealBackend:
         categories = flags.get("categories", [])
         md_spec = {"month_children": [{"name": c, "kind": "leaf"} for c in categories]}
 
-        # Check duplicate first globally before anything else
-        await self._check_global_duplicate(drive_id, filename, "")
+        # Scope the duplicate check to this vessel's own folders instead of
+        # the whole container — see _check_global_duplicate docstring.
+        _, month_vessel_id, _, _ = await self._resolve_department_vessel(folder_id)
+        await self._check_global_duplicate(drive_id, filename, "", vessel_id=month_vessel_id)
 
         # Check fitz (PyMuPDF) and paddleocr installations explicitly
         try:
@@ -2026,10 +2168,7 @@ class RealBackend:
             if not row:
                 row = models.ArchivedItem(item_id=item_id, item_type=item_type)
                 db.add(row)
-            else:
-                row.created_at = datetime.utcnow()
-            db.commit()
-            db.refresh(row)
+                db.commit()
         return {"archived": True}
 
     async def restore_item(
@@ -2074,11 +2213,9 @@ class RealBackend:
 
     async def get_archived_nodes(self):
         drive_id = await self._drive()
-        with SessionLocal() as db:
-            rows = db.query(models.ArchivedItem).order_by(models.ArchivedItem.created_at.desc()).all()
-            id_to_date = {r.item_id: r.created_at.isoformat() + "Z" if r.created_at else None for r in rows}
+        ids = await self.get_archived_ids()
         out = []
-        for i, archived_at in id_to_date.items():
+        for i in ids:
             try:
                 it = await gd.get_item(drive_id, i)
                 is_folder = "folder" in it
@@ -2099,7 +2236,6 @@ class RealBackend:
                     "has_children": is_folder and it.get("folder", {}).get("childCount", 0) > 0,
                     "main_folder": main_folder,
                     "original_path": original_path,
-                    "archived_at": archived_at,
                 }
                 if not is_folder:
                     node["ext"] = it["name"].rsplit(".", 1)[-1].lower() if "." in it["name"] else ""
@@ -2108,8 +2244,6 @@ class RealBackend:
                 out.append(node)
             except Exception:
                 pass
-        # Sort most-recently-archived first
-        out.sort(key=lambda x: x.get("archived_at") or "", reverse=True)
         return out
 
     async def get_deleted_ids(self) -> list[str]:

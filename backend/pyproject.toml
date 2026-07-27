@@ -1,6 +1,6 @@
 [tool.pyrefly]
-python_interpreter = "c:/Vesseldms06072026/Vessel_DMS/.venv/Scripts/python.exe"
+python_interpreter = "c:/Users/ERPSupport/Downloads/vessel_dms_backend_updated/.venv/Scripts/python.exe"
 search_path = [
-  "c:/Vesseldms06072026/Vessel_DMS/.venv/Lib/site-packages",
-  "c:/Vesseldms06072026/Vessel_DMS/backend",
+  "c:/Users/ERPSupport/Downloads/vessel_dms_backend_updated/.venv/Lib/site-packages",
+  "c:/Users/ERPSupport/Downloads/vessel_dms_backend_updated",
 ]
