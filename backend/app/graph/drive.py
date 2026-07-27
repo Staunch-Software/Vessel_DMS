@@ -116,12 +116,31 @@ async def batch_create_folders(
                         else:
                             raise
 
-        # Resolve already-existing folders individually (rare during provisioning)
+       # Resolve already-existing folders individually. Bounded concurrency
+        # (not asyncio.gather-all-at-once) — a burst of many simultaneous
+        # lookups here is exactly what tripped Graph's activityLimitReached
+        # 429 when most/all items in a chunk were conflicts (e.g. re-running
+        # precreate for a month that's already mostly provisioned).
         if conflict_items:
-            fetched = await asyncio.gather(
-                *(ensure_folder(drive_id, pid, name) for pid, name in conflict_items)
+            sem = asyncio.Semaphore(3)
+
+            async def _resolve_one(pid, name):
+                async with sem:
+                    for attempt in range(6):
+                        try:
+                            return (pid, name), await ensure_folder(drive_id, pid, name)
+                        except GraphError as e:
+                            if e.status == 429 and attempt < 5:
+                                await asyncio.sleep(
+                                    min(2 ** (attempt + 1), 60) + __import__('random').random()
+                                )
+                            else:
+                                raise
+
+            resolved = await asyncio.gather(
+                *(_resolve_one(pid, name) for pid, name in conflict_items)
             )
-            for (pid, name), item in zip(conflict_items, fetched):
+            for (pid, name), item in resolved:
                 result[(pid, name)] = item
 
     return result

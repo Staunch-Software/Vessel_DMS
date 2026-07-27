@@ -20,6 +20,7 @@ from .config import settings
 from .db import models
 from .db.base import SessionLocal
 from .services.classify import classify
+from .ocr.dates import month_label
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ async def precreate_next_month(force: bool = False) -> int:
     """Ensure next month's folders exist. Returns how many were processed."""
     from .services import get_backend
     from .services.real_backend import RealBackend
+    from .graph import drive as gd
 
     if not (settings.graph_configured and settings.db_configured):
         return 0
@@ -61,21 +63,55 @@ async def precreate_next_month(force: bool = False) -> int:
         return 0
 
     ny, nm = _next_month(today.year, today.month)
+    label = month_label(ny, nm) 
     drive_id = await backend._drive()
     with SessionLocal() as db:
         rows = [
             (r.drive_item_id, r.path, r.vessel_id)
             for r in db.query(models.Folder).filter_by(month_driven=True).all()
         ]
+    if not rows:
+        return 0
+
+    # Pass 1: batch-create the month folder itself for every vessel/main in one go.
+    month_items = await gd.batch_create_folders(
+        drive_id, [(item_id, label) for item_id, _, _ in rows]
+    )
+
+    with SessionLocal() as db:
+        month_paths = {}  # (item_id) -> (mpath, month_item_id)
+        for item_id, path, vessel_id in rows:
+            item = month_items.get((item_id, label))
+            if not item:
+                continue
+            mpath = f"{path}/{label}"
+            backend._upsert(db, mpath, label, "month", item["id"], False, vessel_id)
+            month_paths[item_id] = (mpath, item["id"], vessel_id, path)
+        db.commit()
+
+    # Pass 2: batch-create every category subfolder across every month folder in one go.
+    cat_targets = []  # (month_item_id, cat_name, mpath, vessel_id)
     for item_id, path, vessel_id in rows:
-        categories = classify(path.split("/")).get("categories", [])
-        spec = {"month_children": [{"name": c, "kind": "leaf"} for c in categories]}
+        entry = month_paths.get(item_id)
+        if not entry:
+            continue
+        mpath, month_item_id, vid, orig_path = entry
+        categories = classify(orig_path.split("/")).get("categories", [])
+        for cat in categories:
+            cat_targets.append((month_item_id, cat, mpath, vid))
+
+    if cat_targets:
+        cat_items = await gd.batch_create_folders(
+            drive_id, [(mid, cat) for mid, cat, _, _ in cat_targets]
+        )
         with SessionLocal() as db:
-            await backend._ensure_month(db, drive_id, item_id, path, spec, ny, nm, vessel_id)
+            for month_item_id, cat, mpath, vid in cat_targets:
+                item = cat_items.get((month_item_id, cat))
+                if item:
+                    backend._upsert(db, f"{mpath}/{cat}", cat, "leaf", item["id"], False, vid)
             db.commit()
+
     return len(rows)
-
-
 async def reconcile_pool() -> dict:
     """Retry stuck vessel-folder-pool replenishments and top up the pool to
     POOL_TARGET_SIZE if it's short.

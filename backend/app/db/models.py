@@ -81,9 +81,9 @@ class PoolSlot(Base):
     # provisioning task hasn't finished yet (used by the reconciliation
     # job to detect a crashed/stuck build).
     status: Mapped[str] = mapped_column(String(20), default="building", index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
 
@@ -101,9 +101,9 @@ class ReplenishJob(Base):
         ForeignKey("pool_slots.id", ondelete="SET NULL"), nullable=True
     )
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)  # pending/done/failed
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
 
@@ -116,6 +116,47 @@ class UploadJob(Base):
     destination: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     detected_month: Mapped[str | None] = mapped_column(String(40), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class User(Base):
+    """Legacy/auxiliary user table captured by earlier migrations."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    azure_oid: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    given_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    surname: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    preferred_username: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class VesselJob(Base):
+    """Simple background-job status table from earlier migrations."""
+
+    __tablename__ = "vessel_jobs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class DeletedItem(Base):
+    """Audit table for deleted SharePoint items."""
+
+    __tablename__ = "deleted_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    item_type: Mapped[str] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -133,6 +174,14 @@ class UserProfile(Base):
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     office_location: Mapped[str | None] = mapped_column(String(300), nullable=True)
     office_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    address_line1: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    address_line2: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    area_locality: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    landmark: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    country: Mapped[str | None] = mapped_column(String(100), nullable=True)
     company_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     employee_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     manager_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -151,6 +200,25 @@ class UserProfile(Base):
     activity_logs: Mapped[list["ActivityLog"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    emergency_contacts: Mapped[list["EmergencyContact"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class EmergencyContact(Base):
+    __tablename__ = "emergency_contacts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_email: Mapped[str] = mapped_column(
+        String(320), ForeignKey("user_profiles.email", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    relationship_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    user: Mapped["UserProfile"] = relationship(back_populates="emergency_contacts")
 
 
 class FolderPermission(Base):
