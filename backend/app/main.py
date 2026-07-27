@@ -11,15 +11,6 @@ import os
 import warnings
 from datetime import datetime, timedelta, timezone
 
-# ── Configure root logging so log.info()/log.warning() calls across the app
-#    (scheduler.py, real_backend.py, etc.) actually get printed. Without
-#    this, only libraries that configure their own logging (like Alembic)
-#    show any output — our own logger.info() calls are silently swallowed.
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
-
 # ── Timezone: tell tzlocal/APScheduler the system is UTC+5:30 (IST) ──────────
 os.environ.setdefault("TZ", "Asia/Kolkata")
 warnings.filterwarnings("ignore", message="Timezone offset does not match system offset")
@@ -171,17 +162,22 @@ def _ensure_database_exists(db_url: str) -> None:
 
 @app.on_event("startup")
 async def _startup():
-    from .scheduler import precreate_next_month, start_scheduler, fill_pool_on_startup
+    from .scheduler import precreate_next_month, start_scheduler
     import logging as _log
 
     _logger = _log.getLogger(__name__)
-    print(">>> STARTUP: begin", flush=True)
 
     if settings.db_configured:
-        print(">>> STARTUP: db_configured=True, calling _ensure_database_exists", flush=True)
+        # 1. Automatic database creation if PostgreSQL database is missing
         _ensure_database_exists(settings.database_url_resolved)
-        print(">>> STARTUP: _ensure_database_exists done", flush=True)
 
+        # 2. Smart Alembic migration:
+        #    - If this is a brand-new empty database → run all migrations from scratch.
+        #    - If tables exist but alembic_version is missing (e.g. tables were created
+        #      by a prior create_all run, or by an older version without Alembic) →
+        #      stamp the current head so Alembic doesn't try to re-create tables that
+        #      already exist, then run any pending migrations normally.
+        #    - If alembic_version is present → just run any pending migrations normally.
         try:
             import pathlib
             import alembic.config
@@ -189,23 +185,23 @@ async def _startup():
             from sqlalchemy import inspect, text
             from .db.base import engine
 
-            print(">>> STARTUP: about to open engine.connect() for inspect", flush=True)
             _alembic_ini = pathlib.Path(__file__).parent.parent / "alembic.ini"
             alembic_cfg = alembic.config.Config(str(_alembic_ini))
 
             if engine is not None:
                 with engine.connect() as conn:
-                    print(">>> STARTUP: engine.connect() succeeded, inspecting tables", flush=True)
                     inspector = inspect(conn)
                     existing_tables = set(inspector.get_table_names())
-                    print(f">>> STARTUP: existing_tables={existing_tables}", flush=True)
 
+                    # Check if alembic_version table exists
                     has_version_table = "alembic_version" in existing_tables
+                    # Check if any of our app tables already exist
                     app_tables = {"vessels", "folders", "user_profiles", "user_sessions"}
                     has_app_tables = bool(app_tables & existing_tables)
 
                     if has_app_tables and not has_version_table:
-                        print(">>> STARTUP: stamping head", flush=True)
+                        # Tables exist without Alembic tracking — stamp as head to
+                        # prevent re-running create_table migrations on existing tables.
                         _logger.info(
                             "DB tables exist without Alembic version tracking. "
                             "Stamping to 'head' before running incremental migrations."
@@ -215,34 +211,39 @@ async def _startup():
             print(">>> STARTUP: about to run command.upgrade", flush=True)
             command.upgrade(alembic_cfg, "head")
             print(">>> STARTUP: command.upgrade done", flush=True)
+
+            # Alembic's env.py calls logging.config.fileConfig(...), which
+            # fully reconfigures the ROOT logger per alembic.ini's
+            # [logger_root] section (level = WARN). That silently raises the
+            # effective level for every app logger that doesn't set its own
+            # level explicitly, so log.info(...) calls across the app stop
+            # appearing after this point. Re-force it back to INFO.
+            logging.basicConfig(
+                level=logging.INFO,
+                format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+                force=True,
+            )
+            print(">>> STARTUP: root logger re-forced to INFO after Alembic fileConfig", flush=True)
             _logger.info("Alembic migrations completed successfully.")
         except Exception as exc:
             print(f">>> STARTUP: alembic block FAILED: {exc}", flush=True)
             _logger.warning("Alembic automatic migration failed: %s", exc)
 
+        # 3. Safety net: make sure ALL tables and columns are present.
+        #    create_all with checkfirst=True will add any missing tables but
+        #    cannot add missing columns — those are handled by migrations above.
         try:
             from .db.base import Base, engine
             if engine is not None:
-                print(">>> STARTUP: about to run create_all", flush=True)
                 Base.metadata.create_all(bind=engine, checkfirst=True)
-                print(">>> STARTUP: create_all done", flush=True)
                 _logger.info("Database safety-net create_all completed.")
         except Exception as exc:
-            print(f">>> STARTUP: create_all FAILED: {exc}", flush=True)
             _logger.warning("Database safety net table creation failed: %s", exc)
 
-    print(">>> STARTUP: about to start_scheduler", flush=True)
     app.state.scheduler = start_scheduler()
-    print(">>> STARTUP: start_scheduler done", flush=True)
     if settings.graph_configured and settings.db_configured:
-        print(">>> STARTUP: about to create precreate_next_month task", flush=True)
+        # Catch-up in case the server started after the 20th.
         asyncio.create_task(precreate_next_month())
-        print(">>> STARTUP: about to create fill_pool_on_startup task", flush=True)
-        from .scheduler import fill_pool_on_startup
-        asyncio.create_task(fill_pool_on_startup())
-    print(">>> STARTUP: complete", flush=True)
-
-
 # ---------------------------------------------------------------------------
 # Auth endpoints
 # ---------------------------------------------------------------------------
@@ -425,6 +426,8 @@ def _write_invalid_attempt(
 def _session_reason_message(reason: str) -> str:
     messages = {
         "not_found": "Session not found. Please sign in again.",
+        "token_expiry": "Your session token expired. Please sign in again.",
+        "inactivity": "Your session expired due to inactivity. Please sign in again.",
         "expired": "Your session has expired. Please sign in again.",
         "logged_out": "This session has ended. Please sign in again.",
         "revoked": "Your access was revoked. Contact your administrator if unexpected.",
@@ -727,13 +730,13 @@ async def auth_login(request: Request, payload: LoginIn):
                 existing_cached[key] = val
         profile = existing_cached
     else:
-        profile.setdefault("created_at", now.isoformat())
+        profile.setdefault("created_at", now.isoformat().replace("+00:00", "Z"))
         profile.setdefault("emergency_contact", None)
         profile.setdefault("folder_permissions", [])
-        profile.setdefault("recent_activity", [{"action": "login", "detail": "Logged in", "created_at": now.isoformat()}])
+        profile.setdefault("recent_activity", [{"action": "login", "detail": "Logged in", "created_at": now.isoformat().replace("+00:00", "Z")}])
         _profile_cache[email] = profile
 
-    # ── Create server-side session (with retry) ───────────────────────────────
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            # ── Create server-side session (with retry) ───────────────────────────────
     session_id: str | None = None
     if settings.db_configured:
         last_exc: Exception | None = None
@@ -1107,78 +1110,6 @@ async def repair_vessel_links():
     return await get_backend().repair_vessel_links()
 
 
-@app.get("/api/admin/pool-status")
-async def pool_status(_session: object = Depends(require_session)):
-    """Return the current vessel folder pool status:
-    how many slots are available, building, claimed, or failed.
-    Also shows whether create_vessel will use the fast pool path or fall back
-    to full provisioning (~2.4 min).
-    """
-    if not settings.db_configured:
-        raise HTTPException(503, "Database not configured")
-    from .db.base import SessionLocal
-    from .db import models as db_models
-    from .scheduler import POOL_TARGET_SIZE
-    with SessionLocal() as db:
-        rows = db.query(db_models.PoolSlot).all()
-        counts = {"available": 0, "building": 0, "claimed": 0, "failed": 0}
-        slots = []
-        for r in rows:
-            counts[r.status] = counts.get(r.status, 0) + 1
-            slots.append({
-                "id": r.id,
-                "slug": r.slug,
-                "status": r.status,
-                "created_at": r.created_at.isoformat() + "Z" if r.created_at else None,
-            })
-        pending_jobs = db.query(db_models.ReplenishJob).filter_by(status="pending").count()
-        failed_jobs = db.query(db_models.ReplenishJob).filter_by(status="failed").count()
-    return {
-        "pool_target_size": POOL_TARGET_SIZE,
-        "counts": counts,
-        "total_slots": len(slots),
-        "fast_path_available": counts["available"] > 0,
-        "pending_replenish_jobs": pending_jobs,
-        "failed_replenish_jobs": failed_jobs,
-        "slots": slots,
-    }
-
-
-@app.post("/api/admin/pool-fill")
-async def pool_fill(_session: object = Depends(require_session)):
-    """Manually trigger pool fill — builds deficit slots one-by-one in the
-    background. Returns immediately; check /api/admin/pool-status for progress.
-    """
-    if not (settings.db_configured and settings.graph_configured):
-        raise HTTPException(503, "Graph + DB required")
-    from .scheduler import fill_pool_on_startup
-    asyncio.create_task(fill_pool_on_startup())
-    return {"ok": True, "message": "Pool fill started in background"}
-
-
-@app.post("/api/admin/pool-reset-failed")
-async def pool_reset_failed(_session: object = Depends(require_session)):
-    """Mark all 'failed' and stuck 'building' pool slots as deleted so
-    reconcile_pool can rebuild them. Safe to call at any time.
-    """
-    if not settings.db_configured:
-        raise HTTPException(503, "Database not configured")
-    from .db.base import SessionLocal
-    from .db import models as db_models
-    from datetime import datetime, timedelta
-    with SessionLocal() as db:
-        failed = db.query(db_models.PoolSlot).filter_by(status="failed").all()
-        cutoff = datetime.utcnow() - timedelta(minutes=15)
-        stuck = db.query(db_models.PoolSlot).filter(
-            db_models.PoolSlot.status == "building",
-            db_models.PoolSlot.created_at < cutoff,
-        ).all()
-        for s in failed + stuck:
-            db.delete(s)
-        db.commit()
-        return {"deleted_failed": len(failed), "deleted_stuck_building": len(stuck)}
-
-
 @app.post("/api/admin/migrate-drawing-folder")
 async def migrate_drawing_folder():
     """One-time migration: for every vessel, collapse the 'Drawing' wrapper
@@ -1274,28 +1205,12 @@ async def migrate_drawing_folder():
 
 @app.get("/api/mains")
 async def mains(_session: object = Depends(require_session)):
-    import logging as _log
-    try:
-        return await get_backend().mains()
-    except Exception as exc:
-        _log.getLogger(__name__).error("GET /api/mains failed: %s", exc, exc_info=True)
-        raise HTTPException(
-            status_code=503,
-            detail="Unable to load folder structure. SharePoint may be temporarily unavailable — please try again shortly.",
-        )
+    return await get_backend().mains()
 
 
 @app.get("/api/stats")
 async def stats(_session: object = Depends(require_session)):
-    import logging as _log
-    try:
-        return await get_backend().stats()
-    except Exception as exc:
-        _log.getLogger(__name__).error("GET /api/stats failed: %s", exc, exc_info=True)
-        raise HTTPException(
-            status_code=503,
-            detail="Unable to load statistics. The database may be temporarily unavailable — please try again shortly.",
-        )
+    return await get_backend().stats()
 
 
 @app.get("/api/folders/{folder_id}/children")
