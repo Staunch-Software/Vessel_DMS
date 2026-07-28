@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, ExternalLink, Loader2, Search, Upload, Trash2 } from "lucide-react";
+import { AlertCircle, Loader2, Search, Upload, Trash2 } from "lucide-react";
 import { getChildren, fileContentUrl, getJob, monthUpload, uploadFile, type FolderNode } from "../api";
 
 interface FlatRow {
@@ -672,8 +672,6 @@ export function MainFolderListView({ mainFolderId, mainFolderName, onPreviewFile
             </thead>
             <tbody>
               {groupedRows.map((row, idx) => {
-                const selectedInRow = row.files.filter((f) => selectedFileIds.has(f.id));
-                const openTargets = selectedInRow.length > 0 ? selectedInRow : row.files;
 
                 return (
                   <tr key={`${row.groupKey}-${idx}`} className="border-t border-border transition hover:bg-bg">

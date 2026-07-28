@@ -7,12 +7,14 @@ import {
 
 const tenantId = import.meta.env.VITE_AZURE_TENANT_ID || "";
 const clientId = import.meta.env.VITE_AZURE_CLIENT_ID || "";
-// Ensure the redirect URI points to the auth callback page
+// Resolve the redirect URI at runtime so the same build works on any host
+// (VM IP, custom domain, localhost) without a rebuild.
+// Priority: VITE_AZURE_REDIRECT_URI (from .env) → window.location.origin + /auth
 const redirectUri =
     import.meta.env.VITE_AZURE_REDIRECT_URI ||
     (typeof window !== "undefined"
         ? `${window.location.origin}/auth`
-        : "http://localhost:5173/auth");
+        : "");
 
 const msalConfig: Configuration = {
     auth: {
