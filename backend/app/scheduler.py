@@ -28,8 +28,16 @@ PRECREATE_DAY = 20
 
 # --------------------------------------------------------------- vessel pool
 POOL_TARGET_SIZE = 5
-STUCK_BUILD_TIMEOUT_MINUTES = 10
-SLOT_BUILD_TIMEOUT_SECONDS = 180  
+# How long before reconcile_pool declares a 'building' PoolSlot / 'pending'
+# ReplenishJob as stuck and marks it 'failed' so it can be retried.
+# Must be comfortably larger than SLOT_BUILD_TIMEOUT_SECONDS (in minutes).
+STUCK_BUILD_TIMEOUT_MINUTES = 25
+# Hard cap per _build_pool_slot() call.  Under Graph 429 throttling a single
+# folder POST can retry up to 6× with up to 60s back-off, and a full vessel
+# template spans many folders across several main departments — measured wall
+# time under throttling is 5-10 minutes.  180s was far too tight and caused
+# all the accumulated 'failed' slots; 600s (10 min) gives safe headroom.
+SLOT_BUILD_TIMEOUT_SECONDS = 600
 # Arbitrary fixed key for the advisory lock — must be the same constant
 # everywhere this job runs (all pods) so they actually contend on the same
 # lock instead of each getting their own.
@@ -284,29 +292,25 @@ async def fill_pool_on_startup() -> None:
     """Build pool slots one-by-one at startup until POOL_TARGET_SIZE is reached.
     ...
     """
-    print(">>> FILL_POOL: task started", flush=True)
+    log.info("[fill_pool_on_startup] Task started")
     from .services import get_backend
     from .services.real_backend import RealBackend
 
     if not (settings.graph_configured and settings.db_configured):
-        print(">>> FILL_POOL: graph or db not configured, returning early", flush=True)
+        log.info("[fill_pool_on_startup] Graph or DB not configured — skipping pool fill")
         return
 
     backend = get_backend()
     if not isinstance(backend, RealBackend):
-        print(f">>> FILL_POOL: backend is {type(backend).__name__}, not RealBackend, returning early", flush=True)
+        log.info("[fill_pool_on_startup] Backend is %s (not RealBackend) — skipping pool fill", type(backend).__name__)
         return
-    print(">>> FILL_POOL: backend confirmed RealBackend, proceeding", flush=True)
+    log.info("[fill_pool_on_startup] Backend confirmed RealBackend — proceeding")
 
-    print(">>> FILL_POOL: about to open SessionLocal + acquire advisory lock", flush=True)
     with SessionLocal() as db:
-        print(">>> FILL_POOL: SessionLocal opened, calling pg_try_advisory_lock", flush=True)
         got_lock = db.execute(
             text("SELECT pg_try_advisory_lock(:key)"), {"key": _POOL_RECONCILE_LOCK_KEY}
         ).scalar()
-        print(f">>> FILL_POOL: pg_try_advisory_lock returned {got_lock}", flush=True)
         if not got_lock:
-            print(">>> FILL_POOL: another instance holds the lock — skipping.", flush=True)
             log.info("[fill_pool_on_startup] Another instance holds the lock — skipping.")
             return
         try:
@@ -316,17 +320,14 @@ async def fill_pool_on_startup() -> None:
             failed = db.query(models.PoolSlot).filter_by(status="failed").count()
             total = db.query(models.PoolSlot).count()
             deficit = max(0, POOL_TARGET_SIZE - available - building)
-            print(f">>> FILL_POOL: counts available={available} building={building} claimed={claimed} failed={failed} total={total} deficit={deficit}", flush=True)
+            log.info(
+                "[fill_pool_on_startup] SNAPSHOT target=%d available=%d building=%d "
+                "claimed=%d failed=%d total=%d deficit=%d",
+                POOL_TARGET_SIZE, available, building, claimed, failed, total, deficit,
+            )
         finally:
             db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _POOL_RECONCILE_LOCK_KEY})
             db.commit()
-    print(">>> FILL_POOL: lock released, session closed", flush=True)
-    
-    log.info(
-        "[fill_pool_on_startup] SNAPSHOT target=%d available=%d building=%d "
-        "claimed=%d failed=%d total=%d deficit=%d",
-        POOL_TARGET_SIZE, available, building, claimed, failed, total, deficit,
-    )
 
     if deficit == 0:
         log.info("[fill_pool_on_startup] Pool already at target (%d slots). Nothing to build.", POOL_TARGET_SIZE)
@@ -359,6 +360,7 @@ async def fill_pool_on_startup() -> None:
             await asyncio.sleep(30)
 
     log.info("[fill_pool_on_startup] Done. Pool top-up complete.")
+
 
 def start_scheduler() -> AsyncIOScheduler | None:
     if not (settings.graph_configured and settings.db_configured):

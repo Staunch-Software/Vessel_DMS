@@ -609,6 +609,9 @@ class RealBackend:
         provisioning (the original ~2.4 minute path) only when the pool is
         empty or the claimed slot fails to link cleanly.
         """
+        import time as _time
+        _t_total = _time.monotonic()
+
         clean_name, clean_imo = self._validate_vessel_input(name, imo)
         payload = {
             "name": clean_name, "imo": clean_imo, "shipyard": shipyard,
@@ -616,41 +619,92 @@ class RealBackend:
         }
         display = self._display(requesting_email, requesting_name)
 
+        creation_method = "unknown"  # filled in below for final log
         slot = self._claim_pool_slot()
         if slot is not None:
-            import time as _time
             _t0 = _time.monotonic()
-            log.info("[create_vessel] Pool slot %d claimed for '%s'", slot["slot_id"], clean_name)
+            log.info(
+                "[create_vessel] Pool slot %d claimed for '%s' (slug=%s) — linking now",
+                slot["slot_id"], clean_name, slot.get("slug", "?"),
+            )
             try:
                 vessel = await self._link_claimed_slot(slot, payload)
-                log.info("[create_vessel] _link_claimed_slot took %.2fs", _time.monotonic() - _t0)
-            except Exception:
+                _link_elapsed = _time.monotonic() - _t0
+                log.info(
+                    "[create_vessel] _link_claimed_slot succeeded in %.2fs for '%s'",
+                    _link_elapsed, clean_name,
+                )
+            except Exception as link_err:
+                _link_elapsed = _time.monotonic() - _t0
                 # Don't leave a half-linked vessel or a stranded slot —
                 # release it back to available and fall back to a normal
                 # from-scratch provision for this request.
-                log.warning("[create_vessel] _link_claimed_slot failed after %.2fs", _time.monotonic() - _t0)
+                log.warning(
+                    "[create_vessel] _link_claimed_slot FAILED after %.2fs for '%s': %s — "
+                    "releasing slot %d and falling back to full provisioning",
+                    _link_elapsed, clean_name, link_err, slot["slot_id"],
+                )
                 self._release_pool_slot(slot["slot_id"])
+                creation_method = "scratch_after_pool_failure"
                 vessel = await self._provision_vessel(payload)
                 activity_message = (
                     f"{display} ({requesting_email}) created vessel '{clean_name}'. "
                     f"No approval was required."
                 )
             else:
+                creation_method = "pool"
                 activity_message = (
                     f"{display} ({requesting_email}) created vessel '{clean_name}' "
                     f"using a pre-provisioned folder set (renamed, not built "
                     f"at this moment). No approval was required."
                 )
                 # Fire-and-forget replenishment — must never add to this
-                # request's response time.
-                asyncio.create_task(self._replenish_one_slot(slot["slot_id"]))
+                # request's response time. Store the task reference so Python
+                # doesn't GC it before it finishes, and attach a done_callback
+                # to surface any exception that escapes _replenish_one_slot.
+                _task = asyncio.create_task(
+                    self._replenish_one_slot(slot["slot_id"]),
+                    name=f"replenish_slot_{slot['slot_id']}",
+                )
+                def _log_task_exception(t: asyncio.Task) -> None:
+                    exc = t.exception() if not t.cancelled() else None
+                    if exc is not None:
+                        log.error(
+                            "[pool] Replenishment task for slot %d raised unhandled exception: %s",
+                            slot["slot_id"], exc, exc_info=exc,
+                        )
+                _task.add_done_callback(_log_task_exception)
+                log.info(
+                    "[pool] Replenishment task created (task=%s) for triggering_slot_id=%d",
+                    _task.get_name(), slot["slot_id"],
+                )
         else:
-            log.warning("[create_vessel] Pool empty — falling back to full provisioning for '%s'", clean_name)
+            log.warning(
+                "[create_vessel] Pool empty — falling back to full provisioning for '%s'",
+                clean_name,
+            )
+            creation_method = "scratch"
             vessel = await self._provision_vessel(payload)
             activity_message = (
                 f"{display} ({requesting_email}) created vessel '{clean_name}'. "
                 f"No approval was required."
             )
+
+        # ── Final success log: vessel created + pool state snapshot ─────────
+        total_elapsed = _time.monotonic() - _t_total
+        vessel_id = vessel.get("id", "?")
+        with SessionLocal() as _snap_db:
+            _available = _snap_db.query(models.PoolSlot).filter_by(status="available").count()
+            _building  = _snap_db.query(models.PoolSlot).filter_by(status="building").count()
+            _claimed   = _snap_db.query(models.PoolSlot).filter_by(status="claimed").count()
+            _failed    = _snap_db.query(models.PoolSlot).filter_by(status="failed").count()
+            _total     = _snap_db.query(models.PoolSlot).count()
+        log.info(
+            "[create_vessel] ✓ Vessel created: id=%s name='%s' imo=%s method=%s "
+            "elapsed=%.2fs | pool_snapshot available=%d building=%d claimed=%d failed=%d total=%d",
+            vessel_id, clean_name, clean_imo, creation_method, total_elapsed,
+            _available, _building, _claimed, _failed, _total,
+        )
 
         await self._create_activity(
             action_type="create_vessel",
@@ -692,10 +746,17 @@ class RealBackend:
                 return None
             pool_slot.status = "claimed"
             db.commit()
-            remaining = db.query(models.PoolSlot).filter_by(status="available").count()
+            # Full pool state snapshot after the claim is committed
+            remaining   = db.query(models.PoolSlot).filter_by(status="available").count()
+            building    = db.query(models.PoolSlot).filter_by(status="building").count()
+            still_claimed = db.query(models.PoolSlot).filter_by(status="claimed").count()
+            failed      = db.query(models.PoolSlot).filter_by(status="failed").count()
+            total       = db.query(models.PoolSlot).count()
             log.info(
-                "[pool] Slot claimed: slot_id=%d slug=%s — %d slot(s) remain available",
-                pool_slot.id, pool_slot.slug, remaining,
+                "[pool] Slot claimed: slot_id=%d slug=%s | "
+                "pool_snapshot available=%d building=%d claimed=%d failed=%d total=%d",
+                pool_slot.id, pool_slot.slug,
+                remaining, building, still_claimed, failed, total,
             )
             return {"slot_id": pool_slot.id, "slug": pool_slot.slug}
 
@@ -707,6 +768,14 @@ class RealBackend:
             if pool_slot is not None:
                 pool_slot.status = "available"
                 db.commit()
+                available_now = db.query(models.PoolSlot).filter_by(status="available").count()
+                log.info(
+                    "[pool] Slot released back to available: slot_id=%d slug=%s — "
+                    "%d slot(s) now available (released after link failure)",
+                    slot_id, pool_slot.slug, available_now,
+                )
+            else:
+                log.warning("[pool] _release_pool_slot: slot_id=%d not found in DB — nothing to release", slot_id)
 
     async def _link_claimed_slot(self, slot: dict, payload: dict) -> dict:
         """Rename a claimed pool slot's ship folders to the real vessel
@@ -873,11 +942,17 @@ class RealBackend:
             pool_slot = db.query(models.PoolSlot).filter_by(id=slot_id).one()
             pool_slot.status = "available"
             db.commit()
+            # Full pool state snapshot now that this slot is marked available
             available_now = db.query(models.PoolSlot).filter_by(status="available").count()
+            building_now  = db.query(models.PoolSlot).filter_by(status="building").count()
+            claimed_now   = db.query(models.PoolSlot).filter_by(status="claimed").count()
+            failed_now    = db.query(models.PoolSlot).filter_by(status="failed").count()
+            total_now     = db.query(models.PoolSlot).count()
         log.info(
-            "[pool] Slot filled: slot_id=%d slug=%s marked available — "
-            "%d slot(s) now available in pool",
-            slot_id, slug, available_now,
+            "[pool] ✓ Slot filled: slot_id=%d slug=%s marked available | "
+            "pool_snapshot available=%d building=%d claimed=%d failed=%d total=%d",
+            slot_id, slug,
+            available_now, building_now, claimed_now, failed_now, total_now,
         )
         return slot_id
 
@@ -890,37 +965,111 @@ class RealBackend:
         reconciliation check can find and retry, instead of the work
         silently vanishing with the in-memory asyncio task.
         """
+        # Import the same timeout + target constants used by reconcile_pool and
+        # fill_pool_on_startup so the three callers stay in sync.
+        from ..scheduler import POOL_TARGET_SIZE, SLOT_BUILD_TIMEOUT_SECONDS
+
+        log.info(
+            "[pool] Replenishment task started: triggering_slot_id=%d "
+            "(timeout=%ds target=%d)",
+            triggering_slot_id, SLOT_BUILD_TIMEOUT_SECONDS, POOL_TARGET_SIZE,
+        )
+
+        # ── Guard: don't start a concurrent build if the pool is already ──────
+        # being topped up (building > 0 counts toward the effective pool size,
+        # exactly the same way reconcile_pool's deficit calculation works:
+        #   deficit = max(0, POOL_TARGET_SIZE - available - building)
+        # Launching a second _build_pool_slot() while one is already running
+        # bursts Graph API requests, triggers 429 throttling, and causes BOTH
+        # builds to slow down or fail — which is why available never recovered.
+        with SessionLocal() as db:
+            _cur_available = db.query(models.PoolSlot).filter_by(status="available").count()
+            _cur_building  = db.query(models.PoolSlot).filter_by(status="building").count()
+            _cur_claimed   = db.query(models.PoolSlot).filter_by(status="claimed").count()
+            _cur_failed    = db.query(models.PoolSlot).filter_by(status="failed").count()
+            _cur_total     = db.query(models.PoolSlot).count()
+
+        effective_pool = _cur_available + _cur_building
+        log.info(
+            "[pool] Pre-build pool check: available=%d building=%d claimed=%d "
+            "failed=%d total=%d → effective=%d (target=%d)",
+            _cur_available, _cur_building, _cur_claimed, _cur_failed, _cur_total,
+            effective_pool, POOL_TARGET_SIZE,
+        )
+
+        if effective_pool >= POOL_TARGET_SIZE:
+            log.info(
+                "[pool] Replenishment skipped (triggering_slot=%d): "
+                "effective pool size %d already meets target %d "
+                "(available=%d + building=%d). "
+                "reconcile_pool will verify on its next tick.",
+                triggering_slot_id, effective_pool, POOL_TARGET_SIZE,
+                _cur_available, _cur_building,
+            )
+            return
+
+        # Pool genuinely needs a new slot — proceed with the build.
         with SessionLocal() as db:
             job = models.ReplenishJob(triggering_slot_id=triggering_slot_id, status="pending")
             db.add(job)
             db.commit()
             db.refresh(job)
             job_id = job.id
+        log.info(
+            "[pool] ReplenishJob created: job_id=%d triggering_slot_id=%d "
+            "(deficit=%d, building new slot now)",
+            job_id, triggering_slot_id, POOL_TARGET_SIZE - effective_pool,
+        )
 
         try:
-            new_slot_id = await self._build_pool_slot()
+            new_slot_id = await asyncio.wait_for(
+                self._build_pool_slot(),
+                timeout=SLOT_BUILD_TIMEOUT_SECONDS,
+            )
             with SessionLocal() as db:
                 job = db.query(models.ReplenishJob).filter_by(id=job_id).one()
                 job.status = "done"
                 job.new_slot_id = new_slot_id
                 db.commit()
+                # Final pool state after replenishment job completes
                 available_now = db.query(models.PoolSlot).filter_by(status="available").count()
+                building_now  = db.query(models.PoolSlot).filter_by(status="building").count()
+                claimed_now   = db.query(models.PoolSlot).filter_by(status="claimed").count()
+                failed_now    = db.query(models.PoolSlot).filter_by(status="failed").count()
+                total_now     = db.query(models.PoolSlot).count()
             log.info(
-                "[pool] Replenished: new_slot_id=%d built (triggered by slot %d) — "
-                "%d slot(s) now available",
-                new_slot_id, triggering_slot_id, available_now,
+                "[pool] ✓ Replenishment complete: new_slot_id=%d job_id=%d "
+                "(triggered by slot %d) | pool_snapshot available=%d building=%d "
+                "claimed=%d failed=%d total=%d",
+                new_slot_id, job_id, triggering_slot_id,
+                available_now, building_now, claimed_now, failed_now, total_now,
             )
-        except Exception as e:
-
+        except asyncio.TimeoutError:
+            # Build hung for longer than SLOT_BUILD_TIMEOUT_SECONDS.
+            # Mark the job failed so reconcile_pool can retry it on the next
+            # 5-minute tick. The PoolSlot itself stays in 'building' state and
+            # will be marked 'failed' by reconcile_pool's stuck-slot cleanup.
             with SessionLocal() as db:
                 job = db.query(models.ReplenishJob).filter_by(id=job_id).one_or_none()
                 if job is not None:
                     job.status = "failed"
                     db.commit()
             log.warning(
-                "[_replenish_one_slot] Pool replenishment failed "
-                "(triggered by slot %d): %s", triggering_slot_id, e,
+                "[pool] ✗ Replenishment TIMED OUT after %ds (job_id=%d triggered by slot %d) — "
+                "ReplenishJob marked failed; reconcile_pool will retry on next tick",
+                SLOT_BUILD_TIMEOUT_SECONDS, job_id, triggering_slot_id,
             )
+        except Exception as e:
+            with SessionLocal() as db:
+                job = db.query(models.ReplenishJob).filter_by(id=job_id).one_or_none()
+                if job is not None:
+                    job.status = "failed"
+                    db.commit()
+            log.warning(
+                "[pool] ✗ Replenishment FAILED (job_id=%d triggered by slot %d): %s",
+                job_id, triggering_slot_id, e,
+            )
+
 
     async def _provision_vessel(self, payload):
         # Re-validate at execution time — covers the approve-time path, where
