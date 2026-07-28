@@ -2211,13 +2211,66 @@ class RealBackend:
             rows = db.query(models.ArchivedItem).all()
             return [r.item_id for r in rows]
 
+    def _get_archived_rows(self) -> list[models.ArchivedItem]:
+        """Return all ArchivedItem DB rows (includes item_id, item_type, created_at)."""
+        with SessionLocal() as db:
+            return db.query(models.ArchivedItem).all()
+
     async def get_archived_nodes(self):
+        """Fetch metadata for all archived items using Graph $batch (up to 20 per request).
+
+        Previously this made one sequential Graph API call per archived item, causing
+        multi-second (sometimes 30-40 s) delays on initial load when many items are
+        archived.  Graph's JSON batch endpoint lets us pack up to 20 GET requests into
+        a single HTTP round-trip, reducing N calls → ceil(N/20) calls.
+        """
         drive_id = await self._drive()
-        ids = await self.get_archived_ids()
+        db_rows = self._get_archived_rows()
+        if not db_rows:
+            return []
+
+        # Build a mapping from item_id -> archived_at timestamp (stored as created_at in DB)
+        archived_at_by_id: dict[str, str] = {}
+        for row in db_rows:
+            if row.created_at is not None:
+                archived_at_by_id[row.item_id] = row.created_at.isoformat()
+
+        ids = [row.item_id for row in db_rows]
+        _BATCH_SIZE = 20  # Graph $batch limit
         out = []
-        for i in ids:
+
+        for offset in range(0, len(ids), _BATCH_SIZE):
+            chunk = ids[offset: offset + _BATCH_SIZE]
+
+            batch_requests = [
+                {
+                    "id": str(idx),
+                    "method": "GET",
+                    "url": f"/drives/{drive_id}/items/{item_id}"
+                           "?$select=id,name,folder,file,size,lastModifiedDateTime,parentReference",
+                }
+                for idx, item_id in enumerate(chunk)
+            ]
+
             try:
-                it = await gd.get_item(drive_id, i)
+                resp = await graph().post("/$batch", json={"requests": batch_requests})
+            except Exception as e:
+                import logging as _log
+                _log.getLogger(__name__).warning("get_archived_nodes: batch request failed: %s", e)
+                continue
+
+            by_id = {r["id"]: r for r in resp.get("responses", [])}
+
+            for idx, item_id in enumerate(chunk):
+                r = by_id.get(str(idx), {})
+                status = r.get("status", 0)
+                if status not in (200, 201):
+                    # Item may have been permanently deleted or moved; skip silently
+                    continue
+                it = r.get("body", {})
+                if not it:
+                    continue
+
                 is_folder = "folder" in it
                 kind = "folder" if is_folder else "file"
 
@@ -2236,14 +2289,14 @@ class RealBackend:
                     "has_children": is_folder and it.get("folder", {}).get("childCount", 0) > 0,
                     "main_folder": main_folder,
                     "original_path": original_path,
+                    "archived_at": archived_at_by_id.get(item_id),
                 }
                 if not is_folder:
                     node["ext"] = it["name"].rsplit(".", 1)[-1].lower() if "." in it["name"] else ""
                     node["size"] = it.get("size")
                     node["modified"] = it.get("lastModifiedDateTime")
                 out.append(node)
-            except Exception:
-                pass
+
         return out
 
     async def get_deleted_ids(self) -> list[str]:

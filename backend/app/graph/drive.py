@@ -99,6 +99,12 @@ async def batch_create_folders(
                 conflict_items.append((pid, name))
             elif status == 429:
                 throttled_items.append((pid, name))
+            elif status == 404:
+                import logging as _log
+                _log.getLogger(__name__).warning(
+                    "batch_create_folders: parent item not found (stale DB cache?) "
+                    "pid=%s name=%s — skipping", pid, name
+                )
             else:
                 raise GraphError(status, str(body))
 
