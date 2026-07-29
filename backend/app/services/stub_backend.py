@@ -323,6 +323,46 @@ class StubBackend:
             "sp_errors": [],
         }
 
+    async def delete_vessel(self, vessel_id: str, requesting_email=None, requesting_name=None):
+        vessel = next((v for v in store.vessels if v["id"] == vessel_id), None)
+        if not vessel:
+            raise NotFound("Vessel not found")
+        vname = vessel["name"]
+        display = self._display(requesting_email, requesting_name)
+        return await self._admin_or_pending(
+            action_type="delete_vessel",
+            requesting_email=requesting_email,
+            requesting_name=requesting_name,
+            department="All Departments",
+            vessel_id=vessel_id,
+            vessel_name=vname,
+            target_id=vessel_id,
+            target_description=f"Vessel: {vname}",
+            payload={"vessel_id": vessel_id, "vessel_name": vname},
+            pending_message=(
+                f"{display} ({requesting_email}) is requesting approval to delete vessel '{vname}'."
+            ),
+            activity_message=(
+                f"SPE Admin ({requesting_email}) deleted vessel '{vname}'. No approval was required."
+            ),
+            execute=lambda: self._execute_delete_vessel(vessel_id),
+        )
+
+    async def _execute_delete_vessel(self, vessel_id: str):
+        vessel = next((v for v in store.vessels if v["id"] == vessel_id), None)
+        if not vessel:
+            return {"deleted": False, "message": "Vessel not found"}
+        vname = vessel["name"]
+        store.vessels = [v for v in store.vessels if v["id"] != vessel_id]
+        store.deleted_ids.add(vessel_id)
+        if hasattr(settings, "db_configured") and settings.db_configured:
+            with SessionLocal() as db:
+                v_db = db.query(models.Vessel).filter_by(id=int(vessel_id)).first()
+                if v_db:
+                    db.delete(v_db)
+                    db.commit()
+        return {"deleted": True, "vessel_name": vname, "message": f"Moved vessel '{vname}' to Recycle Bin."}
+
     async def reprovision_vessel(self, vessel_id: str) -> dict:
         """Stub: no-op — the in-memory store always uses the current template."""
         vessel = next((v for v in store.vessels if v["id"] == vessel_id), None)
@@ -843,6 +883,11 @@ class StubBackend:
             if not any(v["id"] == vessel_id for v in store.vessels):
                 return store.mark_rejected(request_id, decided_by_email, "Target no longer exists")
             await self._execute_update_vessel(payload)
+        elif action_type == "delete_vessel":
+            vessel_id = payload.get("vessel_id") or approval.get("target_id")
+            if not any(v["id"] == vessel_id for v in store.vessels):
+                return store.mark_rejected(request_id, decided_by_email, "Target no longer exists")
+            await self._execute_delete_vessel(vessel_id)
         elif action_type == "archive_item":
             await self._execute_archive(approval["target_id"], payload.get("item_type", "folder"))
         elif action_type == "restore_item":

@@ -47,6 +47,7 @@ const ACTION_LABELS: Record<ApprovalActionType, string> = {
   create_folder: "Create Folder",
   create_vessel: "Create Vessel",
   update_vessel: "Update Vessel",
+  delete_vessel: "Delete Vessel",
   archive_item: "Archive",
   restore_item: "Restore",
   restore_from_recycle_bin: "Restore from Recycle Bin",

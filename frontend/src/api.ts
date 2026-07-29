@@ -145,6 +145,17 @@ export async function updateVessel(
   return (await api.patch(`/vessels/${vesselId}`, payload)).data;
 }
 
+export async function deleteVessel(
+  vesselId: string,
+  userEmail?: string,
+  vesselName?: string
+): Promise<ActionResult> {
+  const params: Record<string, string> = {};
+  if (userEmail) params.user_email = userEmail;
+  if (vesselName) params.vessel_name = vesselName;
+  return (await api.delete(`/vessels/${vesselId}`, Object.keys(params).length ? { params } : undefined)).data;
+}
+
 export interface Stats {
   vessels: number;
   main_folders: number;
@@ -328,6 +339,7 @@ export type ApprovalActionType =
   | "create_folder"
   | "create_vessel"
   | "update_vessel"
+  | "delete_vessel"
   | "archive_item"
   | "restore_item"
   | "restore_from_recycle_bin"

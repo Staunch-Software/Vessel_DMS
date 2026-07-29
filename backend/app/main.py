@@ -1086,6 +1086,45 @@ async def update_vessel(
         _raise(e)
 
 
+@app.delete("/api/vessels/{vessel_id}")
+async def delete_vessel(
+    vessel_id: str,
+    vessel_name: str | None = Query(None),
+    x_user_email: str | None = Header(default=None),
+    _session: object = Depends(require_session),
+):
+    user_email = (x_user_email or "").strip().lower()
+    display_name = user_email.split("@")[0] if user_email else None
+
+    try:
+        result = await get_backend().delete_vessel(
+            vessel_id,
+            requesting_email=user_email,
+            requesting_name=display_name,
+        )
+        if result.get("status") == "pending":
+            return JSONResponse(status_code=202, content={
+                "status": "pending",
+                "action_type": "delete_vessel",
+                "approval_id": result.get("approval_id"),
+                "message": result.get("message"),
+            })
+
+        deleted_name = result.get("vessel_name") or vessel_name or vessel_id
+        detail_msg = result.get("message") or f"Moved vessel '{deleted_name}' to Recycle Bin."
+        if user_email:
+            _log_activity(user_email, "delete_vessel", detail_msg)
+
+        return {
+            "status": "completed",
+            "message": detail_msg,
+        }
+    except NotFound as e:
+        return JSONResponse(status_code=404, content={"message": str(e)})
+    except BadRequest as e:
+        _raise(e)
+
+
 @app.post("/api/vessels/{vessel_id}/reprovision")
 async def reprovision_vessel(vessel_id: str):
     """Re-run idempotent folder provisioning for an existing vessel.

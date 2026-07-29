@@ -8,6 +8,8 @@ import { NotificationBell, type NotificationItem } from "./components/Notificati
 
 import {
   createVessel,
+  updateVessel,
+  deleteVessel,
   createSubfolder,
   deleteFile,
   getChildren,
@@ -33,7 +35,6 @@ import {
   restoreDeletedItem,
   permanentDeleteItem,
   search,
-  updateVessel,
   revokeSession,
   type FolderNode,
   type SearchResult,
@@ -65,6 +66,7 @@ const cleanFolderName = (name: string): string => {
 import { Sidebar } from "./components/Sidebar";
 import { CreateVesselModal } from "./components/CreateVesselModal";
 import { UpdateVesselModal } from "./components/UpdateVesselModal";
+import { DeleteVesselModal } from "./components/DeleteVesselModal";
 import { Breadcrumb, type Crumb } from "./components/Breadcrumb";
 import { UploadControl } from "./components/UploadControl";
 import { ToastStack, type ToastItem } from "./components/Toast";
@@ -378,6 +380,8 @@ export default function App() {
     return false;
   });
   const [vesselToUpdate, setVesselToUpdate] = useState<import("./api").Vessel | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [vesselToDelete, setVesselToDelete] = useState<import("./api").Vessel | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [authError, setAuthError] = useState<string | null>(null);
   const [sessionExpiredReason, setSessionExpiredReason] = useState<"inactivity" | "token_expiry" | null>(null);
@@ -389,7 +393,6 @@ export default function App() {
   const [archivedNodes, setArchivedNodes] = useState<FolderNode[]>([]);
   const [activeMenuFolderId, setActiveMenuFolderId] = useState<string | null>(null);
   const [archiveMenuDropPos, setArchiveMenuDropPos] = useState({ top: 0, bottom: 0, right: 0, flipped: false });
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showArchiveSelectModal, setShowArchiveSelectModal] = useState(false);
   const [showArchivePanel, setShowArchivePanel] = useState(false);
   const [restoreConfirmNode, setRestoreConfirmNode] = useState<FolderNode | null>(null);
@@ -2212,6 +2215,89 @@ export default function App() {
     setTimeout(() => dismissToast(toastId), 6000);
   };
 
+  const handleDeleteVessel = async (vesselId: string, vesselName: string) => {
+    const toastId = Date.now() + Math.floor(Math.random() * 1000);
+    upsertToast({
+      id: toastId,
+      status: "processing",
+      title: "Deleting vessel...",
+      detail: `Moving vessel "${vesselName}" to Recycle Bin`,
+    });
+    try {
+      const result = await deleteVessel(vesselId, user?.email, vesselName);
+
+      if (result.status === "pending") {
+        upsertToast({
+          id: toastId,
+          status: "pending",
+          title: "Awaiting approval",
+          detail: result.message || `Delete request for vessel "${vesselName}" is awaiting approval`,
+        });
+        setTimeout(() => dismissToast(toastId), 6000);
+        return;
+      }
+
+      // Reload vessels, mains, stats, archive, deleted in parallel
+      const [freshMains, freshVessels, freshStats, archIds, archNodes, delNodes] = await Promise.all([
+        getMains(),
+        listVessels(),
+        getStats(),
+        getArchivedIds(),
+        getArchivedNodes(),
+        getDeletedNodes().catch(() => []),
+      ]);
+      setMains(freshMains);
+      setVessels(freshVessels);
+      setStats(freshStats);
+      setArchivedFolderIds(new Set(archIds));
+      setArchivedNodes(archNodes);
+      setDeletedNodes(delNodes);
+
+      // Now refresh children
+      if (!currentId) {
+        setCurrent(null);
+        setChildren(freshMains);
+      } else {
+        try {
+          const [node, kids] = await Promise.all([
+            getFolder(currentId),
+            getChildren(currentId),
+          ]);
+          setCurrent(node);
+          setChildren(kids);
+        } catch {
+          // ignore
+        }
+      }
+
+      // Reset selection if deleted vessel was selected
+      setSelectedVesselByPage((prev) => {
+        const next = { ...prev };
+        for (const k in next) {
+          if (next[k] === vesselId) delete next[k];
+        }
+        return next;
+      });
+
+      upsertToast({
+        id: toastId,
+        status: "done",
+        title: "Vessel deleted",
+        detail: result.message || `Moved vessel "${vesselName}" to Recycle Bin`,
+      });
+      setTimeout(() => dismissToast(toastId), 6000);
+    } catch (e) {
+      upsertToast({
+        id: toastId,
+        status: "failed",
+        title: "Delete failed",
+        detail: errDetail(e, "Failed to delete vessel."),
+      });
+      setTimeout(() => dismissToast(toastId), 6000);
+      throw e;
+    }
+  };
+
   const handleCreateFolder = async () => {
     if (!current || !createFolderName.trim()) return;
     const cleaned = cleanFolderName(createFolderName);
@@ -2646,6 +2732,17 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => {
+                      setVesselToDelete(selectedVesselObj || vessels[0] || null);
+                      setShowDeleteModal(true);
+                    }}
+                    disabled={vessels.length === 0}
+                    className="dms-touch-btn inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-500 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    <Trash2 className="h-4 w-4 shrink-0" />
+                    <span className="dms-action-btn-text">Delete Vessel</span>
+                  </button>
+                  <button
+                    onClick={() => {
                       if (!selectedVesselObj) return;
                       setVesselToUpdate(selectedVesselObj);
                       setShowUpdateModal(true);
@@ -2681,7 +2778,7 @@ export default function App() {
                     <ul className="divide-y divide-border">
                       {vessels.slice(0, visibleListVesselsCount).map((v) => {
                         return (
-                          <li key={v.id} className="bg-transparent">
+                          <li key={v.id} className="group/row flex items-center justify-between gap-3 px-4 py-3 bg-transparent transition hover:bg-surface-hover">
                             <button
                               onClick={() => {
                                 setSelectedVesselByPage((prev) => ({
@@ -2690,7 +2787,7 @@ export default function App() {
                                 }));
                                 openVesselFromVesselsView(v);
                               }}
-                              className="group flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left transition hover:bg-surface-hover cursor-pointer select-none focus:outline-none"
+                              className="group flex min-w-0 flex-1 items-center gap-3 text-left cursor-pointer select-none focus:outline-none"
                               title={`Open ${v.name}`}
                             >
                               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
@@ -2705,6 +2802,31 @@ export default function App() {
                                 </span>
                               </span>
                             </button>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setVesselToUpdate(v);
+                                  setShowUpdateModal(true);
+                                  window.history.pushState({ view: "listvessels", path: [] }, "", "/vessels/updatevessel");
+                                }}
+                                className="p-2 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition cursor-pointer"
+                                title={`Update ${v.name}`}
+                              >
+                                <Ship className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setVesselToDelete(v);
+                                  setShowDeleteModal(true);
+                                }}
+                                className="p-2 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                                title={`Delete ${v.name}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
                           </li>
                         );
                       })}
@@ -3747,6 +3869,17 @@ export default function App() {
             window.history.pushState({ view: "listvessels", path: [] }, "", "/homepage?view=listvessels");
           }}
           onUpdate={handleUpdateVessel}
+          vessels={vessels}
+        />
+      )}
+      {showDeleteModal && (
+        <DeleteVesselModal
+          vessel={vesselToDelete}
+          onClose={() => {
+            setShowDeleteModal(false);
+            setVesselToDelete(null);
+          }}
+          onDelete={handleDeleteVessel}
           vessels={vessels}
         />
       )}

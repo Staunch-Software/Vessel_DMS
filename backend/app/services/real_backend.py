@@ -1387,6 +1387,79 @@ class RealBackend:
                 "sp_errors": sp_errors,
             }
 
+    async def delete_vessel(
+        self, vessel_id: str, requesting_email=None, requesting_name=None,
+    ) -> dict:
+        with SessionLocal() as db:
+            try:
+                vid = int(vessel_id)
+            except ValueError:
+                raise NotFound("Vessel not found")
+            vessel = db.query(models.Vessel).filter_by(id=vid).one_or_none()
+            if not vessel:
+                raise NotFound("Vessel not found")
+            vname = vessel.name
+
+        display = self._display(requesting_email, requesting_name)
+        return await self._admin_or_pending(
+            action_type="delete_vessel",
+            requesting_email=requesting_email,
+            requesting_name=requesting_name,
+            department="All Departments",
+            vessel_id=vessel_id,
+            vessel_name=vname,
+            target_id=vessel_id,
+            target_description=f"Vessel: {vname}",
+            payload={"vessel_id": vessel_id, "vessel_name": vname},
+            pending_message=(
+                f"{display} ({requesting_email}) is requesting approval to delete vessel '{vname}'."
+            ),
+            activity_message=(
+                f"SPE Admin ({requesting_email}) deleted vessel '{vname}'. No approval was required."
+            ),
+            execute=lambda: self._execute_delete_vessel(vessel_id),
+        )
+
+    async def _execute_delete_vessel(self, vessel_id: str) -> dict:
+        """Delete a vessel: delete its root ship folders via Graph API (moving them to
+        SharePoint Recycle Bin) and delete the vessel + folder rows from SQLite DB."""
+        drive_id = await self._drive()
+        from ..graph import drive as _gd
+
+        with SessionLocal() as db:
+            try:
+                vid = int(vessel_id)
+            except ValueError:
+                raise NotFound("Vessel not found")
+            vessel = db.query(models.Vessel).filter_by(id=vid).one_or_none()
+            if not vessel:
+                return {"deleted": False, "message": "Vessel not found"}
+            vname = vessel.name
+
+            # Find ship root folders for this vessel
+            ship_folders = (
+                db.query(models.Folder)
+                .filter(models.Folder.vessel_id == vid, models.Folder.kind == "ship")
+                .all()
+            )
+            ship_folder_ids = [f.drive_item_id for f in ship_folders]
+
+        # Delete each ship folder via Graph API -> automatically moved to SharePoint Recycle Bin
+        for item_id in ship_folder_ids:
+            try:
+                await _gd.delete_item(drive_id, item_id)
+            except Exception as e:
+                log.warning(f"[_execute_delete_vessel] Failed to delete ship folder {item_id}: {e}")
+
+        # Delete vessel & associated folder rows from DB
+        with SessionLocal() as db:
+            vessel = db.query(models.Vessel).filter_by(id=vid).one_or_none()
+            if vessel:
+                db.delete(vessel)
+                db.commit()
+
+        return {"deleted": True, "vessel_name": vname, "message": f"Moved vessel '{vname}' to Recycle Bin."}
+
     async def repair_vessel_links(self) -> dict:
         """Scan all ship-kind folders with vessel_id=None and try to link them
         to a vessel row by matching the folder name (case-insensitive).
@@ -2824,6 +2897,17 @@ class RealBackend:
                 if not exists:
                     return self._mark_rejected_row(request_id, decided_by_email, "Target no longer exists")
                 await self._execute_update_vessel(payload)
+            elif action_type == "delete_vessel":
+                v_id = payload.get("vessel_id") or target_id
+                with SessionLocal() as db:
+                    try:
+                        vid = int(v_id)
+                        exists = db.query(models.Vessel).filter_by(id=vid).one_or_none()
+                    except ValueError:
+                        exists = None
+                if not exists:
+                    return self._mark_rejected_row(request_id, decided_by_email, "Target vessel no longer exists")
+                await self._execute_delete_vessel(str(v_id))
             elif action_type == "archive_item":
                 await self._execute_archive(target_id, payload.get("item_type", "folder"))
             elif action_type == "restore_item":
